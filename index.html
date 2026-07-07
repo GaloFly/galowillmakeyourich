@@ -516,7 +516,10 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
           {rows.map((row) => (
             <div key={row.tkr} style={{ borderRadius: 16, background: T.tile, padding: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{row.tkr}</span>
+                <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{row.tkr}</span>
+                  {row.last > 0 && <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>${money2(row.last)}</span>}
+                </span>
                 <span style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>${money(row.riesgo)} riesgo total</span>
               </div>
               {row.blockChips.length > 0 && (
@@ -1454,12 +1457,13 @@ function App() {
     const map = {};
     filtered.forEach((p) => {
       if (!p.tkr) return;
-      if (!map[p.tkr]) map[p.tkr] = { tkr: p.tkr, riesgo: 0, plausible: 0, margen: 0, pnl: 0, pnlBasis: 0, byBlock: {} };
+      if (!map[p.tkr]) map[p.tkr] = { tkr: p.tkr, riesgo: 0, plausible: 0, margen: 0, pnl: 0, pnlBasis: 0, last: 0, byBlock: {} };
       map[p.tkr].riesgo += capDesplegado(p);
       map[p.tkr].plausible += plausibleOf(p);
       map[p.tkr].margen += effMargen(p);
       map[p.tkr].pnl += effPnl(p);
       map[p.tkr].pnlBasis += Math.abs(n(p.bep) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegado(p);
+      if (n(p.last) > 0 && (natOf(p) === "ACC" || !map[p.tkr].last)) map[p.tkr].last = n(p.last);
       map[p.tkr].byBlock[p.block] = (map[p.tkr].byBlock[p.block] || 0) + capDesplegado(p);
     });
     return Object.values(map).filter((r) => r.riesgo > 0).sort((a, b) => b.riesgo - a.riesgo).map((r) => ({
