@@ -75,8 +75,11 @@ const KEY_TRADES = "bloques_trades_v2";
 const KEY_BASIS = "bloques_comp_basis_v2";
 const KEY_VIEW = "bloques_view_v1";
 const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standalone (mismo esquema: tkr/dte/strike/credit/margin)
-/* ---------- versión de proyecto: al detectar un update se guarda copia automática de los datos ---------- */
-const APP_VERSION = "11";
+/* ---------- versión de proyecto: al detectar un update se guarda copia automática de los datos ----------
+   REGLA: cada vez que Claude cambie algo que toque datos/estructura de datos (nuevos campos, nuevas claves de
+   localStorage, cambios de modelo, etc.) DEBE subir APP_VERSION aquí mismo, o el usuario no recibe el aviso
+   de actualización ni la copia de seguridad automática. Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
+const APP_VERSION = "1.1";
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_FLOWS = "bloques_aportaciones_v1";
@@ -160,18 +163,28 @@ const natOf = (p) => p.nat || inferNat(p);
 const isCashNat = (p) => natOf(p) === "CASH";
 const isOptionNat = (p) => { const x = natOf(p); return x !== "ACC" && x !== "CASH"; };
 const contractsOf = (p) => n(p.qty) / 100;
+/* BEP automático por prima: Short Put/Short Call cobran prima (crédito) → BEP = Strike − Prima. Long Call Leaps la paga (débito) → BEP = Strike + Prima. Cualquier otra estrategia sigue con BEP manual. */
+const BEP_CREDIT_STRATS = new Set(["Short Put", "Short Call"]);
+const BEP_DEBIT_STRATS = new Set(["Long Call Leaps"]);
+const bepAutoStrat = (p) => (BEP_CREDIT_STRATS.has(p.tipo) ? "CREDIT" : BEP_DEBIT_STRATS.has(p.tipo) ? "DEBIT" : null);
+const effBep = (p) => {
+  const s = bepAutoStrat(p);
+  if (s === "CREDIT") return n(p.strike) - n(p.prima);
+  if (s === "DEBIT") return n(p.strike) + n(p.prima);
+  return n(p.bep);
+};
 /* capital desplegado — numerador del barbell (/ NLV → 80/15/5) */
 const capDesplegado = (p) => {
   const nat = natOf(p);
   if (nat === "CASH") return Math.abs(n(p.mktValue));
   if (nat === "ACC" || nat === "COLLAR") return Math.abs(n(p.last) * n(p.qty));
-  if (nat === "CRED") return Math.abs(n(p.bep) * n(p.qty));
-  return n(p.riesgo) || Math.abs(n(p.bep) * n(p.qty)); // DEF
+  if (nat === "CRED") return Math.abs(effBep(p) * n(p.qty));
+  return n(p.riesgo) || Math.abs(effBep(p) * n(p.qty)); // DEF
 };
 /* riesgo total / techo — para acción y crédito coincide con capital desplegado */
 const riesgoTotalOf = (p) => {
   const nat = natOf(p);
-  if (nat === "COLLAR" || nat === "DEF") return n(p.riesgo) || (nat === "DEF" ? Math.abs(n(p.bep) * n(p.qty)) : 0);
+  if (nat === "COLLAR" || nat === "DEF") return n(p.riesgo) || (nat === "DEF" ? Math.abs(effBep(p) * n(p.qty)) : 0);
   return capDesplegado(p);
 };
 /* riesgo plausible — numerador de sizing (/ NLV) */
@@ -188,7 +201,7 @@ const effMkt = (p) => (isAutoMkt(p) ? n(p.last) * n(p.qty) : n(p.mktValue));
 const isPctMargin = (p) => p.margenModo !== "VALOR";
 const effMargen = (p) => (natOf(p) === "CASH" ? 0 : (isPctMargin(p) ? Math.abs(effMkt(p)) * (p.margenPct === "" || p.margenPct == null ? 0 : n(p.margenPct)) / 100 : n(p.margen)));
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL";
-const effPnl = (p) => (isAutoPnl(p) ? (n(p.last) - n(p.bep)) * n(p.qty) : n(p.pnl));
+const effPnl = (p) => (isAutoPnl(p) ? (n(p.last) - effBep(p)) * n(p.qty) : n(p.pnl));
 const money = (v) => n(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const money2 = (v) => n(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const pct = (v, d = 1) => (isFinite(v) ? (v * 100).toFixed(d) + "%" : "—");
@@ -931,7 +944,7 @@ function PositionRow({ p, editing, onToggle, onChange, onDelete, pctBloque, pctC
   const qtyNum = opt ? (Number.isInteger(contratos) ? contratos : n(p.qty)) : n(p.qty);
   const qtyUnit = opt ? (Number.isInteger(contratos) ? "contr." : "opc") : "acc";
   const pnlVal = effPnl(p);
-  const pnlBasis = Math.abs(n(p.bep) * n(p.qty)) || Math.abs(n(p.mktValue)) || cap;
+  const pnlBasis = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || cap;
   const pnlPct = pnlBasis ? pnlVal / pnlBasis : NaN;
   return (
     <div style={{ borderTop: `1px solid ${T.line}`, padding: "10px 0" }}>
@@ -958,7 +971,7 @@ function PositionRow({ p, editing, onToggle, onChange, onDelete, pctBloque, pctC
         )}
         {!cash && (
           <div style={{ display: "flex", gap: 8, marginTop: 7, flexWrap: "wrap" }}>
-            <MicroStat label="BEP" value={"$" + money2(p.bep)} />
+            <MicroStat label="BEP" value={"$" + money2(effBep(p))} />
             <MicroStat label="Último" value={p.last ? "$" + money2(p.last) : "—"} />
             <MicroStat label="% Bloque" value={pct(pctBloque, 1)} />
             <MicroStat label="Plausible" value={"$" + money(plausible)} />
@@ -1003,8 +1016,18 @@ function PositionRow({ p, editing, onToggle, onChange, onDelete, pctBloque, pctC
               </div>
             </>
           )}
-          {!cash && <EditField label="BEP" prefix="$" value={p.bep} onChange={onChange("bep")} />}
+          {!cash && (bepAutoStrat(p) ? (
+            <EditField label={"Prima (" + (bepAutoStrat(p) === "CREDIT" ? "crédito recibido" : "débito pagado") + ")"} prefix="$" value={p.prima} onChange={onChange("prima")} />
+          ) : (
+            <EditField label="BEP" prefix="$" value={p.bep} onChange={onChange("bep")} />
+          ))}
           {!cash && <EditField label="Último (precio actual)" prefix="$" value={p.last} onChange={onChange("last")} />}
+          {!cash && bepAutoStrat(p) && (
+            <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>BEP (auto) = Strike {bepAutoStrat(p) === "CREDIT" ? "−" : "+"} Prima</span>
+              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(effBep(p))}</span>
+            </div>
+          )}
           {cash ? (
             <div style={{ gridColumn: "span 2" }}>
               <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Importe (USD)</span>
@@ -1438,6 +1461,7 @@ function App() {
     margenModo: p.margenModo != null ? p.margenModo : "PCT",
     mktModo: p.mktModo != null ? p.mktModo : "AUTO",
     pnlModo: p.pnlModo != null ? p.pnlModo : "AUTO",
+    prima: p.prima != null ? p.prima : "",
     ...p,
     nat: p.nat || inferNat(p),
   }));
@@ -1452,7 +1476,7 @@ function App() {
         if (stored != null || hasData) {
           const data = {};
           BACKUP_KEYS.forEach((k) => { const v = localStorage.getItem(k); if (v != null) data[k] = v; });
-          bks = [{ version: stored || "10-", ts: Date.now(), data }, ...bks].slice(0, 3);
+          bks = [{ version: stored || "pre-1.0", ts: Date.now(), data }, ...bks].slice(0, 3);
           localStorage.setItem(KEY_AUTOBK, JSON.stringify(bks));
           setUpdateNotice({ from: stored ? "v" + stored : "versión anterior", to: APP_VERSION });
         }
@@ -1636,7 +1660,7 @@ function App() {
     const id = newId();
     const b = broker === "Todos" ? (brokers[0] || "IBKR") : broker;
     const defNat = blockId === 2 ? "CRED" : blockId === 3 ? "DEF" : "ACC";
-    setPositions((ps) => [...ps, { id, block: blockId, broker: b, tkr: "", tipo: "", nat: defNat, strike: "", right: "P", expiry: "", qty: "", bep: "", last: "", mktValue: "", riesgo: "", factor: "1", margen: "", margenPct: "100", margenModo: "PCT", mktModo: "AUTO", pnlModo: "AUTO", pnl: "" }]);
+    setPositions((ps) => [...ps, { id, block: blockId, broker: b, tkr: "", tipo: "", nat: defNat, strike: "", right: "P", expiry: "", qty: "", bep: "", prima: "", last: "", mktValue: "", riesgo: "", factor: "1", margen: "", margenPct: "100", margenModo: "PCT", mktModo: "AUTO", pnlModo: "AUTO", pnl: "" }]);
     setEditSet((s) => new Set(s).add(id));
   };
   const delPos = (id) => setPositions((ps) => ps.filter((p) => p.id !== id));
@@ -1699,7 +1723,7 @@ function App() {
       map[p.tkr].plausible += plausibleOf(p);
       map[p.tkr].margen += effMargen(p);
       map[p.tkr].pnl += effPnl(p);
-      map[p.tkr].pnlBasis += Math.abs(n(p.bep) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegado(p);
+      map[p.tkr].pnlBasis += Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegado(p);
       if (n(p.last) > 0 && (natOf(p) === "ACC" || !map[p.tkr].last)) map[p.tkr].last = n(p.last);
       map[p.tkr].byBlock[p.block] = (map[p.tkr].byBlock[p.block] || 0) + capDesplegado(p);
     });
@@ -1755,7 +1779,7 @@ function App() {
       bp.forEach((p) => {
         const det = optionDetail(p);
         const natL = (NATS.find((x) => x.id === natOf(p)) || {}).label || natOf(p);
-        lines.push(`  - ${p.tkr} [${p.broker}] ${natL}${p.tipo ? "/" + p.tipo : ""}${det ? " (" + det + ")" : ""} · Riesgo $${money2(capDesplegado(p))} · Plausible $${money2(plausibleOf(p))} · Margen $${money2(effMargen(p))}${isPctMargin(p) ? " (" + (p.margenPct || 0) + "%)" : ""} · BEP $${money2(p.bep)} · Último ${p.last ? "$" + money2(p.last) : "—"} · P&L ${signMoney(effPnl(p))}${isAutoPnl(p) ? " (auto)" : ""}`);
+        lines.push(`  - ${p.tkr} [${p.broker}] ${natL}${p.tipo ? "/" + p.tipo : ""}${det ? " (" + det + ")" : ""} · Riesgo $${money2(capDesplegado(p))} · Plausible $${money2(plausibleOf(p))} · Margen $${money2(effMargen(p))}${isPctMargin(p) ? " (" + (p.margenPct || 0) + "%)" : ""} · BEP $${money2(effBep(p))} · Último ${p.last ? "$" + money2(p.last) : "—"} · P&L ${signMoney(effPnl(p))}${isAutoPnl(p) ? " (auto)" : ""}`);
       });
       lines.push("");
     });
