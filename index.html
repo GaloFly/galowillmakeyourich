@@ -60,7 +60,7 @@ const BLOCKS = [
   { id: 3, name: "Bloque 3", tag: "High Risk", desc: "Earnings · 0DTE · spreads", color: T.orange, bg: T.tileAmber, badge: T.orange,
     tMin: 0.00, tMax: 0.05, scaleMin: 0, scaleMax: 0.15, band: 0.03 },
 ];
-const TABS = [...BLOCKS.map((b) => ({ id: b.id, label: b.name.replace("Bloque ", "B") + " · " + b.tag, color: b.color })), { id: "exposicion", label: "Exposición", color: T.dark }, { id: "rendimiento", label: "📈 Rendimiento", color: T.gold }];
+const TABS = [...BLOCKS.map((b) => ({ id: b.id, label: b.name.replace("Bloque ", "B") + " · " + b.tag, color: b.color })), { id: "exposicion", label: "Exposición", color: T.dark }, { id: "rendimiento", label: "📈 Rendimiento", color: T.gold }, { id: "aportaciones", label: "💶 Aportaciones", color: T.green }];
 
 /* ---------- seed. factor = corrección plausible (0.5 = mitad del notional cuenta como riesgo real), default 1 ---------- */
 const SEED_POS = [];
@@ -74,6 +74,12 @@ const KEY_TRADES = "bloques_trades_v2";
 const KEY_BASIS = "bloques_comp_basis_v2";
 const KEY_VIEW = "bloques_view_v1";
 const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standalone (mismo esquema: tkr/dte/strike/credit/margin)
+/* ---------- versión de proyecto: al detectar un update se guarda copia automática de los datos ---------- */
+const APP_VERSION = "11";
+const KEY_APPVER = "bloques_app_version";
+const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
+const KEY_FLOWS = "bloques_aportaciones_v1";
+const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_FLOWS, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
 
 /* ---------- persistencia ---------- */
@@ -595,18 +601,46 @@ const METRICS = {
   "EL/Margen": { get: (s) => s.elMrgn, fmt: (v) => pct(v), axis: (v) => Math.round(v * 100) + "%", color: T.gold },
   "EL/NLV": { get: (s) => s.elNlv, fmt: (v) => pct(v), axis: (v) => Math.round(v * 100) + "%", color: T.orange },
 };
-function RendimientoCard({ snapshots, onSave, onDelete }) {
+function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
   const [expanded, setExpanded] = useState(null);
   const [metric, setMetric] = useState("NLV");
   const sorted = [...snapshots].sort((a, b) => (a.date < b.date ? 1 : -1)); // desc
   const first = sorted[sorted.length - 1];
-  const m = METRICS[metric];
-  const series = [...snapshots].sort((a, b) => (a.date < b.date ? -1 : 1)).map((s) => ({ date: s.date, v: m.get(s) })).filter((p) => isFinite(p.v));
+  const asc = [...snapshots].sort((a, b) => (a.date < b.date ? -1 : 1));
+  /* aportaciones netas en el intervalo (d0, d1] */
+  const flowBetween = (d0, d1) => (flows || []).reduce((s, f) => (f.date > d0 && f.date <= d1 ? s + n(f.amount) : s), 0);
+  /* TWR: encadena retornos por tramo, neutralizando aportaciones/retiros (Dietz modificado, flujo a mitad de tramo) */
+  const twrSeries = (() => {
+    let idx = 100; const out = [];
+    asc.forEach((s, i) => {
+      if (i === 0) { out.push({ date: s.date, v: 100 }); return; }
+      const prev = asc[i - 1];
+      const F = flowBetween(prev.date, s.date);
+      const denom = prev.nlv + 0.5 * F;
+      const r = denom ? (s.nlv - prev.nlv - F) / denom : 0;
+      idx *= 1 + r;
+      out.push({ date: s.date, v: idx });
+    });
+    return out;
+  })();
+  const flowsAsc = [...(flows || [])].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const aportSeries = (() => { let acc = 0; return flowsAsc.map((f) => { acc += n(f.amount); return { date: f.date, v: acc }; }); })();
+  const SPECIAL = {
+    "Rent. real": { series: twrSeries, fmt: (v) => (isFinite(v) ? (v / 100 - 1 >= 0 ? "+" : "") + ((v / 100 - 1) * 100).toFixed(1) + "%" : "—"), axis: (v) => Math.round(v - 100) + "%", color: T.green },
+    "Aportado": { series: aportSeries, fmt: (v) => signMoney(v), axis: (v) => "$" + kFmt(v), color: T.purple },
+  };
+  const METRIC_KEYS = [...Object.keys(METRICS), ...Object.keys(SPECIAL)];
+  const sp = SPECIAL[metric];
+  const m = sp ? null : METRICS[metric];
+  const series = sp ? sp.series : asc.map((s) => ({ date: s.date, v: m.get(s) })).filter((p) => isFinite(p.v));
+  const mFmt = sp ? sp.fmt : m.fmt;
+  const mAxis = sp ? sp.axis : m.axis;
+  const mColor = sp ? sp.color : m.color;
   const curV = series.length ? series[series.length - 1].v : NaN;
   const firstV = series.length ? series[0].v : NaN;
   const dTotal = curV - firstV;
   const dTotalPct = firstV ? dTotal / Math.abs(firstV) : NaN;
-  const isMoney = ["NLV", "MKT VL", "P&L", "Riesgo"].includes(metric);
+  const isMoney = ["NLV", "MKT VL", "P&L", "Riesgo", "Aportado"].includes(metric);
 
   return (
     <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
@@ -622,28 +656,28 @@ function RendimientoCard({ snapshots, onSave, onDelete }) {
       {snapshots.length >= 1 && (
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 8 }}>
-            <Pill options={Object.keys(METRICS)} value={metric} onChange={setMetric} size="sm" />
+            <Pill options={METRIC_KEYS} value={metric} onChange={setMetric} size="sm" />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
             <div>
-              <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{metric} · último snapshot</div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: T.ink, letterSpacing: -0.5, marginTop: 1 }}>{isFinite(curV) ? m.fmt(curV) : "—"}</div>
+              <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{metric === "Rent. real" ? "Rentabilidad sin aportaciones (TWR)" : metric === "Aportado" ? "Aportaciones netas acumuladas" : metric + " · último snapshot"}</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: T.ink, letterSpacing: -0.5, marginTop: 1 }}>{isFinite(curV) ? mFmt(curV) : "—"}</div>
             </div>
-            {series.length >= 2 && (
+            {series.length >= 2 && metric !== "Rent. real" && (
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>desde {shortDate(series[0].date)}</div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: dTotal >= 0 ? T.green : T.red, marginTop: 1 }}>
-                  {isMoney ? signMoney(dTotal) : (dTotal >= 0 ? "+" : "") + m.fmt(dTotal).replace("+", "")}{isFinite(dTotalPct) && isMoney ? ` (${dTotalPct >= 0 ? "+" : ""}${(dTotalPct * 100).toFixed(1)}%)` : ""}
+                  {isMoney ? signMoney(dTotal) : (dTotal >= 0 ? "+" : "") + mFmt(dTotal).replace("+", "")}{isFinite(dTotalPct) && isMoney ? ` (${dTotalPct >= 0 ? "+" : ""}${(dTotalPct * 100).toFixed(1)}%)` : ""}
                 </div>
               </div>
             )}
           </div>
           {series.length >= 2 ? (
             <div style={{ background: T.tile, borderRadius: 16, padding: "12px 10px 8px" }}>
-              <MetricChart points={series} color={m.color} axisFmt={m.axis} />
+              <MetricChart points={series} color={mColor} axisFmt={mAxis} />
             </div>
           ) : (
-            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500 }}>Guarda un segundo snapshot para ver la evolución.</div>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500 }}>{metric === "Aportado" ? "Registra aportaciones en la pestaña 💶 Aportaciones para ver el acumulado." : "Guarda un segundo snapshot para ver la evolución."}</div>
           )}
         </div>
       )}
@@ -653,6 +687,9 @@ function RendimientoCard({ snapshots, onSave, onDelete }) {
         const vsFirst = first && first !== s;
         const dNlv = prev ? s.nlv - prev.nlv : null;
         const dNlvPct = prev && prev.nlv ? dNlv / prev.nlv : NaN;
+        const F = prev ? flowBetween(prev.date, s.date) : 0;
+        const dReal = prev ? dNlv - F : null;
+        const dRealPct = prev && (prev.nlv + 0.5 * F) ? dReal / (prev.nlv + 0.5 * F) : NaN;
         const dPnl = prev ? s.totalPnl - prev.totalPnl : null;
         const dLev = prev && isFinite(s.leverage) && isFinite(prev.leverage) ? s.leverage - prev.leverage : null;
         const isOpen = expanded === s.date;
@@ -688,6 +725,8 @@ function RendimientoCard({ snapshots, onSave, onDelete }) {
             {prev && (
               <div style={{ display: "flex", gap: 12, marginTop: 7, flexWrap: "wrap", background: T.tile, borderRadius: 12, padding: "7px 10px" }}>
                 <MicroStat label="Δ NLV" value={signMoney(dNlv) + (isFinite(dNlvPct) ? " (" + (dNlvPct >= 0 ? "+" : "") + (dNlvPct * 100).toFixed(1) + "%)" : "")} color={dNlv >= 0 ? T.green : T.red} />
+                {F !== 0 && <MicroStat label="Aport." value={signMoney(F)} color={T.purple} />}
+                {F !== 0 && <MicroStat label="Δ Real" value={signMoney(dReal) + (isFinite(dRealPct) ? " (" + (dRealPct >= 0 ? "+" : "") + (dRealPct * 100).toFixed(1) + "%)" : "")} color={dReal >= 0 ? T.green : T.red} />}
                 <MicroStat label="Δ P&L" value={signMoney(dPnl)} color={dPnl >= 0 ? T.green : T.red} />
                 <MicroStat label="Δ Apal." value={dLev != null ? (dLev >= 0 ? "+" : "") + dLev.toFixed(2) + "×" : "—"} color={dLev != null ? (dLev > 0 ? T.gold : T.green) : T.sub} />
               </div>
@@ -724,7 +763,83 @@ function RendimientoCard({ snapshots, onSave, onDelete }) {
         );
       })}
 
-      <div style={{ fontSize: 11, color: T.sub, lineHeight: 1.5, marginTop: 12 }}>Guarda un snapshot semanal o mensual (mismo día se sobrescribe). Cada uno registra NLV, MKT VL, riesgo total, plausible, P&L, el detalle por bloque y por subyacente de toda la cartera (IBKR + DEGIRO), sin importar el filtro de broker actual. Toca un snapshot con anterior para ver el desglose.</div>
+      <div style={{ fontSize: 11, color: T.sub, lineHeight: 1.5, marginTop: 12 }}>Cada "🔄 Precios" guarda un snapshot automático del día; el mismo día se sobrescribe, así que el que queda registrado es siempre el último del día. Cada snapshot recoge NLV, MKT VL, riesgo total, plausible, P&L y el detalle por bloque y subyacente de toda la cartera, sin importar el filtro de broker. "Rent. real" es la rentabilidad encadenada por tramos (TWR) descontando las aportaciones y retiros registrados en 💶 Aportaciones (Dietz modificado, flujo ponderado a mitad de tramo) — es la cifra comparable con un índice. Δ Real = Δ NLV − aportaciones netas del tramo. Toca un snapshot con anterior para ver el desglose.</div>
+    </div>
+  );
+}
+
+/* ---------- aportaciones y retiros de cash: no son rendimiento ---------- */
+function AportacionesCard({ flows, setFlows, brokers }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [amount, setAmount] = useState("");
+  const [kind, setKind] = useState("Aportación");
+  const [brk, setBrk] = useState(brokers[0] || "");
+  const [note, setNote] = useState("");
+  useEffect(() => { if (!brokers.includes(brk)) setBrk(brokers[0] || ""); }, [brokers]);
+  const add = () => {
+    const a = Math.abs(n(amount));
+    if (!a || !date) return;
+    const signed = kind === "Retiro" ? -a : a;
+    setFlows((fs) => [...fs, { id: newId(), date, amount: String(signed), broker: brk, note: note.trim() }]);
+    setAmount(""); setNote("");
+  };
+  const del = (id) => setFlows((fs) => fs.filter((f) => f.id !== id));
+  const sorted = [...flows].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const totalIn = flows.reduce((s, f) => s + Math.max(0, n(f.amount)), 0);
+  const totalOut = flows.reduce((s, f) => s + Math.min(0, n(f.amount)), 0);
+  const neto = totalIn + totalOut;
+  const cumSeries = (() => { let acc = 0; return [...flows].sort((a, b) => (a.date < b.date ? -1 : 1)).map((f) => { acc += n(f.amount); return { date: f.date, v: acc }; }); })();
+  const inputStyle = { width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "10px 12px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none" };
+  return (
+    <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: T.ink, marginBottom: 12 }}>Aportaciones y retiros</div>
+
+      <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <MicroStat label="Aportado" value={"$" + money(totalIn)} color={T.green} />
+        <MicroStat label="Retirado" value={"-$" + money(Math.abs(totalOut))} color={T.red} />
+        <MicroStat label="Neto" value={signMoney(neto)} color={neto >= 0 ? T.green : T.red} />
+      </div>
+
+      {cumSeries.length >= 2 && (
+        <div style={{ background: T.tile, borderRadius: 16, padding: "12px 10px 8px", marginBottom: 14 }}>
+          <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6, paddingLeft: 4 }}>Aportaciones netas acumuladas</div>
+          <MetricChart points={cumSeries} color={T.purple} axisFmt={(v) => "$" + kFmt(v)} />
+        </div>
+      )}
+
+      <div style={{ background: T.tile, borderRadius: 16, padding: 12, marginBottom: 14 }}>
+        <div style={{ marginBottom: 10 }}>
+          <Pill options={["Aportación", "Retiro"]} value={kind} onChange={setKind} size="sm" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
+          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Importe USD" style={inputStyle} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <select value={brk} onChange={(e) => setBrk(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
+            {brokers.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota (opcional)" style={inputStyle} />
+        </div>
+        <button onClick={add} style={{ width: "100%", background: kind === "Retiro" ? T.red : T.green, border: "none", borderRadius: 14, padding: "12px 0", fontSize: 14.5, fontWeight: 700, color: "#fff", cursor: "pointer" }}>{kind === "Retiro" ? "− Registrar retiro" : "+ Registrar aportación"}</button>
+      </div>
+
+      {sorted.length === 0 && <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, padding: "4px 0" }}>Sin movimientos. Registra cada depósito o retirada de cash con su fecha: el Rendimiento los descuenta para que la rentabilidad no se distorsione.</div>}
+      {sorted.map((f) => (
+        <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${T.line}`, padding: "9px 0" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{new Date(f.date + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</div>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.broker}{f.note ? " · " + f.note : ""}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <span style={{ fontSize: 14.5, fontWeight: 800, color: n(f.amount) >= 0 ? T.green : T.red }}>{signMoney(f.amount)}</span>
+            <button onClick={() => del(f.id)} style={{ background: "transparent", border: "none", color: T.red, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "2px 4px" }}>✕</button>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ fontSize: 11, color: T.sub, lineHeight: 1.5, marginTop: 12 }}>Solo registro para el cálculo de rendimiento: no modifica el cash de la cuenta (ese lo actualizas en la cuenta o con posiciones Cash en B0). Puedes añadir movimientos con fecha pasada; el TWR se recalcula al momento.</div>
     </div>
   );
 }
@@ -1216,6 +1331,10 @@ function App() {
   const [keyInput, setKeyInput] = useState("");
   const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
   const [snapshots, setSnapshots] = useState([]);
+  const [flows, setFlows] = useState([]);
+  const [autoBackups, setAutoBackups] = useState([]);
+  const [updateNotice, setUpdateNotice] = useState(null);
+  const [confirmAutoBk, setConfirmAutoBk] = useState(null);
   const [brokers, setBrokers] = useState(SEED_BROKERS);
   const [brokerModalOpen, setBrokerModalOpen] = useState(false);
   const [newBrokerName, setNewBrokerName] = useState("");
@@ -1243,7 +1362,26 @@ function App() {
     nat: p.nat || inferNat(p),
   }));
   useEffect(() => {
+    /* versión de proyecto: si el HTML es una versión nueva, copia automática de los datos actuales antes de tocarlos */
+    try {
+      const stored = localStorage.getItem(KEY_APPVER);
+      let bks = [];
+      try { const raw = localStorage.getItem(KEY_AUTOBK); if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr)) bks = arr; } } catch (e) {}
+      if (stored !== APP_VERSION) {
+        const hasData = BACKUP_KEYS.some((k) => localStorage.getItem(k) != null);
+        if (stored != null || hasData) {
+          const data = {};
+          BACKUP_KEYS.forEach((k) => { const v = localStorage.getItem(k); if (v != null) data[k] = v; });
+          bks = [{ version: stored || "10-", ts: Date.now(), data }, ...bks].slice(0, 3);
+          localStorage.setItem(KEY_AUTOBK, JSON.stringify(bks));
+          setUpdateNotice({ from: stored ? "v" + stored : "versión anterior", to: APP_VERSION });
+        }
+        localStorage.setItem(KEY_APPVER, APP_VERSION);
+      }
+      setAutoBackups(bks);
+    } catch (e) {}
     let haveAcc = false, havePos = false;
+    try { const f = localStorage.getItem(KEY_FLOWS); if (f) { const arr = JSON.parse(f); if (Array.isArray(arr)) setFlows(arr); } } catch (e) {}
     try { const a = localStorage.getItem(KEY_ACC); if (a) { setAccounts(JSON.parse(a)); haveAcc = true; } } catch (e) {}
     try { const p = localStorage.getItem(KEY_POS); if (p) { setPositions(withNat(JSON.parse(p))); havePos = true; } } catch (e) {}
     try { const k = localStorage.getItem(KEY_FINNHUB); if (k) setApiKey(k); } catch (e) {}
@@ -1272,6 +1410,7 @@ function App() {
   useEffect(() => { if (loaded) saveKV(KEY_ACC, accounts); }, [accounts, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_POS, positions); }, [positions, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_SNAP, snapshots); }, [snapshots, loaded]);
+  useEffect(() => { if (loaded) saveKV(KEY_FLOWS, flows); }, [flows, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_BROKERS, brokers); }, [brokers, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_TRADES, trades); }, [trades, loaded]);
   useEffect(() => { if (loaded) { try { localStorage.setItem(KEY_BASIS, basis); } catch (e) {} } }, [basis, loaded]);
@@ -1303,7 +1442,7 @@ function App() {
       margenPct: p.margenPct != null ? p.margenPct : "100",
       margenModo: p.margenModo != null ? p.margenModo : "PCT",
     }));
-    setBackupText(JSON.stringify({ v: 10, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, trades, compBasis: basis, finnhubKey: apiKey, showPnl }, null, 2));
+    setBackupText(JSON.stringify({ v: 11, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, showPnl }, null, 2));
     setCopied(false); setRestoreMsg(""); setBackupOpen(true);
   };
   const copyBackup = async () => {
@@ -1332,6 +1471,7 @@ function App() {
       }
       if (Array.isArray(d.positions)) setPositions(withNat(d.positions));
       if (Array.isArray(d.snapshots)) setSnapshots(d.snapshots);
+      if (Array.isArray(d.aportaciones)) setFlows(d.aportaciones);
       if (Array.isArray(d.trades)) setTrades(d.trades);
       if (typeof d.compBasis === "string" && BASIS_KEYS.includes(d.compBasis)) setBasis(d.compBasis);
       if (typeof d.finnhubKey === "string" && d.finnhubKey) { setApiKey(d.finnhubKey); try { localStorage.setItem(KEY_FINNHUB, d.finnhubKey); } catch (e) {} }
@@ -1339,6 +1479,16 @@ function App() {
       setBroker("Todos");
       setRestoreMsg("ok"); setTimeout(() => setBackupOpen(false), 700);
     } catch (err) { setRestoreMsg("err"); }
+  };
+
+  /* restaura una copia automática (raw localStorage) y recarga la app para releer todo limpio */
+  const restoreAutoBackup = (bk) => {
+    if (confirmAutoBk !== bk.ts) { setConfirmAutoBk(bk.ts); setTimeout(() => setConfirmAutoBk(null), 4000); return; }
+    try {
+      BACKUP_KEYS.forEach((k) => { const v = bk.data[k]; if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); });
+      localStorage.setItem(KEY_APPVER, APP_VERSION);
+      location.reload();
+    } catch (e) { setRestoreMsg("err"); }
   };
 
   const runRefresh = async (key) => {
@@ -1352,11 +1502,15 @@ function App() {
       else errors[res.error] = (errors[res.error] || 0) + 1;
       await new Promise((r) => setTimeout(r, 150));
     }
-    setPositions((ps) => ps.map((p) => (results[p.tkr] != null ? { ...p, last: String(results[p.tkr]) } : p)));
+    const nextPositions = positions.map((p) => (results[p.tkr] != null ? { ...p, last: String(results[p.tkr]) } : p));
+    setPositions(nextPositions);
     setRefreshing(false);
     const found = Object.keys(results).length;
     if (found > 0) {
-      setRefreshMsg(`Precios actualizados: ${found} de ${tickers.length} tickers. Los no encontrados (Euronext, LSE…) se actualizan a mano.`);
+      /* snapshot automático con los precios recién cargados; mismo día se sobrescribe → queda el último del día */
+      const snap = buildSnapshot(nextPositions);
+      setSnapshots((ss) => [...ss.filter((s) => s.date !== snap.date), snap]);
+      setRefreshMsg(`Precios actualizados: ${found} de ${tickers.length} tickers. Snapshot de hoy guardado en 📈 Rendimiento (se sobrescribe con cada actualización: queda el último del día). Los no encontrados (Euronext, LSE…) se actualizan a mano.`);
     } else {
       const detalle = Object.entries(errors).map(([e, c]) => `${e} ×${c}`).join(" · ") || "motivo desconocido";
       setRefreshMsg(`No se encontró ningún precio. Detalle: ${detalle}. Si dice "red/CORS", prueba a abrir el archivo en Safari normal (no el icono guardado) o revisa la conexión. Si dice "key inválida", cópiala de nuevo en finnhub.io/dashboard.`);
@@ -1380,9 +1534,12 @@ function App() {
 
   const filtered = useMemo(() => broker === "Todos" ? positions : positions.filter((p) => p.broker === broker), [positions, broker]);
 
-  const mktvl = useMemo(() => filtered.reduce((s, p) => s + effMkt(p), 0), [filtered]);
+  const mktvl = useMemo(() => filtered.reduce((s, p) => s + (isCashNat(p) ? 0 : effMkt(p)), 0), [filtered]);
+  /* posiciones Cash de B0: cuentan como cash del estado de cuenta (no como MKT VL) para no duplicar ni tener que meterlo a mano */
+  const posCash = useMemo(() => filtered.reduce((s, p) => s + (isCashNat(p) ? effMkt(p) : 0), 0), [filtered]);
   const sumField = (field) => brokers.reduce((s, b) => s + n((accounts[b] || {})[field]), 0);
-  const cash = broker === "Todos" ? sumField("cash") : n((accounts[broker] || {}).cash);
+  const manualCash = broker === "Todos" ? sumField("cash") : n((accounts[broker] || {}).cash);
+  const cash = manualCash + posCash;
   const margin = broker === "Todos" ? sumField("margin") : n((accounts[broker] || {}).margin);
   const nlv = mktvl + cash;
   const el = nlv - margin;
@@ -1485,8 +1642,9 @@ function App() {
   const [exportCopied, setExportCopied] = useState(false);
 
   const buildExportText = () => {
-    const mktvlAll = positions.reduce((s, p) => s + effMkt(p), 0);
-    const cashAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).cash), 0);
+    const mktvlAll = positions.reduce((s, p) => s + (isCashNat(p) ? 0 : effMkt(p)), 0);
+    const posCashAll = positions.reduce((s, p) => s + (isCashNat(p) ? effMkt(p) : 0), 0);
+    const cashAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).cash), 0) + posCashAll;
     const marginAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).margin), 0);
     const nlvAll = mktvlAll + cashAll;
     const elAll = nlvAll - marginAll;
@@ -1548,19 +1706,21 @@ function App() {
   };
 
   /* ---------- snapshots de rendimiento: siempre sobre la cartera completa, no el filtro actual ---------- */
-  const buildSnapshot = () => {
-    const mktvlAll = positions.reduce((s, p) => s + effMkt(p), 0);
-    const cashAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).cash), 0);
+  const buildSnapshot = (posArg) => {
+    const pos = posArg || positions;
+    const mktvlAll = pos.reduce((s, p) => s + (isCashNat(p) ? 0 : effMkt(p)), 0);
+    const posCashAll = pos.reduce((s, p) => s + (isCashNat(p) ? effMkt(p) : 0), 0);
+    const cashAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).cash), 0) + posCashAll;
     const marginAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).margin), 0);
     const nlvAll = mktvlAll + cashAll;
     const elAll = nlvAll - marginAll;
     const blocks = {};
     BLOCKS.forEach((b) => {
-      const bp = positions.filter((p) => p.block === b.id);
+      const bp = pos.filter((p) => p.block === b.id);
       blocks[b.id] = { riesgo: bp.reduce((s, p) => s + capDesplegado(p), 0), plausible: bp.reduce((s, p) => s + plausibleOf(p), 0), pnl: bp.reduce((s, p) => s + effPnl(p), 0) };
     });
     const tickers = {};
-    positions.forEach((p) => {
+    pos.forEach((p) => {
       if (!p.tkr) return;
       if (!tickers[p.tkr]) tickers[p.tkr] = { riesgo: 0, pnl: 0 };
       tickers[p.tkr].riesgo += capDesplegado(p);
@@ -1571,9 +1731,9 @@ function App() {
       mktvl: mktvlAll, cash: cashAll, margin: marginAll, nlv: nlvAll, el: elAll,
       elNlv: nlvAll ? elAll / nlvAll : NaN, elMrgn: marginAll ? elAll / marginAll : NaN,
       leverage: nlvAll ? mktvlAll / nlvAll : NaN,
-      totalRiesgo: positions.reduce((s, p) => s + capDesplegado(p), 0),
-      totalPlausible: positions.reduce((s, p) => s + plausibleOf(p), 0),
-      totalPnl: positions.reduce((s, p) => s + effPnl(p), 0),
+      totalRiesgo: pos.reduce((s, p) => s + capDesplegado(p), 0),
+      totalPlausible: pos.reduce((s, p) => s + plausibleOf(p), 0),
+      totalPnl: pos.reduce((s, p) => s + effPnl(p), 0),
       blocks, tickers,
     };
   };
@@ -1633,6 +1793,16 @@ function App() {
             }}>{label}</button>
           ))}
         </div>
+        {updateNotice && (
+          <div style={{ background: T.tileGreen, borderRadius: 14, padding: "10px 12px", marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, color: T.ink, fontWeight: 700, lineHeight: 1.45 }}>App actualizada a v{updateNotice.to} (antes {updateNotice.from}). Se guardó una copia automática de tus datos por seguridad.</div>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500, lineHeight: 1.45, marginTop: 3 }}>Si tras la actualización algo no cuadra o faltan datos, restaura la copia desde Backup → Copias automáticas.</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button onClick={() => { setUpdateNotice(null); openBackup(); }} style={{ background: T.dark, border: "none", borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 700, color: "#fff", cursor: "pointer" }}>Ver copias</button>
+              <button onClick={() => setUpdateNotice(null)} style={{ background: "transparent", border: "none", borderRadius: 10, padding: "7px 10px", fontSize: 12, fontWeight: 700, color: T.sub, cursor: "pointer" }}>Todo OK</button>
+            </div>
+          </div>
+        )}
         {refreshMsg && <div style={{ fontSize: 12, color: T.green, fontWeight: 700, marginBottom: 12, background: T.tileGreen, borderRadius: 12, padding: "8px 12px" }}>{refreshMsg}</div>}
 
         {/* SELECTOR BROKER */}
@@ -1666,11 +1836,12 @@ function App() {
               </>
             ) : (
               <>
-                <MoneyField label={"Cash · " + broker} value={(accounts[broker] || {}).cash} onChange={setAccField(broker, "cash")} signed />
+                <MoneyField label={"Cash manual · " + broker} value={(accounts[broker] || {}).cash} onChange={setAccField(broker, "cash")} signed />
                 <MoneyField label={"Margin · " + broker} value={(accounts[broker] || {}).margin} onChange={setAccField(broker, "margin")} />
               </>
             )}
           </div>
+          {posCash !== 0 && <div style={{ fontSize: 11, color: T.sub, marginBottom: 9, padding: "0 2px" }}>Cash = manual {(manualCash < 0 ? "-$" : "$") + money(Math.abs(manualCash))} + posiciones Cash B0 {(posCash < 0 ? "-$" : "$") + money(Math.abs(posCash))} → total {(cash < 0 ? "-$" : "$") + money(Math.abs(cash))}. Las posiciones Cash de B0 ya cuentan aquí (no en MKT VL): no las dupliques en el cash manual.</div>}
           {broker === "Todos" && <div style={{ fontSize: 11, color: T.sub, marginBottom: 9, padding: "0 2px" }}>Elige un broker arriba para editar su cash/margin. Toca ⚙ para añadir o quitar brokers.</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 9, marginBottom: 14 }}>
             <Tile label="Excess Liq (auto = NLV − Margin)" value={(el < 0 ? "-$" : "$") + money(Math.abs(el))} tone={el > 0 ? "green" : "red"} />
@@ -1741,13 +1912,15 @@ function App() {
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
             editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} />
         ) : activeTab === "rendimiento" ? (
-          <RendimientoCard snapshots={snapshots} onSave={saveSnapshot} onDelete={deleteSnapshot} />
+          <RendimientoCard snapshots={snapshots} flows={flows} onSave={saveSnapshot} onDelete={deleteSnapshot} />
+        ) : activeTab === "aportaciones" ? (
+          <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} />
         ) : (
           <ExposureCard rows={exposureRows} onOpen={setInfo} showPnl={showPnl} togglePnl={togglePnl} />
         )}
 
-        {/* DISTRIBUCIÓN — debajo del contenido del bloque (no aplica en Rendimiento) */}
-        {activeTab !== "rendimiento" && (
+        {/* DISTRIBUCIÓN — debajo del contenido del bloque (no aplica en Rendimiento ni Aportaciones) */}
+        {activeTab !== "rendimiento" && activeTab !== "aportaciones" && (
           <ChartCard scope={chartScope} setScope={setScopeAndReset} scopeOptions={scopeOptions} slices={chartData.slices} total={chartData.total} denomPct={chartData.denomPct} denomLabel={chartData.denomLabel} selected={selectedSlice} onSelect={setSelectedSlice} />
         )}
 
@@ -1756,7 +1929,8 @@ function App() {
         </div>
         </>)}
 
-        <div style={{ textAlign: "center", fontSize: 14, fontWeight: 800, color: T.sub, letterSpacing: 0.3, margin: "22px 0 10px" }}>💸Galo Will Make You Rich💸</div>
+        <div style={{ textAlign: "center", fontSize: 14, fontWeight: 800, color: T.sub, letterSpacing: 0.3, margin: "22px 0 4px" }}>💸Galo Will Make You Rich💸</div>
+        <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: T.sub, opacity: 0.7, marginBottom: 10 }}>v{APP_VERSION}</div>
       </div>
 
       <InfoModal type={info} onClose={() => setInfo(null)} />
@@ -1860,7 +2034,7 @@ function App() {
         <div onClick={() => setBackupOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 24, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink, marginBottom: 8 }}>Backup de datos</div>
-            <div style={{ fontSize: 14, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Copia este texto y guárdalo (Notas, email…) para restaurar en otro dispositivo o si se borra. Backup único de toda la app: brokers, posiciones, cash y margen de cada broker, snapshots, operaciones del Comparador y tu API key. Para restaurar, pulsa Pegar (coge el backup del portapapeles) y luego Restaurar.</div>
+            <div style={{ fontSize: 14, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Copia este texto y guárdalo (Notas, email…) para restaurar en otro dispositivo o si se borra. Backup único de toda la app: brokers, posiciones, cash y margen de cada broker, snapshots, aportaciones, operaciones del Comparador y tu API key. Para restaurar, pulsa Pegar (coge el backup del portapapeles) y luego Restaurar.</div>
             <textarea id="backup-ta" value={backupText} onChange={(e) => { setBackupText(e.target.value); setRestoreMsg(""); }} spellCheck={false} style={{ width: "100%", boxSizing: "border-box", height: 190, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: 12, fontSize: 12.5, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.ink, lineHeight: 1.5, resize: "vertical", outline: "none" }} />
             <div style={{ height: 18, margin: "6px 2px 2px" }}>
               {copied && <span style={{ fontSize: 12.5, color: T.green, fontWeight: 700 }}>Copiado ✓ — guárdalo en Notas o email</span>}
@@ -1875,6 +2049,23 @@ function App() {
               <button onClick={pasteBackup} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Pegar</button>
               <button onClick={restoreBackup} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Restaurar</button>
             </div>
+            {autoBackups.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Copias automáticas (al detectar una versión nueva)</div>
+                <div style={{ display: "grid", gap: 7 }}>
+                  {autoBackups.map((bk) => (
+                    <div key={bk.ts} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: T.tile, borderRadius: 12, padding: "9px 11px" }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>Datos de la v{bk.version}</div>
+                        <div style={{ fontSize: 11, color: T.sub, fontWeight: 600 }}>{new Date(bk.ts).toLocaleString("es-ES", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+                      </div>
+                      <button onClick={() => restoreAutoBackup(bk)} style={{ flexShrink: 0, background: confirmAutoBk === bk.ts ? T.red : T.card, border: "none", borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 800, color: confirmAutoBk === bk.ts ? "#fff" : T.ink, cursor: "pointer", boxShadow: T.shadow }}>{confirmAutoBk === bk.ts ? "¿Seguro? Recarga la app" : "Restaurar"}</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 10.5, color: T.sub, lineHeight: 1.45, marginTop: 7 }}>Restaurar una copia sobrescribe los datos actuales con los de esa versión y recarga la app. Se guardan las 3 últimas.</div>
+              </div>
+            )}
             <div style={{ textAlign: "center", marginTop: 12 }}>
               <button onClick={() => setBackupOpen(false)} style={{ background: "transparent", border: "none", fontSize: 14, fontWeight: 600, color: T.sub, cursor: "pointer" }}>Cerrar</button>
             </div>
