@@ -79,7 +79,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    REGLA: cada vez que Claude cambie algo que toque datos/estructura de datos (nuevos campos, nuevas claves de
    localStorage, cambios de modelo, etc.) DEBE subir APP_VERSION aquí mismo, o el usuario no recibe el aviso
    de actualización ni la copia de seguridad automática. Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "1.2";
+const APP_VERSION = "1.4";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -223,16 +223,56 @@ const newId = () => "p" + Math.random().toString(36).slice(2, 8);
 /* ---------- lector de capturas para el Comparador: OCR + parseo de ticker/strike/expiry/bid-ask/margen ---------- */
 const OCR_MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
 const OCR_STOPWORDS = new Set(["USD", "ASK", "BID", "PUT", "CALL", "THE", "AND", "NASDAQ", "NYSE", "NMS", "SELL", "BUY", "ORDER", "ACCOUNT", "MARKET", "DATA", "GREEKS", "SPREAD", "BUYING", "POWER", "POSITION", "QUANTITY", "PREVIEW", "ESTIMATE", "IMPACT", "COST", "SLIDE", "COMMISSION", "MIN", "INVEST", "MAX", "LOSS", "RETURN", "RISK", "BREAK", "EVEN", "DELTA", "GAMMA", "THETA", "SPX", "UNDERLYING"]);
+/* preprocesado de imagen antes del OCR: apps de trading en modo oscuro (texto claro sobre negro) se leen mal con
+   Tesseract por defecto (entrenado sobre todo con texto oscuro sobre fondo claro). Convertimos a gris, invertimos
+   si detectamos que es oscura de media, y subimos contraste — mejora mucho la lectura en capturas como esta. */
+function preprocessScreenshotForOcr(file) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = Math.min(2, 1800 / Math.max(img.width, img.height)) || 1;
+          const w = Math.max(1, Math.round(img.width * Math.max(scale, 1)));
+          const h = Math.max(1, Math.round(img.height * Math.max(scale, 1)));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const d = imgData.data;
+          let sum = 0;
+          for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+          const dark = sum / (d.length / 4) < 128;
+          for (let i = 0; i < d.length; i += 4) {
+            let g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+            if (dark) g = 255 - g;
+            g = Math.max(0, Math.min(255, (g - 128) * 1.4 + 128));
+            d[i] = d[i + 1] = d[i + 2] = g;
+          }
+          ctx.putImageData(imgData, 0, 0);
+          canvas.toBlob((blob) => resolve(blob || file), "image/png");
+        } catch (e) { resolve(file); }
+      };
+      img.onerror = () => resolve(file);
+      img.src = URL.createObjectURL(file);
+    } catch (e) { resolve(file); }
+  });
+}
 function parseOptionScreenshotText(raw) {
   const text = String(raw || "").replace(/\r/g, "");
   const upper = text.toUpperCase();
-  let tkr = "";
-  const tokens = upper.match(/\b[A-Z]{1,6}\b/g) || [];
-  for (const t of tokens) { if (t.length >= 2 && !OCR_STOPWORDS.has(t) && !(t in OCR_MONTHS)) { tkr = t; break; } }
+  const isTkrCandidate = (t) => t.length >= 2 && !OCR_STOPWORDS.has(t) && !(t in OCR_MONTHS);
 
-  let strike = "", dte = "", right = "";
+  let strike = "", dte = "", right = "", tkr = "";
   const mMonth = upper.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b/);
   if (mMonth) {
+    /* ticker: el token en mayúsculas más cercano justo ANTES del mes (ej. "ASTS AUG 21 '26 70 Put") — mucho
+       más fiable que buscar en todo el texto, donde suele colarse ruido de la interfaz ("Account", "Sell"…) */
+    const before = upper.slice(Math.max(0, mMonth.index - 22), mMonth.index);
+    const beforeTokens = before.match(/[A-Z]{1,6}/g) || [];
+    for (let i = beforeTokens.length - 1; i >= 0; i--) { if (isTkrCandidate(beforeTokens[i])) { tkr = beforeTokens[i]; break; } }
+
     const seg = upper.slice(mMonth.index, mMonth.index + 45);
     const mDay = seg.match(/^[A-Z]{3}\D{0,4}(\d{1,2})\b/);
     const mYear = seg.match(/'\s*(\d{2})\b/) || seg.match(/\b(20\d{2})\b/);
@@ -251,20 +291,33 @@ function parseOptionScreenshotText(raw) {
       right = mStrikeRight[2] === "PUT" ? "P" : "C";
     }
   }
+  if (!tkr) {
+    // sin mes detectado: fallback al escaneo global de antes (peor, pero mejor que nada)
+    const tokens = upper.match(/\b[A-Z]{1,6}\b/g) || [];
+    for (const t of tokens) { if (isTkrCandidate(t)) { tkr = t; break; } }
+  }
 
-  const mAsk = upper.match(/ASK[^0-9]{0,15}[\d,]+\s*X\s*([\d.]+)/) || upper.match(/ASK[^\n]{0,25}?([\d]+\.[\d]{1,2})/);
-  const mBid = upper.match(/BID[^0-9]{0,15}[\d,]+\s*X\s*([\d.]+)/) || upper.match(/BID[^\n]{0,25}?([\d]+\.[\d]{1,2})/);
-  const ask = mAsk ? parseFloat(mAsk[1]) : NaN;
-  const bid = mBid ? parseFloat(mBid[1]) : NaN;
+  const NUM = "([\\d]+[.,]\\d{1,2})";
+  const parseNum = (s) => (s ? parseFloat(s.replace(",", ".")) : NaN);
+  const mAsk = upper.match(new RegExp("ASK[^0-9]{0,20}[\\d,]+\\s*[X×]\\s*" + NUM)) || upper.match(new RegExp("ASK[^\\n]{0,30}?" + NUM));
+  const mBid = upper.match(new RegExp("BID[^0-9]{0,20}[\\d,]+\\s*[X×]\\s*" + NUM)) || upper.match(new RegExp("BID[^\\n]{0,30}?" + NUM));
+  const ask = mAsk ? parseNum(mAsk[1]) : NaN;
+  const bid = mBid ? parseNum(mBid[1]) : NaN;
+  const strikeN = n(strike);
+  /* filtro de cordura: una prima por acción no debería ni de lejos superar el strike, ni ser absurdamente grande —
+     si el OCR devuelve basura (nºs pegados/mal leídos), mejor dejarlo en blanco que meter un dato falso */
+  const plausiblePremium = (v) => isFinite(v) && v > 0 && v < 1000 && (!strikeN || v < strikeN * 1.5);
+  const askOk = plausiblePremium(ask), bidOk = plausiblePremium(bid);
   let credit = "";
-  if (isFinite(ask) && isFinite(bid)) credit = String(Math.round(((ask + bid) / 2) * 1000) / 1000);
-  else if (isFinite(ask)) credit = String(ask);
-  else if (isFinite(bid)) credit = String(bid);
+  if (askOk && bidOk) credit = String(Math.round(((ask + bid) / 2) * 1000) / 1000);
+  else if (askOk) credit = String(ask);
+  else if (bidOk) credit = String(bid);
 
-  const mMargin = upper.match(/MARGIN\s*IMPACT\D{0,6}([\d,]+\.?\d*)/);
-  const margin = mMargin ? mMargin[1].replace(/,/g, "") : "";
+  const mMargin = upper.match(/MARGIN\s*IMPACT\D{0,6}([\d,]+[.,]?\d*)/);
+  const marginVal = mMargin ? parseFloat(mMargin[1].replace(/,/g, "")) : NaN;
+  const margin = isFinite(marginVal) && marginVal > 0 && marginVal < 1000000 ? String(marginVal) : "";
 
-  return { tkr, strike, dte, credit, margin, right, ask: isFinite(ask) ? ask : null, bid: isFinite(bid) ? bid : null };
+  return { tkr, strike, dte, credit, margin, right, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green" : v >= RULES.elNlv.amber ? "amber" : "red");
 const toneMrgn = (v) => (!isFinite(v) ? "muted" : v >= RULES.elMrgn.green ? "green" : v >= RULES.elMrgn.amber ? "amber" : "red");
@@ -1202,6 +1255,8 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
   const [editSet, setEditSet] = useState(() => new Set());
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrMsg, setOcrMsg] = useState("");
+  const [ocrRawText, setOcrRawText] = useState("");
+  const [ocrShowRaw, setOcrShowRaw] = useState(false);
   const base = { elNlv: nlv ? el / nlv : NaN, elMrgn: margin ? el / margin : NaN };
   const baseEmpty = !nlv && !margin;
 
@@ -1262,10 +1317,13 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
   const runOcr = async (file) => {
     if (!window.Tesseract) { setOcrMsg("No se pudo cargar el lector de imágenes (sin conexión). Rellena a mano."); setTimeout(() => setOcrMsg(""), 6000); return; }
-    setOcrBusy(true); setOcrMsg("Leyendo captura…");
+    setOcrBusy(true); setOcrMsg("Leyendo captura…"); setOcrRawText("");
     try {
-      const { data } = await window.Tesseract.recognize(file, "eng");
-      const p = parseOptionScreenshotText(data && data.text);
+      const input = await preprocessScreenshotForOcr(file);
+      const { data } = await window.Tesseract.recognize(input, "eng");
+      const rawText = (data && data.text) || "";
+      setOcrRawText(rawText);
+      const p = parseOptionScreenshotText(rawText);
       const id = newId();
       setTrades((ts) => [{ id, tkr: p.tkr || "", dte: p.dte || "30", strike: p.strike || "", credit: p.credit || "", margin: p.margin || "" }, ...ts]);
       setEditSet((s) => new Set(s).add(id));
@@ -1321,6 +1379,14 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
 
       {ocrMsg && (
         <div style={{ fontSize: 12, color: ocrMsg.startsWith("Error") ? T.red : T.green, fontWeight: 700, marginBottom: 12, background: ocrMsg.startsWith("Error") ? T.tileRed : T.tileGreen, borderRadius: 12, padding: "8px 12px", lineHeight: 1.4 }}>{ocrMsg}</div>
+      )}
+      {ocrRawText && (
+        <div style={{ marginBottom: 12 }}>
+          <button onClick={() => setOcrShowRaw((v) => !v)} style={{ background: "transparent", border: "none", fontSize: 11.5, fontWeight: 700, color: T.sub, textDecoration: "underline", cursor: "pointer", padding: 0 }}>{ocrShowRaw ? "Ocultar texto reconocido" : "Ver texto reconocido (para corregir a mano)"}</button>
+          {ocrShowRaw && (
+            <div style={{ marginTop: 6, background: T.tile, borderRadius: 12, padding: 10, fontSize: 11, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.sub, whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{ocrRawText}</div>
+          )}
+        </div>
       )}
 
       {/* añadir / limpiar */}
@@ -1434,6 +1500,8 @@ function App() {
   const [keyModalOpen, setKeyModalOpen] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
+  const [updChecking, setUpdChecking] = useState(false);
+  const [updCheckMsg, setUpdCheckMsg] = useState("");
   const [snapshots, setSnapshots] = useState([]);
   const [flows, setFlows] = useState([]);
   const [autoBackups, setAutoBackups] = useState([]);
@@ -1587,6 +1655,33 @@ function App() {
   };
 
   /* restaura una copia automática (raw localStorage) y recarga la app para releer todo limpio */
+  /* comprobación manual de versión: pide el propio index.html a la red sin caché y compara — botón porque el chequeo
+     automático al abrir puede no dispararse a tiempo en apps guardadas en pantalla de inicio de iOS */
+  const checkForNewerVersion = () => {
+    setUpdChecking(true); setUpdCheckMsg("Buscando actualización…");
+    fetch(location.pathname + "?_cachebust=" + Date.now(), { cache: "no-store" })
+      .then((r) => r.text())
+      .then((html) => {
+        const m = html.match(/const APP_VERSION = "([^"]+)"/);
+        if (m && m[1] !== APP_VERSION) {
+          setUpdCheckMsg(`Hay una versión nueva (v${m[1]}) — actualizando…`);
+          const url = new URL(location.href);
+          url.searchParams.set("v", m[1]);
+          url.searchParams.set("_", Date.now());
+          setTimeout(() => location.replace(url.toString()), 500);
+        } else {
+          setUpdChecking(false);
+          setUpdCheckMsg("Ya tienes la última versión (v" + APP_VERSION + ").");
+          setTimeout(() => setUpdCheckMsg(""), 4000);
+        }
+      })
+      .catch(() => {
+        setUpdChecking(false);
+        setUpdCheckMsg("No se pudo comprobar — revisa la conexión.");
+        setTimeout(() => setUpdCheckMsg(""), 4000);
+      });
+  };
+
   const restoreAutoBackup = (bk) => {
     if (confirmAutoBk !== bk.ts) { setConfirmAutoBk(bk.ts); setTimeout(() => setConfirmAutoBk(null), 4000); return; }
     try {
@@ -2035,7 +2130,10 @@ function App() {
         </>)}
 
         <div style={{ textAlign: "center", fontSize: 14, fontWeight: 800, color: T.sub, letterSpacing: 0.3, margin: "22px 0 4px" }}>💸Galo Will Make You Rich💸</div>
-        <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: T.sub, opacity: 0.7, marginBottom: 10 }}>v{APP_VERSION}</div>
+        <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: T.sub, opacity: 0.7, marginBottom: 4 }}>
+          v{APP_VERSION} · <button onClick={checkForNewerVersion} disabled={updChecking} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 700, color: T.sub, textDecoration: "underline", cursor: "pointer", padding: 0 }}>{updChecking ? "comprobando…" : "buscar actualización"}</button>
+        </div>
+        {updCheckMsg && <div style={{ textAlign: "center", fontSize: 11, fontWeight: 600, color: T.sub, marginBottom: 10 }}>{updCheckMsg}</div>}
       </div>
 
       <InfoModal type={info} onClose={() => setInfo(null)} />
