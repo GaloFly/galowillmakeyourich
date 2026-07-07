@@ -79,7 +79,8 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    REGLA: cada vez que Claude cambie algo que toque datos/estructura de datos (nuevos campos, nuevas claves de
    localStorage, cambios de modelo, etc.) DEBE subir APP_VERSION aquí mismo, o el usuario no recibe el aviso
    de actualización ni la copia de seguridad automática. Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
+window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_FLOWS = "bloques_aportaciones_v1";
@@ -2181,6 +2182,32 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<script>
+/* ---------- auto-actualización: hosting estático (GitHub Pages/Netlify/Vercel) y apps guardadas en pantalla de
+   inicio pueden servir una copia cacheada y no recargar solos tras un deploy. Este script, en cada apertura,
+   pide de red (sin caché) el propio index.html, compara su APP_VERSION con la que está corriendo, y si hay una
+   más nueva en el servidor, fuerza una recarga con un parámetro que rompe cualquier caché. ---------- */
+(function () {
+  function checkForUpdate() {
+    try {
+      fetch(location.pathname + "?_cachebust=" + Date.now(), { cache: "no-store" })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var m = html.match(/const APP_VERSION = "([^"]+)"/);
+          if (m && window.APP_VERSION && m[1] !== window.APP_VERSION) {
+            var url = new URL(location.href);
+            url.searchParams.set("v", m[1]);
+            url.searchParams.set("_", Date.now());
+            location.replace(url.toString());
+          }
+        })
+        .catch(function () {});
+    } catch (e) {}
+  }
+  if (document.readyState === "complete") checkForUpdate();
+  else window.addEventListener("load", checkForUpdate);
+})();
 </script>
 </body>
 </html>
