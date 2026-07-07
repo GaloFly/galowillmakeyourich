@@ -18,6 +18,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" crossorigin></script>
 </head>
 <body>
 <div id="root"></div>
@@ -205,6 +206,52 @@ const detailOf = (tr) => {
   return parts.join(" · ");
 };
 const newId = () => "p" + Math.random().toString(36).slice(2, 8);
+/* ---------- lector de capturas para el Comparador: OCR + parseo de ticker/strike/expiry/bid-ask/margen ---------- */
+const OCR_MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+const OCR_STOPWORDS = new Set(["USD", "ASK", "BID", "PUT", "CALL", "THE", "AND", "NASDAQ", "NYSE", "NMS", "SELL", "BUY", "ORDER", "ACCOUNT", "MARKET", "DATA", "GREEKS", "SPREAD", "BUYING", "POWER", "POSITION", "QUANTITY", "PREVIEW", "ESTIMATE", "IMPACT", "COST", "SLIDE", "COMMISSION", "MIN", "INVEST", "MAX", "LOSS", "RETURN", "RISK", "BREAK", "EVEN", "DELTA", "GAMMA", "THETA", "SPX", "UNDERLYING"]);
+function parseOptionScreenshotText(raw) {
+  const text = String(raw || "").replace(/\r/g, "");
+  const upper = text.toUpperCase();
+  let tkr = "";
+  const tokens = upper.match(/\b[A-Z]{1,6}\b/g) || [];
+  for (const t of tokens) { if (t.length >= 2 && !OCR_STOPWORDS.has(t) && !(t in OCR_MONTHS)) { tkr = t; break; } }
+
+  let strike = "", dte = "", right = "";
+  const mMonth = upper.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b/);
+  if (mMonth) {
+    const seg = upper.slice(mMonth.index, mMonth.index + 45);
+    const mDay = seg.match(/^[A-Z]{3}\D{0,4}(\d{1,2})\b/);
+    const mYear = seg.match(/'\s*(\d{2})\b/) || seg.match(/\b(20\d{2})\b/);
+    const mStrikeRight = seg.match(/(\d{1,4}(?:\.\d{1,2})?)\D{0,4}\b(PUT|CALL)\b/);
+    if (mDay && mYear && mStrikeRight) {
+      const day = parseInt(mDay[1], 10);
+      const yearRaw = mYear[1];
+      const year = yearRaw.length === 2 ? 2000 + parseInt(yearRaw, 10) : parseInt(yearRaw, 10);
+      const month = OCR_MONTHS[mMonth[1]];
+      const expiry = new Date(Date.UTC(year, month, day));
+      if (!isNaN(expiry.getTime())) {
+        const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+        dte = String(Math.max(Math.round((expiry - today) / 86400000), 0));
+      }
+      strike = mStrikeRight[1];
+      right = mStrikeRight[2] === "PUT" ? "P" : "C";
+    }
+  }
+
+  const mAsk = upper.match(/ASK[^0-9]{0,15}[\d,]+\s*X\s*([\d.]+)/) || upper.match(/ASK[^\n]{0,25}?([\d]+\.[\d]{1,2})/);
+  const mBid = upper.match(/BID[^0-9]{0,15}[\d,]+\s*X\s*([\d.]+)/) || upper.match(/BID[^\n]{0,25}?([\d]+\.[\d]{1,2})/);
+  const ask = mAsk ? parseFloat(mAsk[1]) : NaN;
+  const bid = mBid ? parseFloat(mBid[1]) : NaN;
+  let credit = "";
+  if (isFinite(ask) && isFinite(bid)) credit = String(Math.round(((ask + bid) / 2) * 1000) / 1000);
+  else if (isFinite(ask)) credit = String(ask);
+  else if (isFinite(bid)) credit = String(bid);
+
+  const mMargin = upper.match(/MARGIN\s*IMPACT\D{0,6}([\d,]+\.?\d*)/);
+  const margin = mMargin ? mMargin[1].replace(/,/g, "") : "";
+
+  return { tkr, strike, dte, credit, margin, right, ask: isFinite(ask) ? ask : null, bid: isFinite(bid) ? bid : null };
+}
 const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green" : v >= RULES.elNlv.amber ? "amber" : "red");
 const toneMrgn = (v) => (!isFinite(v) ? "muted" : v >= RULES.elMrgn.green ? "green" : v >= RULES.elMrgn.amber ? "amber" : "red");
 const ibkrDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return ""; return `${MONTHS[d.getMonth()]} ${d.getDate()} '${String(d.getFullYear()).slice(-2)}`; };
@@ -1129,6 +1176,8 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
 /* ---------- COMPARADOR: contenido de la vista (la cuenta base viene de Portfolio) ---------- */
 function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis }) {
   const [editSet, setEditSet] = useState(() => new Set());
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrMsg, setOcrMsg] = useState("");
   const base = { elNlv: nlv ? el / nlv : NaN, elMrgn: margin ? el / margin : NaN };
   const baseEmpty = !nlv && !margin;
 
@@ -1187,6 +1236,30 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
   const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
+  const runOcr = async (file) => {
+    if (!window.Tesseract) { setOcrMsg("No se pudo cargar el lector de imágenes (sin conexión). Rellena a mano."); setTimeout(() => setOcrMsg(""), 6000); return; }
+    setOcrBusy(true); setOcrMsg("Leyendo captura…");
+    try {
+      const { data } = await window.Tesseract.recognize(file, "eng");
+      const p = parseOptionScreenshotText(data && data.text);
+      const id = newId();
+      setTrades((ts) => [{ id, tkr: p.tkr || "", dte: p.dte || "30", strike: p.strike || "", credit: p.credit || "", margin: p.margin || "" }, ...ts]);
+      setEditSet((s) => new Set(s).add(id));
+      const parts = [];
+      if (p.tkr) parts.push(p.tkr + (p.right || ""));
+      if (p.strike) parts.push("strike $" + p.strike);
+      if (p.dte) parts.push(p.dte + " DTE");
+      if (p.ask != null && p.bid != null) parts.push(`mid $${p.credit} (ask ${p.ask} / bid ${p.bid})`);
+      else if (p.credit) parts.push("prima $" + p.credit);
+      if (p.margin) parts.push("margen $" + p.margin);
+      setOcrMsg(parts.length ? `Leído: ${parts.join(" · ")}. Revisa los campos antes de usarlo.` : "No pude leer los datos con claridad — completa los campos a mano.");
+    } catch (err) {
+      setOcrMsg("Error leyendo la imagen: " + (err && err.message ? err.message : "inténtalo de nuevo"));
+    } finally {
+      setOcrBusy(false);
+      setTimeout(() => setOcrMsg(""), 10000);
+    }
+  };
 
   const seg = (key, label) => (
     <button onClick={() => setBasis(key)} style={{ border: "none", cursor: "pointer", borderRadius: 11, padding: "7px 11px", fontSize: 12, fontWeight: 700, fontFamily: T.sans, background: basis === key ? "#fff" : "rgba(255,255,255,0.07)", color: basis === key ? T.dark : "#C4CCD4" }}>{label}</button>
@@ -1222,10 +1295,17 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
         </div>
       )}
 
+      {ocrMsg && (
+        <div style={{ fontSize: 12, color: ocrMsg.startsWith("Error") ? T.red : T.green, fontWeight: 700, marginBottom: 12, background: ocrMsg.startsWith("Error") ? T.tileRed : T.tileGreen, borderRadius: 12, padding: "8px 12px", lineHeight: 1.4 }}>{ocrMsg}</div>
+      )}
+
       {/* añadir / limpiar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 4px 12px", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 4px 12px", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>Candidatas · {computed.length}</span>
         <div style={{ display: "flex", gap: 8 }}>
+          <input id="ocr-file-input" type="file" accept="image/*" style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) runOcr(f); }} />
+          <button onClick={() => document.getElementById("ocr-file-input").click()} disabled={ocrBusy} style={{ background: T.card, border: "none", borderRadius: 14, padding: "9px 14px", fontSize: 13.5, fontWeight: 700, color: T.ink, cursor: "pointer", boxShadow: T.shadow }}>{ocrBusy ? "Leyendo…" : "📷 Leer captura"}</button>
           <button onClick={addTrade} style={{ background: T.green, border: "none", borderRadius: 14, padding: "9px 16px", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>+ Operación</button>
         </div>
       </div>
@@ -1306,7 +1386,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       </div>
 
       <div style={{ fontSize: 11.5, color: T.sub, lineHeight: 1.6, marginTop: 18, padding: "0 4px" }}>
-        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones.
+        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit) y el Margin Impact de una captura de tu broker; revisa siempre los campos antes de usarlo, el reconocimiento de texto no es infalible.
       </div>
     </>
   );
