@@ -64,10 +64,13 @@ function applyTheme(dark) {
     { id: 3, name: "Bloque 3", tag: "High Risk", desc: "Earnings · 0DTE · spreads", color: T.orange, bg: T.tileAmber, badge: T.orange,
       tMin: 0.00, tMax: 0.05, scaleMin: 0, scaleMax: 0.15, band: 0.03 },
   ];
-  TABS = [...BLOCKS.map((b) => ({ id: b.id, label: b.name.replace("Bloque ", "B") + " · " + b.tag, color: b.color })), { id: "exposicion", label: "Exposición", color: T.dark }, { id: "rendimiento", label: "📈 Rendimiento", color: T.gold }, { id: "aportaciones", label: "💶 Aportaciones", color: T.green }];
+  TABS = [...BLOCKS.map((b) => ({ id: b.id, label: b.name.replace("Bloque ", "B") + " · " + b.tag, color: b.color })), { id: "exposicion", label: "Exposición", color: T.dark }, { id: "vencimientos", label: "📅 Vencimientos", color: T.orange }, { id: "rendimiento", label: "📈 Rendimiento", color: T.gold }, { id: "aportaciones", label: "💶 Aportaciones", color: T.green }];
 }
 applyTheme(false);
 const RULES = { elNlv: { green: 0.4, amber: 0.25 }, elMrgn: { green: 1.0, amber: 0.5 } };
+/* concentración por subyacente (% NLV) — mismo marco que usan los objetivos de bloque (10/12%, 70/80%…) */
+const CONC = { green: 0.12, amber: 0.20 };
+const concTone = (v) => (!isFinite(v) ? "muted" : v <= CONC.green ? "green" : v <= CONC.amber ? "amber" : "red");
 const SEED_BROKERS = ["IBKR"];
 const emptyAcc = () => ({ cash: "0", margin: "0" });
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -99,7 +102,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "2.8";
+const APP_VERSION = "3.0";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
@@ -350,7 +353,12 @@ function parseOptionScreenshotText(raw) {
   const underVal = mUnder ? parseFloat(mUnder[1].replace(",", ".")) : NaN;
   const underlying = isFinite(underVal) && underVal > 0 && underVal < 100000 ? String(underVal) : "";
 
-  return { tkr, strike, dte, credit, margin, right, expiry: expiryISO, underlying, ask: askOk ? ask : null, bid: bidOk ? bid : null };
+  /* Delta de "The Greeks" — evita el "SPX Delta" (campo distinto) que casi siempre aparece antes, en Market Data */
+  const mDelta = upper.match(/(?<!SPX\s)\bDELTA\b[^0-9+\-]{0,20}?([+-]?\d{1,4}(?:[.,]\d{1,3})?)/);
+  const deltaVal = mDelta ? parseFloat(mDelta[1].replace(",", ".")) : NaN;
+  const delta = isFinite(deltaVal) && deltaVal !== 0 ? String(deltaVal) : "";
+
+  return { tkr, strike, dte, credit, margin, right, expiry: expiryISO, underlying, delta, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 /* ---------- lector de capturas con Gemini (visión), alternativa al Tesseract de arriba ---------- */
 function fileToBase64(file) {
@@ -370,7 +378,8 @@ async function extractOptionFromImage(file, apiKey) {
     ticker: { type: "string" }, right: { type: "string" }, strike: { type: "number" },
     expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" },
     margin: { type: "number", description: "Valor junto a la etiqueta literal 'Margin Impact', no otro campo en dólares." },
-    underlying: { type: "number", description: "Precio actual del SUBYACENTE (fila 'Underlying'), no de la opción." }
+    underlying: { type: "number", description: "Precio actual del SUBYACENTE (fila 'Underlying'), no de la opción." },
+    delta: { type: "number", description: "Valor bajo la sección 'The Greeks', etiqueta literal 'Delta' (no 'SPX Delta', que es un campo distinto)." }
   } };
   const prompt = [
     "Esta es una captura de una app de bróker (tipo IBKR) con una orden sobre UNA opción.",
@@ -383,6 +392,7 @@ async function extractOptionFromImage(file, apiKey) {
     "- bid: precio Bid de la opción (por acción). Si aparece como '3 x 8.45', el precio es 8.45, no 3.",
     "- margin: EXCLUSIVAMENTE el valor junto a la etiqueta literal 'Margin Impact' (suele estar en una sección 'Market Data' junto a otros campos parecidos como 'Max Loss', 'Break Even', 'Commission' o 'MinInvest'). NO confundas 'Margin Impact' con ninguno de esos otros campos aunque también sean cifras en dólares — deben tener su propia etiqueta bien visible. Si no encuentras literalmente el texto 'Margin Impact' en la imagen, omite este campo por completo en vez de adivinar con otro número.",
     "- underlying: precio actual del SUBYACENTE (no de la opción) — está en la fila con la etiqueta 'Underlying', normalmente junto al ticker y bolsa (ej. 'NASDAQ.NMS'). Es un precio por acción normal (ej. 74.67), mucho más pequeño que strike×100 o que Margin Impact — no lo confundas con esos.",
+    "- delta: EXCLUSIVAMENTE el valor junto a la etiqueta literal 'Delta' que aparece en la sección 'The Greeks' (normalmente junto a 'Gamma' y 'Theta'). NO uses 'SPX Delta' (un campo distinto, de correlación con el índice, que suele aparecer antes en 'Market Data') — si solo ves 'SPX Delta' y no un 'Delta' propio en 'The Greeks', omite este campo.",
     "Omite cualquier campo que no veas con claridad. Devuelve ÚNICAMENTE el JSON, sin texto adicional."
   ].join("\n");
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
@@ -425,11 +435,15 @@ function buildTradeFromGemini(data, file) {
   const margin = isFinite(marginN) && marginN > 0 && marginN < 1000000 ? String(marginN) : "";
   const underN = n(data.underlying);
   const underlying = isFinite(underN) && underN > 0 && underN < 100000 ? String(underN) : "";
-  return { tkr, strike, dte, credit, margin, right, expiry, underlying, ask: askOk ? ask : null, bid: bidOk ? bid : null };
+  const deltaN = n(data.delta);
+  const delta = isFinite(deltaN) && deltaN !== 0 && Math.abs(deltaN) < 100000 ? String(deltaN) : "";
+  return { tkr, strike, dte, credit, margin, right, expiry, underlying, delta, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green" : v >= RULES.elNlv.amber ? "amber" : "red");
 const toneMrgn = (v) => (!isFinite(v) ? "muted" : v >= RULES.elMrgn.green ? "green" : v >= RULES.elMrgn.amber ? "amber" : "red");
 const ibkrDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return ""; return `${MONTHS[d.getMonth()]} ${d.getDate()} '${String(d.getFullYear()).slice(-2)}`; };
+/* fecha larga para agrupar vencimientos, ej. "31 JUL 2026" */
+const longDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return ""; return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
 const optionDetail = (p) => {
   if (n(p.strike) > 0 && p.expiry) return `${strikeStr(p.strike)}${p.right} ${ibkrDate(p.expiry)}`;
   if (n(p.strike) > 0) return `${strikeStr(p.strike)}${p.right}`;
@@ -615,7 +629,10 @@ function InfoModal({ type, onClose }) {
     body: "Riesgo total = lo que va al barbell (80/15/5 sobre NLV): acción último×qty, crédito BEP×qty, débito el riesgo máx. Es también el techo anti-apalancamiento (si B0+B1+B2+B3 suman >100% del NLV, estás apalancado). Riesgo plausible = riesgo total × factor de corrección por posición (ej. 0.5 = solo la mitad cuenta como pérdida realista); en débito plausible = riesgo total (factor 1). El plausible es la métrica de sizing. P&L es solo seguimiento y nunca entra en el sizing.",
   } : type === "exposicion" ? {
     title: "Exposición por subyacente",
-    body: "Agrupa todas las posiciones del mismo ticker (aunque estén en distintos bloques o sean acción + opción) y muestra su peso real: dentro de cada bloque en el que aparece, sobre el MKT VL total, sobre el NLV y sobre el margen usado. % MKT VL es la lectura de concentración más limpia — no depende de cuánta caja tengas aparcada. % NLV es la que usan los objetivos de bloque (10/12%, 70/80%…), porque ese es tu marco de EL/NLV.",
+    body: "Agrupa todas las posiciones del mismo ticker (aunque estén en distintos bloques o sean acción + opción) y muestra su peso real: dentro de cada bloque en el que aparece, sobre el MKT VL total, sobre el NLV y sobre el margen usado. % MKT VL es la lectura de concentración más limpia — no depende de cuánta caja tengas aparcada. % NLV es la que usan los objetivos de bloque (10/12%, 70/80%…), porque ese es tu marco de EL/NLV. El circulito antes del ticker es el % NLV de ese subyacente: verde hasta 12%, ámbar hasta 20%, rojo por encima — el mismo umbral que usarías para un límite de concentración por posición individual. Si ya tienes convicción alta en algo (como ASTS) es normal y esperado que salga en rojo; el dot es solo una señal visual, no un tope automático.",
+  } : type === "vencimientos" ? {
+    title: "Vencimientos",
+    body: "Agrupa solo las opciones (no las acciones) por fecha de vencimiento y suma el mismo Riesgo total que usas en el resto de la app (para CRED es BEP × cantidad, igual que el Notional del Comparador). Así el capital en riesgo de cada fecha es directamente comparable con el de un bloque o un subyacente — no es el desembolso por asignación (eso sería Strike × cantidad, siempre algo mayor porque no descuenta la prima ya cobrada).",
   } : {
     title: "Apalancamiento (MKT VL / NLV)",
     body: "Mide cuánta exposición total tienes respecto al valor real de la cuenta, sumando el market value de las posiciones filtradas.",
@@ -750,6 +767,7 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
               <div onClick={() => toggleRow(row.tkr)} style={{ cursor: "pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                   <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span title={"% NLV " + pct(row.pctNlv, 1)} style={{ width: 8, height: 8, borderRadius: 4, background: HEX[concTone(row.pctNlv)], flexShrink: 0, display: "inline-block", alignSelf: "center" }} />
                     <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{row.tkr}</span>
                     {row.last > 0 && <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>${money2(row.last)}</span>}
                   </span>
@@ -793,6 +811,61 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
                 </div>
               )}
             </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- vencimientos agregados por fecha ---------- */
+function VencimientosCard({ rows, onOpen }) {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleRow = (exp) => setExpanded((s) => { const next = new Set(s); if (next.has(exp)) next.delete(exp); else next.add(exp); return next; });
+  return (
+    <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Vencimientos</div>
+        <InfoDot onClick={() => onOpen("vencimientos")} />
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500 }}>Sin opciones con vencimiento.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {rows.map((row) => {
+            const isOpen = expanded.has(row.expiry);
+            const dteLabel = row.dte < 0 ? "vencido" : row.dte === 0 ? "hoy" : row.dte + "d";
+            return (
+              <div key={row.expiry} style={{ borderRadius: 16, background: T.tile, padding: 12 }}>
+                <div onClick={() => toggleRow(row.expiry)} style={{ cursor: "pointer" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{longDate(row.expiry)}</span>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: row.dte <= 7 ? T.red : row.dte <= 30 ? T.gold : T.sub }}>{dteLabel}</span>
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>${money(row.riesgo)} riesgo</span>
+                  </div>
+                </div>
+                {isOpen && row.detailRows.length > 0 && (
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1.5px solid ${T.line}`, display: "grid", gap: 3 }}>
+                    {row.detailRows.map((d, i) => {
+                      const b = BLOCKS.find((x) => x.id === d.block);
+                      return (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "3px 0" }}>
+                          <span style={{ fontSize: 12, color: T.ink, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ color: b ? b.color : T.sub, fontWeight: 800 }}>{b ? b.name.replace("Bloque ", "B") : ""}</span>
+                            {" · " + d.tkr}
+                            {" · x " + d.qtyNum + " " + strikeStr(d.strike) + (d.right === "C" ? "C" : "P")}
+                            {" · BEP $" + money2(d.bep)}
+                          </span>
+                          <span style={{ fontSize: 12, color: T.sub, fontWeight: 800, flexShrink: 0 }}>${money(d.riesgo)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -1434,13 +1507,18 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     const roi = notional ? premium / notional : NaN;               // ROI = Premium / Notional
     const rom = tMargin ? premium / tMargin : NaN;                  // Return on margin = Premium / Margin
     const ann = n(tr.dte) ? 365 / n(tr.dte) : 0;
+    const annRoi = roi * ann;
+    /* eficiencia vs Delta: cuánto Annualized ROI (%) consigues por cada punto de Delta expuesto —
+       a igual ROI, menos Delta (menos "acción sintética" comprometida) es mejor; por eso se divide, no se multiplica. */
+    const deltaAbs = Math.abs(n(tr.delta));
+    const deltaEff = deltaAbs ? (annRoi * 100) / deltaAbs : NaN;
     let status = "GO";
     if (elNlv < RULES.elNlv.amber || elMrgn < RULES.elMrgn.amber) status = "NO-GO";
     else if (elNlv < RULES.elNlv.green || elMrgn < RULES.elMrgn.green) status = "CAUTION";
-    return { ...tr, notional, premium, bep, bepMargin, elNlv, elMrgn, dElNlv: elNlv - base.elNlv, dElMrgn: elMrgn - base.elMrgn, posSize, roi, rom, annRoi: roi * ann, annRom: rom * ann, status };
+    return { ...tr, notional, premium, bep, bepMargin, elNlv, elMrgn, dElNlv: elNlv - base.elNlv, dElMrgn: elMrgn - base.elMrgn, posSize, roi, rom, annRoi, annRom: rom * ann, deltaAbs, deltaEff, status };
   }), [trades, nlv, margin, el]);
 
-  const rankVal = (c) => (basis === "roi" ? c.roi : basis === "annRoi" ? c.annRoi : basis === "rom" ? c.rom : basis === "impact" ? c.elNlv : c.annRom);
+  const rankVal = (c) => (basis === "roi" ? c.roi : basis === "annRoi" ? c.annRoi : basis === "rom" ? c.rom : basis === "impact" ? c.elNlv : basis === "delta" ? c.deltaEff : c.annRom);
   const okOrder = { GO: 0, CAUTION: 1, "NO-GO": 2 };
   const ranked = useMemo(() => [...computed].sort((a, b) => {
     if (okOrder[a.status] !== okOrder[b.status]) return okOrder[a.status] - okOrder[b.status];
@@ -1463,6 +1541,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     rom: { lead: "Mejor return on margin", label: "Return on margin", val: (c) => pct(c.rom, 2) },
     annRom: { lead: "Mejor annualized return on margin", label: "Annualized return on margin", val: (c) => pct(c.annRom, 0) },
     impact: { lead: "Menor impacto en margen", label: "EL/NLV que deja", val: (c) => pct(c.elNlv) },
+    delta: { lead: "Mejor eficiencia vs Delta", label: "Annualized ROI / Delta", val: (c) => (isFinite(c.deltaEff) ? c.deltaEff.toFixed(2) + "%/Δ" : "—") },
   };
   let rationale = "";
   if (winner) {
@@ -1474,7 +1553,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
 
   const setTr = (id, k) => (v) => setTrades((ts) => ts.map((t) => (t.id === id ? { ...t, [k]: v } : t)));
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
-  const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
+  const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "", delta: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
 
   const errToStr = (err) => {
@@ -1491,6 +1570,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     else if (p.credit) parts.push("prima $" + p.credit);
     if (p.margin) parts.push("margen $" + p.margin);
     if (p.underlying) parts.push("subyacente $" + p.underlying);
+    if (p.delta) parts.push("delta " + p.delta);
     return (prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}` : "no pude leer los datos con claridad");
   };
   /* lee UNA captura y devuelve { trade, message } sin tocar el estado de UI — así el llamador
@@ -1535,7 +1615,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       const { trade, message } = await readOneScreenshot(list[i], gkey);
       if (trade) {
         const id = newId();
-        setTrades((ts) => [{ id, tkr: trade.tkr || "", dte: trade.dte || "30", strike: trade.strike || "", credit: trade.credit || "", margin: trade.margin || "", right: trade.right || "P", expiry: trade.expiry || "", underlying: trade.underlying || "" }, ...ts]);
+        setTrades((ts) => [{ id, tkr: trade.tkr || "", dte: trade.dte || "30", strike: trade.strike || "", credit: trade.credit || "", margin: trade.margin || "", right: trade.right || "P", expiry: trade.expiry || "", underlying: trade.underlying || "", delta: trade.delta || "" }, ...ts]);
       }
       results.push(multi ? `#${i + 1}: ${message}` : message);
     }
@@ -1574,7 +1654,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
           <div style={{ fontSize: 13.5, color: "#DDE3E9", lineHeight: 1.45, margin: "10px 0 14px" }}>{rationale}</div>
           <div style={{ fontSize: 11, color: "#8B95A0", fontWeight: 600, marginBottom: 7, letterSpacing: 0.4, textTransform: "uppercase" }}>Comparar por</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {seg("roi", "ROI")}{seg("annRoi", "Annualized ROI")}{seg("rom", "Return on margin")}{seg("annRom", "Annualized return on margin")}{seg("impact", "Impacto")}
+            {seg("roi", "ROI")}{seg("annRoi", "Annualized ROI")}{seg("rom", "Return on margin")}{seg("annRom", "Annualized return on margin")}{seg("impact", "Impacto")}{seg("delta", "Eficiencia vs Delta")}
           </div>
         </div>
       )}
@@ -1634,6 +1714,13 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                     <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{isFinite(c.bep) ? "$" + money2(c.bep) : "—"}</div>
                     {isFinite(c.bepMargin) && <div style={{ fontSize: 11, fontWeight: 700, color: c.bepMargin <= 0 ? T.green : T.red }}>({pct(c.bepMargin, 0)})</div>}
                   </div>
+                  {c.deltaAbs > 0 && (
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>Delta</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{money2(c.deltaAbs)}</div>
+                      {isFinite(c.deltaEff) && <div style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{c.deltaEff.toFixed(2)}%/Δ</div>}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1656,6 +1743,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <EditField label="Credit" prefix="$" value={c.credit} onChange={setTr(c.id, "credit")} />
                   <EditField label="Margin" prefix="$" value={c.margin} onChange={setTr(c.id, "margin")} />
                   <EditField label="Precio subyacente" prefix="$" value={c.underlying} onChange={setTr(c.id, "underlying")} span={2} />
+                  <EditField label="Delta" value={c.delta} onChange={setTr(c.id, "delta")} span={2} />
                 </div>
               )}
 
@@ -1684,7 +1772,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       </div>
 
       <div style={{ fontSize: 11.5, color: T.sub, lineHeight: 1.6, marginTop: 18, padding: "0 4px" }}>
-        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. El % entre paréntesis bajo el BEP es cuánto tendría que CAER el subyacente (desde su precio actual) para tocar el BEP — negativo (verde) = margen a favor; positivo (rojo) = el subyacente ya está por debajo del BEP. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura(s)" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit), el Margin Impact y el precio del subyacente (fila "Underlying") de una o varias capturas de tu broker a la vez (cada una añade su propia operación, ya colapsada); revisa siempre los campos antes de usarlos, el reconocimiento de texto no es infalible.
+        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. El % entre paréntesis bajo el BEP es cuánto tendría que CAER el subyacente (desde su precio actual) para tocar el BEP — negativo (verde) = margen a favor; positivo (rojo) = el subyacente ya está por debajo del BEP. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. "Eficiencia vs Delta" = Annualized ROI (%) / |Delta| — a igual retorno anualizado, menos Delta (menos exposición direccional al subyacente) puntúa mejor; se calcula solo si has metido el Delta de la operación. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura(s)" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit), el Margin Impact, el precio del subyacente (fila "Underlying") y el Delta de "The Greeks" (no el "SPX Delta") de una o varias capturas de tu broker a la vez (cada una añade su propia operación, ya colapsada); revisa siempre los campos antes de usarlos, el reconocimiento de texto no es infalible.
       </div>
     </>
   );
@@ -2154,6 +2242,40 @@ function App() {
     });
   }, [filtered, mktvl, nlv, margin, isDark]);
 
+  const vencimientosRows = useMemo(() => {
+    const map = {};
+    filtered.forEach((p) => {
+      if (!isOptionNat(p) || !p.expiry) return;
+      if (!map[p.expiry]) map[p.expiry] = { expiry: p.expiry, riesgo: 0, items: [] };
+      map[p.expiry].riesgo += capDesplegado(p);
+      map[p.expiry].items.push(p);
+    });
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return Object.values(map).sort((a, b) => (a.expiry < b.expiry ? -1 : 1)).map((r) => {
+      /* dentro de cada fecha, agrupa por subyacente + bloque + strike/right — así "2 put" iguales
+         en el mismo bloque se funden en una fila con BEP ponderado, igual que en Exposición */
+      const groups = {};
+      r.items.forEach((p) => {
+        const key = p.tkr + "|" + p.block + "|" + (p.right || "") + "|" + (p.strike || "");
+        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: p.strike, qty: 0, bepW: 0, riesgo: 0 };
+        groups[key].qty += n(p.qty);
+        groups[key].bepW += effBep(p) * n(p.qty);
+        groups[key].riesgo += capDesplegado(p);
+      });
+      const detailRows = Object.values(groups).map((g) => {
+        const contratos = g.qty / 100;
+        return {
+          tkr: g.tkr, block: g.block, right: g.right, strike: g.strike,
+          qtyNum: Number.isInteger(contratos) ? contratos : g.qty,
+          bep: g.qty ? g.bepW / g.qty : NaN,
+          riesgo: g.riesgo,
+        };
+      }).sort((a, b) => b.riesgo - a.riesgo);
+      const dte = Math.round((new Date(r.expiry + "T00:00:00") - today) / 86400000);
+      return { ...r, detailRows, dte };
+    });
+  }, [filtered]);
+
   /* ---------- exportar cartera completa (ignora filtro de broker) para pegar y pedir feedback ---------- */
   const [exportOpen, setExportOpen] = useState(false);
   const [exportText, setExportText] = useState("");
@@ -2442,12 +2564,14 @@ function App() {
           <RendimientoCard snapshots={snapshots} flows={flows} onSave={saveSnapshot} onDelete={deleteSnapshot} />
         ) : activeTab === "aportaciones" ? (
           <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} />
+        ) : activeTab === "vencimientos" ? (
+          <VencimientosCard rows={vencimientosRows} onOpen={setInfo} />
         ) : (
           <ExposureCard rows={exposureRows} onOpen={setInfo} showPnl={showPnl} togglePnl={togglePnl} />
         )}
 
-        {/* DISTRIBUCIÓN — debajo del contenido del bloque (no aplica en Rendimiento ni Aportaciones) */}
-        {activeTab !== "rendimiento" && activeTab !== "aportaciones" && (
+        {/* DISTRIBUCIÓN — debajo del contenido del bloque (no aplica en Rendimiento, Aportaciones ni Vencimientos) */}
+        {activeTab !== "rendimiento" && activeTab !== "aportaciones" && activeTab !== "vencimientos" && (
           <ChartCard scope={chartScope} setScope={setScopeAndReset} scopeOptions={scopeOptions} slices={chartData.slices} total={chartData.total} denomPct={chartData.denomPct} denomLabel={chartData.denomLabel} selected={selectedSlice} onSelect={setSelectedSlice} />
         )}
 
