@@ -102,7 +102,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "3.0";
+const APP_VERSION = "3.1";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
@@ -241,6 +241,13 @@ const tickerOf = (tr) => ((tr.tkr || "").trim() || "Sin ticker");
 const strikeRightOf = (tr) => (n(tr.strike) > 0 ? compStrikeStr(tr.strike) + (tr.right === "C" ? "C" : "P") : "");
 const expiryOf = (tr) => (tr.expiry ? ibkrDate(tr.expiry) : "");
 const dteOf = (tr) => (n(tr.dte) > 0 ? n(tr.dte) + " DTE" : "");
+/* DTE y Delta en la misma línea bajo el ticker, ej. "44 DTE / Delta 30" — sin decimales ni signo, solo magnitud */
+const dteDeltaOf = (tr) => {
+  const dte = dteOf(tr);
+  const d = Math.abs(n(tr.delta));
+  const deltaStr = d ? "Delta " + Math.round(d) : "";
+  return dte && deltaStr ? dte + " / " + deltaStr : (dte || deltaStr);
+};
 const strikeLineOf = (tr) => [strikeRightOf(tr), expiryOf(tr)].filter(Boolean).join(" · ");
 const newId = () => "p" + Math.random().toString(36).slice(2, 8);
 /* ---------- lector de capturas para el Comparador: OCR + parseo de ticker/strike/expiry/bid-ask/margen ---------- */
@@ -1644,7 +1651,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
               <div style={{ fontSize: 13, fontWeight: 700, color: "#B9C2CC", letterSpacing: 0.5, textTransform: "uppercase" }}>Mejor opción</div>
               <div style={{ fontSize: 26, fontWeight: 800, marginTop: 3, letterSpacing: -0.5, color: winner.tkr ? "#fff" : "#8A94A0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.05 }}>{tickerOf(winner)}</div>
               {strikeLineOf(winner) && <div style={{ fontSize: 13, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{strikeLineOf(winner)}</div>}
-              {dteOf(winner) && <div style={{ fontSize: 12, color: "#8B95A0", fontWeight: 600, marginTop: 1 }}>{dteOf(winner)}</div>}
+              {dteDeltaOf(winner) && <div style={{ fontSize: 12, color: "#8B95A0", fontWeight: 600, marginTop: 1 }}>{dteDeltaOf(winner)}</div>}
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
               <div style={{ fontSize: 26, fontWeight: 800, color: allNoGo ? T.orange : T.green, letterSpacing: -0.5 }}>{BASIS[basis].val(winner)}</div>
@@ -1691,7 +1698,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: c.tkr ? T.ink : T.sub, lineHeight: 1.1 }}>{tickerOf(c)}</div>
                     {strikeLineOf(c) && <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 1 }}>{strikeLineOf(c)}</div>}
-                    {dteOf(c) && <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 1 }}>{dteOf(c)}</div>}
+                    {dteDeltaOf(c) && <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 1 }}>{dteDeltaOf(c)}</div>}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -1714,13 +1721,6 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                     <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{isFinite(c.bep) ? "$" + money2(c.bep) : "—"}</div>
                     {isFinite(c.bepMargin) && <div style={{ fontSize: 11, fontWeight: 700, color: c.bepMargin <= 0 ? T.green : T.red }}>({pct(c.bepMargin, 0)})</div>}
                   </div>
-                  {c.deltaAbs > 0 && (
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>Delta</div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{money2(c.deltaAbs)}</div>
-                      {isFinite(c.deltaEff) && <div style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{c.deltaEff.toFixed(2)}%/Δ</div>}
-                    </div>
-                  )}
                 </div>
               </div>
 
