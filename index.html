@@ -99,7 +99,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.5";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
@@ -234,12 +234,11 @@ const strikeStr = (v) => { const x = n(v); return x ? (Number.isInteger(x) ? Str
 /* ---------- helpers del Comparador (modelo Strike/Credit/DTE) ---------- */
 const compStrikeStr = (v) => { const x = n(v); return x ? String(x) : ""; };
 const tickerOf = (tr) => ((tr.tkr || "").trim() || "Sin ticker");
-const detailOf = (tr) => {
-  const parts = [];
-  if (n(tr.strike) > 0) parts.push(compStrikeStr(tr.strike) + "P");
-  if (n(tr.dte) > 0) parts.push(n(tr.dte) + "DTE");
-  return parts.join(" · ");
-};
+/* strike+P/C y expiry van en una línea, DTE en la suya propia debajo — más fácil de leer de un vistazo */
+const strikeRightOf = (tr) => (n(tr.strike) > 0 ? compStrikeStr(tr.strike) + (tr.right === "C" ? "C" : "P") : "");
+const expiryOf = (tr) => (tr.expiry ? ibkrDate(tr.expiry) : "");
+const dteOf = (tr) => (n(tr.dte) > 0 ? n(tr.dte) + " DTE" : "");
+const strikeLineOf = (tr) => [strikeRightOf(tr), expiryOf(tr)].filter(Boolean).join(" · ");
 const newId = () => "p" + Math.random().toString(36).slice(2, 8);
 /* ---------- lector de capturas para el Comparador: OCR + parseo de ticker/strike/expiry/bid-ask/margen ---------- */
 const OCR_MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
@@ -356,18 +355,21 @@ async function extractOptionFromImage(file, apiKey) {
   const mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
   const schema = { type: "object", properties: {
     ticker: { type: "string" }, right: { type: "string" }, strike: { type: "number" },
-    expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" }, margin: { type: "number" }
+    expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" },
+    margin: { type: "number", description: "Valor junto a la etiqueta literal 'Margin Impact', no otro campo en dólares." },
+    underlying: { type: "number", description: "Precio actual del SUBYACENTE (fila 'Underlying'), no de la opción." }
   } };
   const prompt = [
     "Esta es una captura de una app de bróker (tipo IBKR) con una orden sobre UNA opción.",
-    "Extrae SOLO los datos de la OPCIÓN, nunca del subyacente ('Underlying'):",
+    "Extrae estos datos de la OPCIÓN (no del subyacente, salvo donde se indique):",
     "- ticker: símbolo del subyacente (ej. ASTS).",
     "- right: 'P' si es Put, 'C' si es Call.",
     "- strike: precio de ejercicio.",
     "- expiry: vencimiento de la opción en formato YYYY-MM-DD. Interpreta \"AUG 21 '26\" = 2026-08-21.",
     "- ask: precio Ask de la opción (por acción). Si aparece como '614 x 8.70', el precio es 8.70, no 614.",
     "- bid: precio Bid de la opción (por acción). Si aparece como '3 x 8.45', el precio es 8.45, no 3.",
-    "- margin: el número de 'Margin Impact', sin separadores de miles (2647.50, no 2,647.50).",
+    "- margin: EXCLUSIVAMENTE el valor junto a la etiqueta literal 'Margin Impact' (suele estar en una sección 'Market Data' junto a otros campos parecidos como 'Max Loss', 'Break Even', 'Commission' o 'MinInvest'). NO confundas 'Margin Impact' con ninguno de esos otros campos aunque también sean cifras en dólares — deben tener su propia etiqueta bien visible. Si no encuentras literalmente el texto 'Margin Impact' en la imagen, omite este campo por completo en vez de adivinar con otro número.",
+    "- underlying: precio actual del SUBYACENTE (no de la opción) — está en la fila con la etiqueta 'Underlying', normalmente junto al ticker y bolsa (ej. 'NASDAQ.NMS'). Es un precio por acción normal (ej. 74.67), mucho más pequeño que strike×100 o que Margin Impact — no lo confundas con esos.",
     "Omite cualquier campo que no veas con claridad. Devuelve ÚNICAMENTE el JSON, sin texto adicional."
   ].join("\n");
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
@@ -391,8 +393,9 @@ function buildTradeFromGemini(data, file) {
   const right = data.right === "P" || data.right === "C" ? data.right : "";
   const strikeN = n(data.strike);
   const strike = strikeN > 0 ? String(strikeN) : "";
-  let dte = "";
+  let dte = "", expiry = "";
   if (typeof data.expiry === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.expiry)) {
+    expiry = data.expiry;
     const exp = new Date(data.expiry + "T00:00:00Z");
     const photo = new Date(file && file.lastModified ? file.lastModified : Date.now());
     const photoUTC = Date.UTC(photo.getFullYear(), photo.getMonth(), photo.getDate());
@@ -407,7 +410,9 @@ function buildTradeFromGemini(data, file) {
   else if (bidOk) credit = String(bid);
   const marginN = n(data.margin);
   const margin = isFinite(marginN) && marginN > 0 && marginN < 1000000 ? String(marginN) : "";
-  return { tkr, strike, dte, credit, margin, right, ask: askOk ? ask : null, bid: bidOk ? bid : null };
+  const underN = n(data.underlying);
+  const underlying = isFinite(underN) && underN > 0 && underN < 100000 ? String(underN) : "";
+  return { tkr, strike, dte, credit, margin, right, expiry, underlying, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green" : v >= RULES.elNlv.amber ? "amber" : "red");
 const toneMrgn = (v) => (!isFinite(v) ? "muted" : v >= RULES.elMrgn.green ? "green" : v >= RULES.elMrgn.amber ? "amber" : "red");
@@ -799,6 +804,9 @@ function MetricChart({ points, color, axisFmt }) {
   const area = `${x(0)},${H - padB} ${line} ${x(points.length - 1)},${H - padB}`;
   const ticks = [0, 1, 2, 3].map((i) => min + ((max - min) * i) / 3);
   const midIdx = points.length >= 3 ? Math.floor((points.length - 1) / 2) : null;
+  /* con muchos puntos los círculos se solapan y quedan como una mancha — a partir de cierta densidad
+     solo marcamos el último (la línea completa se sigue viendo con todo el detalle). */
+  const dense = points.length > 24;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
       {ticks.map((t, i) => (
@@ -809,7 +817,7 @@ function MetricChart({ points, color, axisFmt }) {
       ))}
       <polygon points={area} fill={color} opacity={0.12} />
       <polyline points={line} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
-      {points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.v)} r={i === points.length - 1 ? 4 : 2.4} fill={i === points.length - 1 ? color : "#fff"} stroke={color} strokeWidth={1.5} />)}
+      {points.map((p, i) => (!dense || i === points.length - 1) && <circle key={i} cx={x(i)} cy={y(p.v)} r={i === points.length - 1 ? 4 : 2.4} fill={i === points.length - 1 ? color : "#fff"} stroke={color} strokeWidth={1.5} />)}
       <text x={x(0)} y={H - 7} textAnchor="start" fontSize={9} fontWeight={600} fill={T.sub}>{shortDate(points[0].date)}</text>
       {midIdx != null && midIdx !== 0 && midIdx !== points.length - 1 && (
         <text x={x(midIdx)} y={H - 7} textAnchor="middle" fontSize={9} fontWeight={600} fill={T.sub}>{shortDate(points[midIdx].date)}</text>
@@ -829,9 +837,18 @@ const METRICS = {
   "EL/Margen": { get: (s) => s.elMrgn, fmt: (v) => pct(v), axis: (v) => Math.round(v * 100) + "%", color: T.gold },
   "EL/NLV": { get: (s) => s.elNlv, fmt: (v) => pct(v), axis: (v) => Math.round(v * 100) + "%", color: T.orange },
 };
+/* ---------- rangos del gráfico de Rendimiento: filtra qué snapshots se muestran, evita saturación con historial largo ---------- */
+const RANGE_DAYS = { "7D": 7, "1M": 30, "3M": 90, "1A": 365 };
+const RANGE_KEYS = ["7D", "1M", "3M", "1A", "Todo"];
+function rangeCutoffISO(range) {
+  if (range === "Todo" || !RANGE_DAYS[range]) return null;
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - RANGE_DAYS[range]);
+  return d.toISOString().slice(0, 10);
+}
 function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
   const [expanded, setExpanded] = useState(null);
   const [metric, setMetric] = useState("NLV");
+  const [range, setRange] = useState("1M");
   const sorted = [...snapshots].sort((a, b) => (a.date < b.date ? 1 : -1)); // desc
   const first = sorted[sorted.length - 1];
   const asc = [...snapshots].sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -860,11 +877,13 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
   const METRIC_KEYS = [...Object.keys(METRICS), ...Object.keys(SPECIAL)];
   const sp = SPECIAL[metric];
   const m = sp ? null : METRICS[metric];
-  const series = sp ? sp.series : asc.map((s) => ({ date: s.date, v: m.get(s) })).filter((p) => isFinite(p.v));
+  const fullSeries = sp ? sp.series : asc.map((s) => ({ date: s.date, v: m.get(s) })).filter((p) => isFinite(p.v));
+  const rangeCutoff = rangeCutoffISO(range);
+  const series = rangeCutoff ? fullSeries.filter((p) => p.date >= rangeCutoff) : fullSeries;
   const mFmt = sp ? sp.fmt : m.fmt;
   const mAxis = sp ? sp.axis : m.axis;
   const mColor = sp ? sp.color : m.color;
-  const curV = series.length ? series[series.length - 1].v : NaN;
+  const curV = fullSeries.length ? fullSeries[fullSeries.length - 1].v : NaN;
   const firstV = series.length ? series[0].v : NaN;
   const dTotal = curV - firstV;
   const dTotalPct = firstV ? dTotal / Math.abs(firstV) : NaN;
@@ -886,6 +905,9 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
           <div style={{ marginBottom: 8 }}>
             <Pill options={METRIC_KEYS} value={metric} onChange={setMetric} size="sm" />
           </div>
+          <div style={{ marginBottom: 8 }}>
+            <Pill options={RANGE_KEYS} value={range} onChange={setRange} size="sm" />
+          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
             <div>
               <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{metric === "Rent. real" ? "Rentabilidad sin aportaciones (TWR)" : metric === "Aportado" ? "Aportaciones netas acumuladas" : metric + " · último snapshot"}</div>
@@ -904,6 +926,8 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
             <div style={{ background: T.tile, borderRadius: 16, padding: "12px 10px 8px" }}>
               <MetricChart points={series} color={mColor} axisFmt={mAxis} />
             </div>
+          ) : fullSeries.length >= 2 ? (
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500 }}>Sin snapshots en este rango — prueba "Todo" o un rango mayor.</div>
           ) : (
             <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500 }}>{metric === "Aportado" ? "Registra aportaciones en la pestaña 💶 Aportaciones para ver el acumulado." : "Guarda un segundo snapshot para ver la evolución."}</div>
           )}
@@ -1385,6 +1409,12 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     const notional = strike > 0 ? (strike - creditPS) * 100 : 0;   // (Strike − Credit) × 100
     const premium = creditPS * 100;                                // Credit × 100
     const bep = strike > 0 ? strike - creditPS : NaN;               // break-even = Strike − Credit (por acción)
+    const underlyingN = n(tr.underlying);
+    /* margen de seguridad del BEP: % que necesitaría CAER el subyacente para tocar el BEP (por eso negativo = a salvo,
+       igual que decir "-20% hasta breakeven"). Positivo = el subyacente ya está por debajo del BEP (ya en pérdida).
+       Asume el modelo suelo-por-debajo (short put), que es el que usa todo el Comparador (Strike − Credit);
+       en un short call leería al revés. */
+    const bepMargin = (underlyingN > 0 && isFinite(bep)) ? (bep - underlyingN) / underlyingN : NaN;
     const newEL = el - tMargin;
     const newMargin = margin + tMargin;
     const elNlv = nlv ? newEL / nlv : NaN;
@@ -1396,7 +1426,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     let status = "GO";
     if (elNlv < RULES.elNlv.amber || elMrgn < RULES.elMrgn.amber) status = "NO-GO";
     else if (elNlv < RULES.elNlv.green || elMrgn < RULES.elMrgn.green) status = "CAUTION";
-    return { ...tr, notional, premium, bep, elNlv, elMrgn, dElNlv: elNlv - base.elNlv, dElMrgn: elMrgn - base.elMrgn, posSize, roi, rom, annRoi: roi * ann, annRom: rom * ann, status };
+    return { ...tr, notional, premium, bep, bepMargin, elNlv, elMrgn, dElNlv: elNlv - base.elNlv, dElMrgn: elMrgn - base.elMrgn, posSize, roi, rom, annRoi: roi * ann, annRom: rom * ann, status };
   }), [trades, nlv, margin, el]);
 
   const rankVal = (c) => (basis === "roi" ? c.roi : basis === "annRoi" ? c.annRoi : basis === "rom" ? c.rom : basis === "impact" ? c.elNlv : c.annRom);
@@ -1433,7 +1463,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
 
   const setTr = (id, k) => (v) => setTrades((ts) => ts.map((t) => (t.id === id ? { ...t, [k]: v } : t)));
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
-  const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
+  const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
   const runOcr = async (file) => {
     const errToStr = (err) => {
@@ -1444,7 +1474,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     const gkey = (() => { try { return localStorage.getItem(KEY_GEMINI) || ""; } catch (e) { return ""; } })();
     const addTrade = (p, prefix) => {
       const id = newId();
-      setTrades((ts) => [{ id, tkr: p.tkr || "", dte: p.dte || "30", strike: p.strike || "", credit: p.credit || "", margin: p.margin || "" }, ...ts]);
+      setTrades((ts) => [{ id, tkr: p.tkr || "", dte: p.dte || "30", strike: p.strike || "", credit: p.credit || "", margin: p.margin || "", right: p.right || "P", expiry: p.expiry || "", underlying: p.underlying || "" }, ...ts]);
       setEditSet((s) => new Set(s).add(id));
       const parts = [];
       if (p.tkr) parts.push(p.tkr + (p.right || ""));
@@ -1453,6 +1483,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       if (p.ask != null && p.bid != null) parts.push(`mid $${p.credit} (ask ${p.ask} / bid ${p.bid})`);
       else if (p.credit) parts.push("prima $" + p.credit);
       if (p.margin) parts.push("margen $" + p.margin);
+      if (p.underlying) parts.push("subyacente $" + p.underlying);
       setOcrMsg((prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}. Revisa los campos antes de usarlo.` : "No pude leer los datos con claridad — completa los campos a mano."));
     };
     let geminiErr = "";
@@ -1513,7 +1544,8 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#B9C2CC", letterSpacing: 0.5, textTransform: "uppercase" }}>Mejor opción</div>
               <div style={{ fontSize: 26, fontWeight: 800, marginTop: 3, letterSpacing: -0.5, color: winner.tkr ? "#fff" : "#8A94A0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.05 }}>{tickerOf(winner)}</div>
-              {detailOf(winner) && <div style={{ fontSize: 13, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{detailOf(winner)}</div>}
+              {strikeLineOf(winner) && <div style={{ fontSize: 13, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{strikeLineOf(winner)}</div>}
+              {dteOf(winner) && <div style={{ fontSize: 12, color: "#8B95A0", fontWeight: 600, marginTop: 1 }}>{dteOf(winner)}</div>}
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
               <div style={{ fontSize: 26, fontWeight: 800, color: allNoGo ? T.orange : T.green, letterSpacing: -0.5 }}>{BASIS[basis].val(winner)}</div>
@@ -1567,7 +1599,8 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <span style={{ background: vbg, color: vcol, borderRadius: 10, padding: "5px 9px", fontSize: 12, fontWeight: 800, letterSpacing: 0.5, whiteSpace: "nowrap" }}>{c.status}</span>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: c.tkr ? T.ink : T.sub, lineHeight: 1.1 }}>{tickerOf(c)}</div>
-                    {detailOf(c) && <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 1 }}>{detailOf(c)}</div>}
+                    {strikeLineOf(c) && <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 1 }}>{strikeLineOf(c)}</div>}
+                    {dteOf(c) && <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 1 }}>{dteOf(c)}</div>}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -1582,12 +1615,13 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                 </div>
                 <div style={{ display: "flex", gap: 14, background: T.tile, borderRadius: 12, padding: "8px 12px", flexShrink: 0 }}>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>${money(c.notional)}</div>
                     <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>Riesgo</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>${money(c.notional)}</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{isFinite(c.bep) ? "$" + money2(c.bep) : "—"}</div>
                     <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>BEP</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{isFinite(c.bep) ? "$" + money2(c.bep) : "—"}</div>
+                    {isFinite(c.bepMargin) && <div style={{ fontSize: 11, fontWeight: 700, color: c.bepMargin <= 0 ? T.green : T.red }}>({pct(c.bepMargin, 0)})</div>}
                   </div>
                 </div>
               </div>
@@ -1597,8 +1631,20 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <EditField label="Ticker / nombre" value={c.tkr} onChange={setTr(c.id, "tkr")} span={2} text />
                   <EditField label="DTE" value={c.dte} onChange={setTr(c.id, "dte")} />
                   <EditField label="Strike" prefix="$" value={c.strike} onChange={setTr(c.id, "strike")} />
+                  <label>
+                    <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Expiry</span>
+                    <input type="date" value={c.expiry || ""} onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) { setTr(c.id, "expiry")(""); return; }
+                      const exp = new Date(val + "T00:00:00Z");
+                      const today = new Date(); const todayUTC = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+                      const newDte = isNaN(exp.getTime()) ? null : Math.max(Math.round((exp.getTime() - todayUTC) / 86400000), 0);
+                      setTrades((ts) => ts.map((t) => (t.id === c.id ? { ...t, expiry: val, dte: newDte != null ? String(newDte) : t.dte } : t)));
+                    }} style={{ width: "100%", boxSizing: "border-box", height: 36, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: c.expiry ? T.ink : T.sub, fontSize: 13, fontWeight: 700, padding: "0 8px", outline: "none", appearance: "none", WebkitAppearance: "none" }} />
+                  </label>
                   <EditField label="Credit" prefix="$" value={c.credit} onChange={setTr(c.id, "credit")} />
                   <EditField label="Margin" prefix="$" value={c.margin} onChange={setTr(c.id, "margin")} />
+                  <EditField label="Precio subyacente" prefix="$" value={c.underlying} onChange={setTr(c.id, "underlying")} span={2} />
                 </div>
               )}
 
@@ -1627,7 +1673,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       </div>
 
       <div style={{ fontSize: 11.5, color: T.sub, lineHeight: 1.6, marginTop: 18, padding: "0 4px" }}>
-        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit) y el Margin Impact de una captura de tu broker; revisa siempre los campos antes de usarlo, el reconocimiento de texto no es infalible.
+        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. El % entre paréntesis bajo el BEP es cuánto tendría que CAER el subyacente (desde su precio actual) para tocar el BEP — negativo (verde) = margen a favor; positivo (rojo) = el subyacente ya está por debajo del BEP. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit), el Margin Impact y el precio del subyacente (fila "Underlying") de una captura de tu broker; revisa siempre los campos antes de usarlo, el reconocimiento de texto no es infalible.
       </div>
     </>
   );
