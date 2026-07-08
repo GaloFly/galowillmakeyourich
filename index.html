@@ -1118,11 +1118,11 @@ function PositionRow({ p, editing, onToggle, onChange, onDelete, pctBloque, pctC
           </label>
           <EditField label="Ticker" value={p.tkr} onChange={onChange("tkr")} text />
           <SelectField label="Estrategia" value={p.tipo} options={STRATS[p.block] || []} span={2}
-            onChange={(val) => { onChange("tipo")(val); onChange("nat")(natFromStrat(val)); }} />
+            onChange={(val) => { onChange("tipo")(val); const newNat = natFromStrat(val); onChange("nat")(newNat); if (newNat === "CASH") onChange("tkr")("CASH"); }} />
           {!cash && <EditField label={isOptionNat(p) ? "Cantidad (100 = 1 contrato)" : "Cantidad (acciones)"} value={p.qty} onChange={onChange("qty")} span={2} />}
           <label style={{ gridColumn: "span 2" }}>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Tipo · define riesgo total y plausible</span>
-            <Pill options={natsForBlock(p.block).map((x) => x.label)} value={(NATS.find((x) => x.id === natOf(p)) || {}).label} onChange={(lbl) => onChange("nat")((NATS.find((x) => x.label === lbl) || {}).id || "ACC")} size="sm" />
+            <Pill options={natsForBlock(p.block).map((x) => x.label)} value={(NATS.find((x) => x.id === natOf(p)) || {}).label} onChange={(lbl) => { const newNat = (NATS.find((x) => x.label === lbl) || {}).id || "ACC"; onChange("nat")(newNat); if (newNat === "CASH") onChange("tkr")("CASH"); }} size="sm" />
           </label>
           {isOptionNat(p) && (
             <>
@@ -2093,7 +2093,7 @@ function App() {
             {view === "bloques" && <button onClick={onRefreshClick} disabled={refreshing} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>{refreshing ? "…" : "🔄 Precios"}</button>}
             {view === "bloques" && <button onClick={openExport} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>Exportar</button>}
             {view === "bloques" && <button onClick={openBackup} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>Backup</button>}
-            {view === "comparador" && <button onClick={openGeminiModal} style={{ background: geminiKey ? T.card : T.tileAmber, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>{geminiKey ? "🔑 Gemini" : "🔑 Activar Gemini"}</button>}
+            {view === "comparador" && <button onClick={openGeminiModal} style={{ background: geminiKey ? T.card : T.tileAmber, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>{geminiKey ? "🔑 Lector" : "🔑 Activar Lector"}</button>}
             {view === "bloques" && <button onClick={clearAll} style={{ background: confirmClear ? T.red : T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: confirmClear ? "#fff" : T.sub, cursor: "pointer", boxShadow: T.shadow }}>{confirmClear ? "¿Vaciar?" : "Limpiar"}</button>}
             {view === "comparador" && trades.length > 0 && <button onClick={clearTrades} style={{ background: confirmClearTr ? T.red : T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: confirmClearTr ? "#fff" : T.sub, cursor: "pointer", boxShadow: T.shadow }}>{confirmClearTr ? "¿Vaciar?" : "Limpiar"}</button>}
           </div>
