@@ -87,7 +87,7 @@ const KEY_ACC_OLD = "bloques_acc_v4", KEY_POS_OLD = "bloques_pos_v4";
 const KEY_FINNHUB = "bloques_finnhub_key";
 const KEY_GEMINI = "bloques_gemini_key";
 const KEY_DARK_OVERRIDE = "bloques_dark_override"; // "dark" | "light" | ausente (= claro, por defecto)
-const GEMINI_MODEL = "gemini-2.5-flash-lite"; // lector de capturas del Comparador — Flash-Lite: mismo endpoint, mucho más rápido para extracción de datos simple como esta
+const GEMINI_MODEL = "gemini-2.5-flash"; // lector de capturas del Comparador
 const KEY_SNAP = "bloques_snapshots_v1";
 const KEY_BROKERS = "bloques_brokers_v1";
 const KEY_TRADES = "bloques_trades_v2";
@@ -99,7 +99,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "2.9";
+const APP_VERSION = "2.8";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
@@ -353,32 +353,6 @@ function parseOptionScreenshotText(raw) {
   return { tkr, strike, dte, credit, margin, right, expiry: expiryISO, underlying, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 /* ---------- lector de capturas con Gemini (visión), alternativa al Tesseract de arriba ---------- */
-/* Las capturas de iPhone son PNG grandes (varios MB) y de eso, casi todo es texto grande y de alto
-   contraste — no hace falta enviar la resolución completa. Reescalamos a un ancho máximo razonable y
-   recomprimimos a JPEG antes de mandarlo: el payload baja mucho (menos que subir, menos tokens de imagen
-   para Gemini) y la lectura se hace notablemente más rápida sin perder legibilidad del texto. */
-function fileToOptimizedBase64(file, maxDim, quality) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      try {
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        const dataUrl = canvas.toDataURL("image/jpeg", quality);
-        resolve({ b64: dataUrl.slice(dataUrl.indexOf(",") + 1), mime: "image/jpeg" });
-      } catch (err) { URL.revokeObjectURL(url); reject(err); }
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("no pude cargar la imagen")); };
-    img.src = url;
-  });
-}
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -390,15 +364,8 @@ function fileToBase64(file) {
 /* Le pedimos a Gemini solo lo que se LEE (ticker, strike, expiry, ask, bid, margen).
    DTE y mid los calculamos en JS después: los LLM fallan en aritmética de fechas. */
 async function extractOptionFromImage(file, apiKey) {
-  let b64, mime;
-  try {
-    const opt = await fileToOptimizedBase64(file, 1280, 0.82);
-    b64 = opt.b64; mime = opt.mime;
-  } catch (_) {
-    // si el redimensionado falla por lo que sea (formato raro, etc.), mandamos el original tal cual
-    b64 = await fileToBase64(file);
-    mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
-  }
+  const b64 = await fileToBase64(file);
+  const mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
   const schema = { type: "object", properties: {
     ticker: { type: "string" }, right: { type: "string" }, strike: { type: "number" },
     expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" },
@@ -420,7 +387,7 @@ async function extractOptionFromImage(file, apiKey) {
   ].join("\n");
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
   const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
-    generationConfig: { temperature: 0, maxOutputTokens: 300, responseMimeType: "application/json", responseSchema: schema } };
+    generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) {
     let detail = "HTTP " + r.status;
