@@ -105,7 +105,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.06";
+const APP_VERSION = "4.07";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1687,10 +1687,10 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <div style={{ fontSize: 12, color: T.sub, fontWeight: 500 }}>Annualized ROI</div>
                 </div>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", gap: 26 }}>
-                  <MiniStat label="Premium" value={"$" + money2(c.premium)} size={20} />
-                  <MiniStat label="ROI" value={signPct(c.roi, 2)} color={T.green} size={20} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 20 }}>
+                  <MiniStat label="Premium" value={"$" + money2(c.premium)} size={18} />
+                  <MiniStat label="ROI" value={signPct(c.roi, 2)} color={T.green} size={18} />
                 </div>
                 <div style={{ display: "flex", gap: 14, background: T.tile, borderRadius: 12, padding: "8px 12px", flexShrink: 0 }}>
                   <div style={{ textAlign: "center" }}>
