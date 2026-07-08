@@ -105,7 +105,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "4.0";
+const APP_VERSION = "4.3";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -262,11 +262,46 @@ function fileToBase64(file) {
     r.readAsDataURL(file);
   });
 }
+/* Redimensiona la captura ANTES de subirla a Gemini: menos bytes que viajan por red y menos "tiles" de
+   visión que el modelo tiene que procesar → respuesta más rápida, sobre todo con capturas de escritorio
+   (2000-3000px) que van mucho más allá de lo que hace falta para leer texto de una app de bróker.
+   Seguimos usando PNG (sin pérdida) para no meter artefactos de compresión que compliquen leer el texto.
+   Si algo falla (navegador raro, archivo corrupto…) caemos de vuelta al fichero original sin redimensionar. */
+const OCR_MAX_DIM = 1280;
+function resizeImageToBase64(file, maxDim) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const { width, height } = img;
+        const scale = Math.min(1, maxDim / Math.max(width, height));
+        const w = Math.max(1, Math.round(width * scale));
+        const h = Math.max(1, Math.round(height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL("image/png");
+        URL.revokeObjectURL(url);
+        resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("no pude cargar la imagen para redimensionar")); };
+    img.src = url;
+  });
+}
 /* Le pedimos a Gemini solo lo que se LEE (ticker, strike, expiry, ask, bid, margen).
    DTE y mid los calculamos en JS después: los LLM fallan en aritmética de fechas. */
 async function extractOptionFromImage(file, apiKey, model) {
-  const b64 = await fileToBase64(file);
-  const mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
+  let b64, mime;
+  try {
+    b64 = await resizeImageToBase64(file, OCR_MAX_DIM);
+    mime = "image/png";
+  } catch (e) {
+    console.warn("[Comparador] no pude redimensionar la captura, uso el original:", e);
+    b64 = await fileToBase64(file);
+    mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
+  }
   const schema = { type: "object", properties: {
     ticker: { type: "string" }, right: { type: "string" }, strike: { type: "number" },
     expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" },
