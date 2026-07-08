@@ -102,10 +102,10 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "3.3";
+const APP_VERSION = "3.5";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
-const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
+const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_FLOWS = "bloques_aportaciones_v1";
 const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
@@ -1796,10 +1796,6 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
           </div>
         )}
       </div>
-
-      <div style={{ fontSize: 11.5, color: T.sub, lineHeight: 1.6, marginTop: 18, padding: "0 4px" }}>
-        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. El % entre paréntesis bajo el BEP es cuánto tendría que CAER el subyacente (desde su precio actual) para tocar el BEP — negativo (verde) = margen a favor; positivo (rojo) = el subyacente ya está por debajo del BEP. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. "Eficiencia vs Delta" = Annualized ROI (%) / |Delta| — a igual retorno anualizado, menos Delta (menos exposición direccional al subyacente) puntúa mejor; se calcula solo si has metido el Delta de la operación. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura(s)" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit), el Margin Impact, el precio del subyacente (fila "Underlying") y el Delta de "The Greeks" (no el "SPX Delta") de una o varias capturas de tu broker a la vez (cada una añade su propia operación, ya colapsada); revisa siempre los campos antes de usarlos, el reconocimiento de texto no es infalible.
-      </div>
     </>
   );
 }
@@ -1889,12 +1885,14 @@ function App() {
       const stored = localStorage.getItem(KEY_APPVER);
       let bks = [];
       try { const raw = localStorage.getItem(KEY_AUTOBK); if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr)) bks = arr; } } catch (e) {}
+      /* si venías de una versión que guardaba más (antes eran 8), recorta ya lo existente a 3 */
+      if (bks.length > 3) { bks = bks.slice(0, 3); try { localStorage.setItem(KEY_AUTOBK, JSON.stringify(bks)); } catch (e) {} }
       if (stored !== APP_VERSION) {
         const hasData = BACKUP_KEYS.some((k) => localStorage.getItem(k) != null);
         if (stored != null || hasData) {
           const data = {};
           BACKUP_KEYS.forEach((k) => { const v = localStorage.getItem(k); if (v != null) data[k] = v; });
-          bks = [{ version: stored || "pre-1.0", ts: Date.now(), data }, ...bks].slice(0, 8);
+          bks = [{ version: stored || "pre-1.0", ts: Date.now(), data }, ...bks].slice(0, 3);
           localStorage.setItem(KEY_AUTOBK, JSON.stringify(bks));
           setUpdateNotice({ from: stored ? "v" + stored : "versión anterior", to: APP_VERSION });
         }
@@ -2601,9 +2599,6 @@ function App() {
           <ChartCard scope={chartScope} setScope={setScopeAndReset} scopeOptions={scopeOptions} slices={chartData.slices} total={chartData.total} denomPct={chartData.denomPct} denomLabel={chartData.denomLabel} selected={selectedSlice} onSelect={setSelectedSlice} />
         )}
 
-        <div style={{ fontSize: 11.5, color: T.sub, lineHeight: 1.6, marginTop: 8, padding: "0 4px" }}>
-          Riesgo total determina el tamaño (% Bloque, % Cartera). Riesgo plausible = Riesgo total × Factor (ajustable por posición). Margen es el margen real del broker, de partida = Riesgo total como placeholder — ajústalo con tu dato de IBKR. P&L es solo seguimiento. "Último" es el precio actual — a mano o con "🔄 Precios" (Finnhub, solo tickers US). En acciones, Valor mercado = Último × Cantidad en automático (cámbialo a Manual dentro de la posición si lo necesitas); en opciones es manual. En el Bloque 0 puedes añadir una posición de tipo Cash: solo metes el importe en USD y cuenta directo, sin ticker ni precio. "Ver P&L" (encima de las posiciones) muestra el P&L de cada una. Desliza una posición a la izquierda para eliminarla. Datos guardados en el dispositivo.
-        </div>
         </>)}
 
         <div style={{ textAlign: "center", fontSize: 14, fontWeight: 800, color: T.sub, letterSpacing: 0.3, margin: "22px 0 4px" }}>💸Galo Will Make You Rich💸</div>
@@ -2757,7 +2752,7 @@ function App() {
                     </div>
                   ))}
                 </div>
-                <div style={{ fontSize: 10.5, color: T.sub, lineHeight: 1.45, marginTop: 7 }}>Restaurar una copia sobrescribe los datos actuales con los de esa versión y recarga la app. Se guardan las 8 últimas.</div>
+                <div style={{ fontSize: 10.5, color: T.sub, lineHeight: 1.45, marginTop: 7 }}>Restaurar una copia sobrescribe los datos actuales con los de esa versión y recarga la app. Se guardan las 3 últimas.</div>
               </div>
             )}
             <div style={{ textAlign: "center", marginTop: 12 }}>
