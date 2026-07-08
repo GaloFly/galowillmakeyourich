@@ -102,7 +102,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "3.1";
+const APP_VERSION = "3.3";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
@@ -408,10 +408,22 @@ async function extractOptionFromImage(file, apiKey) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) {
     let detail = "HTTP " + r.status;
-    try { const e = await r.json(); if (e && e.error && e.error.message) detail = e.error.message; } catch (_) {}
+    let retryAfterMs = null;
+    try {
+      const e = await r.json();
+      if (e && e.error && e.error.message) detail = e.error.message;
+      if (e && e.error && Array.isArray(e.error.details)) {
+        const ri = e.error.details.find((d) => d["@type"] && String(d["@type"]).indexOf("RetryInfo") >= 0);
+        if (ri && ri.retryDelay) { const m = String(ri.retryDelay).match(/([\d.]+)s/); if (m) retryAfterMs = Math.ceil(parseFloat(m[1]) * 1000); }
+      }
+    } catch (_) {}
+    if (retryAfterMs == null) { const m = detail.match(/retry in ([\d.]+)\s*s/i); if (m) retryAfterMs = Math.ceil(parseFloat(m[1]) * 1000); }
     if (r.status === 400 || r.status === 403) detail = "key inválida o sin permiso (" + detail + ")";
     if (r.status === 429) detail = "límite diario/por minuto agotado (" + detail + ")";
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = r.status;
+    if (retryAfterMs != null) err.retryAfterMs = retryAfterMs;
+    throw err;
   }
   const j = await r.json();
   const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
@@ -645,8 +657,8 @@ function InfoModal({ type, onClose }) {
     body: "Mide cuánta exposición total tienes respecto al valor real de la cuenta, sumando el market value de las posiciones filtradas.",
   };
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 420, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 420, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: T.ink }}>{data.title}</div>
         {data.sub && <div style={{ fontSize: 13, fontWeight: 700, color: T.green, marginTop: 2 }}>{data.sub}</div>}
         <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5, margin: "10px 0 14px" }}>{data.body}</div>
@@ -1581,17 +1593,30 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     return (prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}` : "no pude leer los datos con claridad");
   };
   /* lee UNA captura y devuelve { trade, message } sin tocar el estado de UI — así el llamador
-     (una sola foto o un lote de varias) decide cómo mostrar progreso/errores */
-  const readOneScreenshot = async (file, gkey) => {
+     (una sola foto o un lote de varias) decide cómo mostrar progreso/errores.
+     onWaiting(ms) es opcional: se llama mientras esperamos el cooldown de un 429 para poder avisar en pantalla. */
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const readOneScreenshot = async (file, gkey, onWaiting) => {
     let geminiErr = "";
     if (gkey) {
-      try {
-        const data = await extractOptionFromImage(file, gkey);
-        const trade = buildTradeFromGemini(data, file);
-        return { trade, message: summarizeTrade(trade) };
-      } catch (err) {
-        console.error("[Comparador] Gemini OCR falló:", err);
-        geminiErr = errToStr(err);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const data = await extractOptionFromImage(file, gkey);
+          const trade = buildTradeFromGemini(data, file);
+          return { trade, message: summarizeTrade(trade) };
+        } catch (err) {
+          console.error("[Comparador] Gemini OCR falló:", err);
+          geminiErr = errToStr(err);
+          /* 429 con cooldown conocido (típico del free tier: 20 req/min) → espera ese tiempo exacto y
+             reintenta UNA vez con Gemini antes de resignarse al lector local, que es bastante menos fiable */
+          if (attempt === 0 && err && err.status === 429 && err.retryAfterMs) {
+            const waitMs = Math.min(err.retryAfterMs + 500, 65000);
+            if (onWaiting) onWaiting(waitMs);
+            await sleep(waitMs);
+            continue;
+          }
+          break;
+        }
       }
     }
     if (!window.Tesseract) {
@@ -1619,7 +1644,8 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     const results = [];
     for (let i = 0; i < list.length; i++) {
       setOcrMsg(multi ? `Leyendo captura ${i + 1}/${list.length}…` : (gkey ? "Leyendo captura con Gemini…" : "Leyendo captura…"));
-      const { trade, message } = await readOneScreenshot(list[i], gkey);
+      const onWaiting = (ms) => setOcrMsg(`${multi ? `Captura ${i + 1}/${list.length}: ` : ""}límite de Gemini alcanzado, esperando ${Math.ceil(ms / 1000)}s para reintentar…`);
+      const { trade, message } = await readOneScreenshot(list[i], gkey, onWaiting);
       if (trade) {
         const id = newId();
         setTrades((ts) => [{ id, tkr: trade.tkr || "", dte: trade.dte || "30", strike: trade.strike || "", credit: trade.credit || "", margin: trade.margin || "", right: trade.right || "P", expiry: trade.expiry || "", underlying: trade.underlying || "", delta: trade.delta || "" }, ...ts]);
@@ -2589,8 +2615,8 @@ function App() {
 
       <InfoModal type={info} onClose={() => setInfo(null)} />
       {refreshChoiceOpen && (
-        <div onClick={() => setRefreshChoiceOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 380, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+        <div onClick={() => setRefreshChoiceOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 380, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>Precios (Finnhub)</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 16 }}>Ya tienes una API key guardada en este dispositivo.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2602,8 +2628,8 @@ function App() {
         </div>
       )}
       {keyModalOpen && (
-        <div onClick={() => setKeyModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+        <div onClick={() => setKeyModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{apiKey ? "Cambiar API key de Finnhub" : "API key de Finnhub"}</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en finnhub.io/register. Se guarda en este dispositivo. Solo cubre tickers de bolsas US.</div>
             <input type="text" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="Pega aquí tu API key"
@@ -2616,8 +2642,8 @@ function App() {
         </div>
       )}
       {geminiModalOpen && (
-        <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+        <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{geminiKey ? "Cambiar API key de Gemini" : "API key de Gemini"}</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Con ella, "📷 Leer captura" del Comparador usa Gemini (visión) en vez del lector local, mucho más fiable.</div>
             <input type="text" value={geminiInput} onChange={(e) => setGeminiInput(e.target.value)} placeholder="Pega aquí tu API key"
@@ -2630,8 +2656,8 @@ function App() {
         </div>
       )}
       {brokerModalOpen && (
-        <div onClick={() => setBrokerModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 420, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div onClick={() => setBrokerModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 420, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink, marginBottom: 6 }}>Brokers</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 16 }}>Añade un broker o quítalo. Al quitar uno con posiciones, sus posiciones se mueven al broker que elijas.</div>
 
@@ -2683,8 +2709,8 @@ function App() {
         </div>
       )}
       {exportOpen && (
-        <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink, marginBottom: 8 }}>Exportar cartera</div>
             <div style={{ fontSize: 14, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Copia este texto y pégalo en el chat cuando quieras feedback semanal o mensual. Incluye IBKR + DEGIRO completo, sin importar el filtro actual.</div>
             <textarea id="export-ta" value={exportText} readOnly spellCheck={false} style={{ width: "100%", boxSizing: "border-box", height: 260, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: 12, fontSize: 12, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.ink, lineHeight: 1.5, resize: "vertical", outline: "none" }} />
@@ -2699,8 +2725,8 @@ function App() {
         </div>
       )}
       {backupOpen && (
-        <div onClick={() => setBackupOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div onClick={() => setBackupOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink, marginBottom: 8 }}>Backup de datos</div>
             <div style={{ fontSize: 14, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Copia este texto y guárdalo (Notas, email…) para restaurar en otro dispositivo o si se borra. Backup único de toda la app: brokers, posiciones, cash y margen de cada broker, snapshots, aportaciones, operaciones del Comparador y tu API key. Para restaurar, pulsa Pegar (coge el backup del portapapeles) y luego Restaurar.</div>
             <textarea id="backup-ta" value={backupText} onChange={(e) => { setBackupText(e.target.value); setRestoreMsg(""); }} spellCheck={false} style={{ width: "100%", boxSizing: "border-box", height: 190, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: 12, fontSize: 12.5, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.ink, lineHeight: 1.5, resize: "vertical", outline: "none" }} />
@@ -2731,7 +2757,7 @@ function App() {
                     </div>
                   ))}
                 </div>
-                <div style={{ fontSize: 10.5, color: T.sub, lineHeight: 1.45, marginTop: 7 }}>Restaurar una copia sobrescribe los datos actuales con los de esa versión y recarga la app. Se guardan las 3 últimas.</div>
+                <div style={{ fontSize: 10.5, color: T.sub, lineHeight: 1.45, marginTop: 7 }}>Restaurar una copia sobrescribe los datos actuales con los de esa versión y recarga la app. Se guardan las 8 últimas.</div>
               </div>
             )}
             <div style={{ textAlign: "center", marginTop: 12 }}>
