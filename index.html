@@ -69,6 +69,8 @@ const SEED_ACC = { IBKR: { cash: "0", margin: "0" } };
 const KEY_ACC = "bloques_acc_v5", KEY_POS = "bloques_pos_v5";
 const KEY_ACC_OLD = "bloques_acc_v4", KEY_POS_OLD = "bloques_pos_v4";
 const KEY_FINNHUB = "bloques_finnhub_key";
+const KEY_GEMINI = "bloques_gemini_key";
+const GEMINI_MODEL = "gemini-2.5-flash"; // lector de capturas del Comparador
 const KEY_SNAP = "bloques_snapshots_v1";
 const KEY_BROKERS = "bloques_brokers_v1";
 const KEY_TRADES = "bloques_trades_v2";
@@ -79,12 +81,12 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    REGLA: cada vez que Claude cambie algo que toque datos/estructura de datos (nuevos campos, nuevas claves de
    localStorage, cambios de modelo, etc.) DEBE subir APP_VERSION aquí mismo, o el usuario no recibe el aviso
    de actualización ni la copia de seguridad automática. Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "1.4";
+const APP_VERSION = "1.5";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_FLOWS = "bloques_aportaciones_v1";
-const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_FLOWS, "bloques_show_pnl"];
+const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
 
 /* ---------- persistencia ---------- */
@@ -317,6 +319,75 @@ function parseOptionScreenshotText(raw) {
   const marginVal = mMargin ? parseFloat(mMargin[1].replace(/,/g, "")) : NaN;
   const margin = isFinite(marginVal) && marginVal > 0 && marginVal < 1000000 ? String(marginVal) : "";
 
+  return { tkr, strike, dte, credit, margin, right, ask: askOk ? ask : null, bid: bidOk ? bid : null };
+}
+/* ---------- lector de capturas con Gemini (visión), alternativa al Tesseract de arriba ---------- */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result || ""); resolve(s.slice(s.indexOf(",") + 1)); };
+    r.onerror = () => reject(new Error("no pude leer el fichero"));
+    r.readAsDataURL(file);
+  });
+}
+/* Le pedimos a Gemini solo lo que se LEE (ticker, strike, expiry, ask, bid, margen).
+   DTE y mid los calculamos en JS después: los LLM fallan en aritmética de fechas. */
+async function extractOptionFromImage(file, apiKey) {
+  const b64 = await fileToBase64(file);
+  const mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
+  const schema = { type: "object", properties: {
+    ticker: { type: "string" }, right: { type: "string" }, strike: { type: "number" },
+    expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" }, margin: { type: "number" }
+  } };
+  const prompt = [
+    "Esta es una captura de una app de bróker (tipo IBKR) con una orden sobre UNA opción.",
+    "Extrae SOLO los datos de la OPCIÓN, nunca del subyacente ('Underlying'):",
+    "- ticker: símbolo del subyacente (ej. ASTS).",
+    "- right: 'P' si es Put, 'C' si es Call.",
+    "- strike: precio de ejercicio.",
+    "- expiry: vencimiento de la opción en formato YYYY-MM-DD. Interpreta \"AUG 21 '26\" = 2026-08-21.",
+    "- ask: precio Ask de la opción (por acción). Si aparece como '614 x 8.70', el precio es 8.70, no 614.",
+    "- bid: precio Bid de la opción (por acción). Si aparece como '3 x 8.45', el precio es 8.45, no 3.",
+    "- margin: el número de 'Margin Impact', sin separadores de miles (2647.50, no 2,647.50).",
+    "Omite cualquier campo que no veas con claridad. Devuelve ÚNICAMENTE el JSON, sin texto adicional."
+  ].join("\n");
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
+  const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
+    generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    let detail = "HTTP " + r.status;
+    try { const e = await r.json(); if (e && e.error && e.error.message) detail = e.error.message; } catch (_) {}
+    if (r.status === 400 || r.status === 403) detail = "key inválida o sin permiso (" + detail + ")";
+    if (r.status === 429) detail = "límite diario/por minuto agotado (" + detail + ")";
+    throw new Error(detail);
+  }
+  const j = await r.json();
+  const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
+  const txt = (parts || []).map((p) => p.text || "").join("");
+  try { return JSON.parse(txt); } catch (_) { throw new Error("respuesta no-JSON del modelo"); }
+}
+function buildTradeFromGemini(data, file) {
+  const tkr = (data.ticker || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8);
+  const right = data.right === "P" || data.right === "C" ? data.right : "";
+  const strikeN = n(data.strike);
+  const strike = strikeN > 0 ? String(strikeN) : "";
+  let dte = "";
+  if (typeof data.expiry === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.expiry)) {
+    const exp = new Date(data.expiry + "T00:00:00Z");
+    const photo = new Date(file && file.lastModified ? file.lastModified : Date.now());
+    const photoUTC = Date.UTC(photo.getFullYear(), photo.getMonth(), photo.getDate());
+    if (!isNaN(exp.getTime())) dte = String(Math.max(Math.round((exp.getTime() - photoUTC) / 86400000), 0));
+  }
+  const ask = n(data.ask), bid = n(data.bid);
+  const plausible = (v) => isFinite(v) && v > 0 && v < 1000 && (!strikeN || v < strikeN * 1.5);
+  const askOk = plausible(ask), bidOk = plausible(bid);
+  let credit = "";
+  if (askOk && bidOk) credit = String(Math.round(((ask + bid) / 2) * 1000) / 1000);
+  else if (askOk) credit = String(ask);
+  else if (bidOk) credit = String(bid);
+  const marginN = n(data.margin);
+  const margin = isFinite(marginN) && marginN > 0 && marginN < 1000000 ? String(marginN) : "";
   return { tkr, strike, dte, credit, margin, right, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green" : v >= RULES.elNlv.amber ? "amber" : "red");
@@ -1316,14 +1387,13 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
   const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
   const runOcr = async (file) => {
-    if (!window.Tesseract) { setOcrMsg("No se pudo cargar el lector de imágenes (sin conexión). Rellena a mano."); setTimeout(() => setOcrMsg(""), 6000); return; }
-    setOcrBusy(true); setOcrMsg("Leyendo captura…"); setOcrRawText("");
-    try {
-      const input = await preprocessScreenshotForOcr(file);
-      const { data } = await window.Tesseract.recognize(input, "eng");
-      const rawText = (data && data.text) || "";
-      setOcrRawText(rawText);
-      const p = parseOptionScreenshotText(rawText);
+    const errToStr = (err) => {
+      if (!err) return "error desconocido";
+      if (err.message) return err.message;
+      try { return String(err); } catch (_) { return "error desconocido"; }
+    };
+    const gkey = (() => { try { return localStorage.getItem(KEY_GEMINI) || ""; } catch (e) { return ""; } })();
+    const addTrade = (p, prefix) => {
       const id = newId();
       setTrades((ts) => [{ id, tkr: p.tkr || "", dte: p.dte || "30", strike: p.strike || "", credit: p.credit || "", margin: p.margin || "" }, ...ts]);
       setEditSet((s) => new Set(s).add(id));
@@ -1334,12 +1404,44 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       if (p.ask != null && p.bid != null) parts.push(`mid $${p.credit} (ask ${p.ask} / bid ${p.bid})`);
       else if (p.credit) parts.push("prima $" + p.credit);
       if (p.margin) parts.push("margen $" + p.margin);
-      setOcrMsg(parts.length ? `Leído: ${parts.join(" · ")}. Revisa los campos antes de usarlo.` : "No pude leer los datos con claridad — completa los campos a mano.");
+      setOcrMsg((prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}. Revisa los campos antes de usarlo.` : "No pude leer los datos con claridad — completa los campos a mano."));
+    };
+    let geminiErr = "";
+    if (gkey) {
+      setOcrBusy(true); setOcrMsg("Leyendo captura con Gemini…"); setOcrRawText("");
+      try {
+        const data = await extractOptionFromImage(file, gkey);
+        setOcrRawText(JSON.stringify(data, null, 2));
+        addTrade(buildTradeFromGemini(data, file));
+        setOcrBusy(false);
+        setTimeout(() => setOcrMsg(""), 10000);
+        return;
+      } catch (err) {
+        console.error("[Comparador] Gemini OCR falló:", err);
+        geminiErr = errToStr(err);
+        setOcrBusy(false);
+        setOcrMsg("Gemini falló (" + geminiErr + "). Probando lectura local…");
+      }
+    }
+    if (!window.Tesseract) {
+      setOcrMsg((geminiErr ? "Gemini falló (" + geminiErr + "). " : "") + (gkey ? "Sin lectura local disponible. Rellena a mano." : "Añade tu API key de Gemini en Ajustes para leer capturas. Rellena a mano de momento."));
+      setTimeout(() => setOcrMsg(""), 12000);
+      return;
+    }
+    setOcrBusy(true); if (!gkey) setOcrMsg("Leyendo captura…"); setOcrRawText("");
+    try {
+      const input = await preprocessScreenshotForOcr(file);
+      const { data } = await window.Tesseract.recognize(input, "eng");
+      const rawText = (data && data.text) || "";
+      setOcrRawText(rawText);
+      addTrade(parseOptionScreenshotText(rawText));
     } catch (err) {
-      setOcrMsg("Error leyendo la imagen: " + (err && err.message ? err.message : "inténtalo de nuevo"));
+      console.error("[Comparador] Lector local (Tesseract) falló:", err);
+      const localErr = errToStr(err);
+      setOcrMsg((geminiErr ? "Gemini: " + geminiErr + " · " : "") + "Lector local: " + localErr);
     } finally {
       setOcrBusy(false);
-      setTimeout(() => setOcrMsg(""), 10000);
+      setTimeout(() => setOcrMsg(""), 14000);
     }
   };
 
@@ -1499,6 +1601,9 @@ function App() {
   const [apiKey, setApiKey] = useState("");
   const [keyModalOpen, setKeyModalOpen] = useState(false);
   const [keyInput, setKeyInput] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
+  const [geminiModalOpen, setGeminiModalOpen] = useState(false);
+  const [geminiInput, setGeminiInput] = useState("");
   const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
   const [updChecking, setUpdChecking] = useState(false);
   const [updCheckMsg, setUpdCheckMsg] = useState("");
@@ -1558,6 +1663,7 @@ function App() {
     try { const a = localStorage.getItem(KEY_ACC); if (a) { setAccounts(JSON.parse(a)); haveAcc = true; } } catch (e) {}
     try { const p = localStorage.getItem(KEY_POS); if (p) { setPositions(withNat(JSON.parse(p))); havePos = true; } } catch (e) {}
     try { const k = localStorage.getItem(KEY_FINNHUB); if (k) setApiKey(k); } catch (e) {}
+    try { const gk = localStorage.getItem(KEY_GEMINI); if (gk) setGeminiKey(gk); } catch (e) {}
     try { const s = localStorage.getItem(KEY_SNAP); if (s) setSnapshots(JSON.parse(s)); } catch (e) {}
     try { const bk = localStorage.getItem(KEY_BROKERS); if (bk) { const arr = JSON.parse(bk); if (Array.isArray(arr) && arr.length) setBrokers(arr); } } catch (e) {}
     let haveTr = false;
@@ -1615,7 +1721,7 @@ function App() {
       margenPct: p.margenPct != null ? p.margenPct : "100",
       margenModo: p.margenModo != null ? p.margenModo : "PCT",
     }));
-    setBackupText(JSON.stringify({ v: 11, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, showPnl }, null, 2));
+    setBackupText(JSON.stringify({ v: 11, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, geminiKey, showPnl }, null, 2));
     setCopied(false); setRestoreMsg(""); setBackupOpen(true);
   };
   const copyBackup = async () => {
@@ -1648,6 +1754,7 @@ function App() {
       if (Array.isArray(d.trades)) setTrades(d.trades);
       if (typeof d.compBasis === "string" && BASIS_KEYS.includes(d.compBasis)) setBasis(d.compBasis);
       if (typeof d.finnhubKey === "string" && d.finnhubKey) { setApiKey(d.finnhubKey); try { localStorage.setItem(KEY_FINNHUB, d.finnhubKey); } catch (e) {} }
+      if (typeof d.geminiKey === "string" && d.geminiKey) { setGeminiKey(d.geminiKey); try { localStorage.setItem(KEY_GEMINI, d.geminiKey); } catch (e) {} }
       if (typeof d.showPnl === "boolean") { setShowPnl(d.showPnl); try { localStorage.setItem("bloques_show_pnl", d.showPnl ? "1" : "0"); } catch (e) {} }
       setBroker("Todos");
       setRestoreMsg("ok"); setTimeout(() => setBackupOpen(false), 700);
@@ -1730,6 +1837,13 @@ function App() {
     try { localStorage.setItem(KEY_FINNHUB, k); } catch (e) {}
     setKeyModalOpen(false);
     runRefresh(k);
+  };
+  const openGeminiModal = () => { setGeminiInput(geminiKey); setGeminiModalOpen(true); };
+  const saveGeminiKey = () => {
+    const k = geminiInput.trim();
+    setGeminiKey(k);
+    try { localStorage.setItem(KEY_GEMINI, k); } catch (e) {}
+    setGeminiModalOpen(false);
   };
 
   const filtered = useMemo(() => broker === "Todos" ? positions : positions.filter((p) => p.broker === broker), [positions, broker]);
@@ -1978,7 +2092,8 @@ function App() {
           <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap", justifyContent: "flex-end" }}>
             {view === "bloques" && <button onClick={onRefreshClick} disabled={refreshing} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>{refreshing ? "…" : "🔄 Precios"}</button>}
             {view === "bloques" && <button onClick={openExport} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>Exportar</button>}
-            <button onClick={openBackup} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>Backup</button>
+            {view === "bloques" && <button onClick={openBackup} style={{ background: T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>Backup</button>}
+            {view === "comparador" && <button onClick={openGeminiModal} style={{ background: geminiKey ? T.card : T.tileAmber, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>{geminiKey ? "🔑 Gemini" : "🔑 Activar Gemini"}</button>}
             {view === "bloques" && <button onClick={clearAll} style={{ background: confirmClear ? T.red : T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: confirmClear ? "#fff" : T.sub, cursor: "pointer", boxShadow: T.shadow }}>{confirmClear ? "¿Vaciar?" : "Limpiar"}</button>}
             {view === "comparador" && trades.length > 0 && <button onClick={clearTrades} style={{ background: confirmClearTr ? T.red : T.card, border: "none", borderRadius: 14, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: confirmClearTr ? "#fff" : T.sub, cursor: "pointer", boxShadow: T.shadow }}>{confirmClearTr ? "¿Vaciar?" : "Limpiar"}</button>}
           </div>
@@ -2015,7 +2130,7 @@ function App() {
               }}>{b}</button>
             ))}
           </div>
-          <button onClick={() => { setBrokerModalOpen(true); setNewBrokerName(""); setRemoveTarget({}); }} aria-label="Gestionar brokers" style={{ flexShrink: 0, background: T.card, border: "none", borderRadius: 16, padding: "0 14px", fontSize: 18, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>⚙</button>
+          {view === "bloques" && <button onClick={() => { setBrokerModalOpen(true); setNewBrokerName(""); setRemoveTarget({}); }} aria-label="Gestionar brokers" style={{ flexShrink: 0, background: T.card, border: "none", borderRadius: 16, padding: "0 14px", fontSize: 18, fontWeight: 700, color: T.sub, cursor: "pointer", boxShadow: T.shadow }}>⚙</button>}
         </div>
 
         {/* CUENTA */}
@@ -2160,6 +2275,20 @@ function App() {
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setKeyModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
               <button onClick={saveKeyAndRefresh} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar y actualizar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {geminiModalOpen && (
+        <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{geminiKey ? "Cambiar API key de Gemini" : "API key de Gemini"}</div>
+            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Con ella, "📷 Leer captura" del Comparador usa Gemini (visión) en vez del lector local, mucho más fiable.</div>
+            <input type="text" value={geminiInput} onChange={(e) => setGeminiInput(e.target.value)} placeholder="Pega aquí tu API key"
+              style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 14 }} />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setGeminiModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={saveGeminiKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
             </div>
           </div>
         </div>
