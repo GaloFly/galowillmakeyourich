@@ -19,7 +19,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" crossorigin></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" crossorigin></script>
 </head>
 <body>
 <div id="root"></div>
@@ -90,7 +89,11 @@ const KEY_ACC_OLD = "bloques_acc_v4", KEY_POS_OLD = "bloques_pos_v4";
 const KEY_FINNHUB = "bloques_finnhub_key";
 const KEY_GEMINI = "bloques_gemini_key";
 const KEY_DARK_OVERRIDE = "bloques_dark_override"; // "dark" | "light" | ausente (= claro, por defecto)
-const GEMINI_MODEL = "gemini-2.5-flash"; // lector de capturas del Comparador
+const GEMINI_MODEL = "gemini-2.5-flash"; // lector de capturas del Comparador (modelo primario)
+/* Modelos que se prueban EN ORDEN si el anterior da 429: cada uno tiene su propio cupo gratuito
+   independiente, así que Flash-Lite sigue teniendo margen cuando Flash ya está agotado
+   (Flash: 5 RPM / 20-250 RPD · Flash-Lite: 15 RPM / 1000 RPD, ambos leen imágenes igual). */
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const KEY_SNAP = "bloques_snapshots_v1";
 const KEY_BROKERS = "bloques_brokers_v1";
 const KEY_TRADES = "bloques_trades_v2";
@@ -102,7 +105,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "3.5";
+const APP_VERSION = "4.0";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -250,124 +253,7 @@ const dteDeltaOf = (tr) => {
 };
 const strikeLineOf = (tr) => [strikeRightOf(tr), expiryOf(tr)].filter(Boolean).join(" · ");
 const newId = () => "p" + Math.random().toString(36).slice(2, 8);
-/* ---------- lector de capturas para el Comparador: OCR + parseo de ticker/strike/expiry/bid-ask/margen ---------- */
-const OCR_MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
-const OCR_STOPWORDS = new Set(["USD", "ASK", "BID", "PUT", "CALL", "THE", "AND", "NASDAQ", "NYSE", "NMS", "SELL", "BUY", "ORDER", "ACCOUNT", "MARKET", "DATA", "GREEKS", "SPREAD", "BUYING", "POWER", "POSITION", "QUANTITY", "PREVIEW", "ESTIMATE", "IMPACT", "COST", "SLIDE", "COMMISSION", "MIN", "INVEST", "MAX", "LOSS", "RETURN", "RISK", "BREAK", "EVEN", "DELTA", "GAMMA", "THETA", "SPX", "UNDERLYING"]);
-/* preprocesado de imagen antes del OCR: apps de trading en modo oscuro (texto claro sobre negro) se leen mal con
-   Tesseract por defecto (entrenado sobre todo con texto oscuro sobre fondo claro). Convertimos a gris, invertimos
-   si detectamos que es oscura de media, y subimos contraste — mejora mucho la lectura en capturas como esta. */
-function preprocessScreenshotForOcr(file) {
-  return new Promise((resolve) => {
-    try {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const scale = Math.min(2, 1800 / Math.max(img.width, img.height)) || 1;
-          const w = Math.max(1, Math.round(img.width * Math.max(scale, 1)));
-          const h = Math.max(1, Math.round(img.height * Math.max(scale, 1)));
-          const canvas = document.createElement("canvas");
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, w, h);
-          const imgData = ctx.getImageData(0, 0, w, h);
-          const d = imgData.data;
-          let sum = 0;
-          for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
-          const dark = sum / (d.length / 4) < 128;
-          for (let i = 0; i < d.length; i += 4) {
-            let g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-            if (dark) g = 255 - g;
-            g = Math.max(0, Math.min(255, (g - 128) * 1.4 + 128));
-            d[i] = d[i + 1] = d[i + 2] = g;
-          }
-          ctx.putImageData(imgData, 0, 0);
-          canvas.toBlob((blob) => resolve(blob || file), "image/png");
-        } catch (e) { resolve(file); }
-      };
-      img.onerror = () => resolve(file);
-      img.src = URL.createObjectURL(file);
-    } catch (e) { resolve(file); }
-  });
-}
-function parseOptionScreenshotText(raw) {
-  const text = String(raw || "").replace(/\r/g, "");
-  const upper = text.toUpperCase();
-  const isTkrCandidate = (t) => t.length >= 2 && !OCR_STOPWORDS.has(t) && !(t in OCR_MONTHS);
-
-  let strike = "", dte = "", right = "", tkr = "", expiryISO = "";
-  const mMonth = upper.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b/);
-  if (mMonth) {
-    /* ticker: el token en mayúsculas más cercano justo ANTES del mes (ej. "ASTS AUG 21 '26 70 Put") — mucho
-       más fiable que buscar en todo el texto, donde suele colarse ruido de la interfaz ("Account", "Sell"…) */
-    const before = upper.slice(Math.max(0, mMonth.index - 22), mMonth.index);
-    const beforeTokens = before.match(/[A-Z]{1,6}/g) || [];
-    for (let i = beforeTokens.length - 1; i >= 0; i--) { if (isTkrCandidate(beforeTokens[i])) { tkr = beforeTokens[i]; break; } }
-
-    const seg = upper.slice(mMonth.index, mMonth.index + 45);
-    const mDay = seg.match(/^[A-Z]{3}\D{0,4}(\d{1,2})\b/);
-    const mYear = seg.match(/'\s*(\d{2})\b/) || seg.match(/\b(20\d{2})\b/);
-    const mStrikeRight = seg.match(/(\d{1,4}(?:\.\d{1,2})?)\D{0,4}\b(PUT|CALL)\b/);
-    if (mDay && mYear && mStrikeRight) {
-      const day = parseInt(mDay[1], 10);
-      const yearRaw = mYear[1];
-      const year = yearRaw.length === 2 ? 2000 + parseInt(yearRaw, 10) : parseInt(yearRaw, 10);
-      const month = OCR_MONTHS[mMonth[1]];
-      const expiry = new Date(Date.UTC(year, month, day));
-      if (!isNaN(expiry.getTime())) {
-        const pad = (x) => String(x).padStart(2, "0");
-        expiryISO = `${year}-${pad(month + 1)}-${pad(day)}`;
-        const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-        dte = String(Math.max(Math.round((expiry - today) / 86400000), 0));
-      }
-      strike = mStrikeRight[1];
-      right = mStrikeRight[2] === "PUT" ? "P" : "C";
-    }
-  }
-  if (!tkr) {
-    // sin mes detectado: fallback al escaneo global de antes (peor, pero mejor que nada)
-    const tokens = upper.match(/\b[A-Z]{1,6}\b/g) || [];
-    for (const t of tokens) { if (isTkrCandidate(t)) { tkr = t; break; } }
-  }
-
-  const NUM = "([\\d]+[.,]\\d{1,2})";
-  const parseNum = (s) => (s ? parseFloat(s.replace(",", ".")) : NaN);
-  const mAsk = upper.match(new RegExp("ASK[^0-9]{0,20}[\\d,]+\\s*[X×]\\s*" + NUM)) || upper.match(new RegExp("ASK[^\\n]{0,30}?" + NUM));
-  const mBid = upper.match(new RegExp("BID[^0-9]{0,20}[\\d,]+\\s*[X×]\\s*" + NUM)) || upper.match(new RegExp("BID[^\\n]{0,30}?" + NUM));
-  const ask = mAsk ? parseNum(mAsk[1]) : NaN;
-  const bid = mBid ? parseNum(mBid[1]) : NaN;
-  const strikeN = n(strike);
-  /* filtro de cordura: una prima por acción no debería ni de lejos superar el strike, ni ser absurdamente grande —
-     si el OCR devuelve basura (nºs pegados/mal leídos), mejor dejarlo en blanco que meter un dato falso */
-  const plausiblePremium = (v) => isFinite(v) && v > 0 && v < 1000 && (!strikeN || v < strikeN * 1.5);
-  const askOk = plausiblePremium(ask), bidOk = plausiblePremium(bid);
-  let credit = "";
-  if (askOk && bidOk) credit = String(Math.round(((ask + bid) / 2) * 1000) / 1000);
-  else if (askOk) credit = String(ask);
-  else if (bidOk) credit = String(bid);
-
-  /* "Margin Impact" suele venir en una fila de 3 etiquetas (Commission% · Margin Impact · MinInvest) cuyo valor
-     numérico aparece en la fila de ABAJO, no pegado a la etiqueta — por eso una ventana corta (pocos caracteres)
-     falla. Usamos un salto largo pero perezoso: para en el PRIMER número que encuentre tras la etiqueta, que en
-     la práctica es el de Margin Impact porque Commission%/MinInvest casi siempre están vacíos ("--") en la vista
-     previa de la orden. */
-  const mMargin = upper.match(/MARGIN\s*IMPACT\D{0,120}?([\d,]+[.,]\d+)/);
-  const marginVal = mMargin ? parseFloat(mMargin[1].replace(/,/g, "")) : NaN;
-  const margin = isFinite(marginVal) && marginVal > 0 && marginVal < 1000000 ? String(marginVal) : "";
-
-  /* precio del subyacente: primer número tras la etiqueta "Underlying", antes de los signos +/- del cambio del día
-     (ej. "Underlying ASTS NASDAQ.NMS 74.67 +0.46 +0.62%" → 74.67; el [^0-9+\-] frena antes del cambio con signo) */
-  const mUnder = upper.match(/UNDERLYING[^0-9+\-]{0,40}?(\d{1,6}(?:[.,]\d{1,2})?)/);
-  const underVal = mUnder ? parseFloat(mUnder[1].replace(",", ".")) : NaN;
-  const underlying = isFinite(underVal) && underVal > 0 && underVal < 100000 ? String(underVal) : "";
-
-  /* Delta de "The Greeks" — evita el "SPX Delta" (campo distinto) que casi siempre aparece antes, en Market Data */
-  const mDelta = upper.match(/(?<!SPX\s)\bDELTA\b[^0-9+\-]{0,20}?([+-]?\d{1,4}(?:[.,]\d{1,3})?)/);
-  const deltaVal = mDelta ? parseFloat(mDelta[1].replace(",", ".")) : NaN;
-  const delta = isFinite(deltaVal) && deltaVal !== 0 ? String(deltaVal) : "";
-
-  return { tkr, strike, dte, credit, margin, right, expiry: expiryISO, underlying, delta, ask: askOk ? ask : null, bid: bidOk ? bid : null };
-}
-/* ---------- lector de capturas con Gemini (visión), alternativa al Tesseract de arriba ---------- */
+/* ---------- lector de capturas con Gemini (visión) para el Comparador ---------- */
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -378,7 +264,7 @@ function fileToBase64(file) {
 }
 /* Le pedimos a Gemini solo lo que se LEE (ticker, strike, expiry, ask, bid, margen).
    DTE y mid los calculamos en JS después: los LLM fallan en aritmética de fechas. */
-async function extractOptionFromImage(file, apiKey) {
+async function extractOptionFromImage(file, apiKey, model) {
   const b64 = await fileToBase64(file);
   const mime = file.type && file.type.startsWith("image/") ? file.type : "image/png";
   const schema = { type: "object", properties: {
@@ -386,7 +272,8 @@ async function extractOptionFromImage(file, apiKey) {
     expiry: { type: "string" }, ask: { type: "number" }, bid: { type: "number" },
     margin: { type: "number", description: "Valor junto a la etiqueta literal 'Margin Impact', no otro campo en dólares." },
     underlying: { type: "number", description: "Precio actual del SUBYACENTE (fila 'Underlying'), no de la opción." },
-    delta: { type: "number", description: "Valor bajo la sección 'The Greeks', etiqueta literal 'Delta' (no 'SPX Delta', que es un campo distinto)." }
+    delta: { type: "number", description: "Valor bajo la sección 'The Greeks', etiqueta literal 'Delta' (no 'SPX Delta', que es un campo distinto)." },
+    pop: { type: "number", description: "Probability of Profit (%) bajo 'Market Implied', etiqueta 'Probability of Profit: XX%'. Devuelve solo el número (ej. 71 para '71%')." }
   } };
   const prompt = [
     "Esta es una captura de una app de bróker (tipo IBKR) con una orden sobre UNA opción.",
@@ -400,9 +287,10 @@ async function extractOptionFromImage(file, apiKey) {
     "- margin: EXCLUSIVAMENTE el valor junto a la etiqueta literal 'Margin Impact' (suele estar en una sección 'Market Data' junto a otros campos parecidos como 'Max Loss', 'Break Even', 'Commission' o 'MinInvest'). NO confundas 'Margin Impact' con ninguno de esos otros campos aunque también sean cifras en dólares — deben tener su propia etiqueta bien visible. Si no encuentras literalmente el texto 'Margin Impact' en la imagen, omite este campo por completo en vez de adivinar con otro número.",
     "- underlying: precio actual del SUBYACENTE (no de la opción) — está en la fila con la etiqueta 'Underlying', normalmente junto al ticker y bolsa (ej. 'NASDAQ.NMS'). Es un precio por acción normal (ej. 74.67), mucho más pequeño que strike×100 o que Margin Impact — no lo confundas con esos.",
     "- delta: EXCLUSIVAMENTE el valor junto a la etiqueta literal 'Delta' que aparece en la sección 'The Greeks' (normalmente junto a 'Gamma' y 'Theta'). NO uses 'SPX Delta' (un campo distinto, de correlación con el índice, que suele aparecer antes en 'Market Data') — si solo ves 'SPX Delta' y no un 'Delta' propio en 'The Greeks', omite este campo.",
+    "- pop: el número junto a 'Probability of Profit' (bajo 'Market Implied', suele estar antes de 'Market Data'). Si pone 'Probability of Profit: 71%', devuelve 71. Si pone '--' o no aparece con claridad, omite este campo.",
     "Omite cualquier campo que no veas con claridad. Devuelve ÚNICAMENTE el JSON, sin texto adicional."
   ].join("\n");
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + (model || GEMINI_MODEL) + ":generateContent?key=" + encodeURIComponent(apiKey);
   const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -456,7 +344,9 @@ function buildTradeFromGemini(data, file) {
   const underlying = isFinite(underN) && underN > 0 && underN < 100000 ? String(underN) : "";
   const deltaN = n(data.delta);
   const delta = isFinite(deltaN) && deltaN !== 0 && Math.abs(deltaN) < 100000 ? String(deltaN) : "";
-  return { tkr, strike, dte, credit, margin, right, expiry, underlying, delta, ask: askOk ? ask : null, bid: bidOk ? bid : null };
+  const popN = n(data.pop);
+  const pop = isFinite(popN) && popN > 0 && popN <= 100 ? String(Math.round(popN * 10) / 10) : "";
+  return { tkr, strike, dte, credit, margin, right, expiry, underlying, delta, pop, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green" : v >= RULES.elNlv.amber ? "amber" : "red");
 const toneMrgn = (v) => (!isFinite(v) ? "muted" : v >= RULES.elMrgn.green ? "green" : v >= RULES.elMrgn.amber ? "amber" : "red");
@@ -1503,6 +1393,11 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
 function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis }) {
   const [editSet, setEditSet] = useState(() => new Set());
   const [ocrBusy, setOcrBusy] = useState(false);
+  /* algunos iOS disparan el evento "change" del <input type=file> DOS veces para la misma selección
+     (sobre todo saliendo de la cámara/galería) — sin esto, "una foto" podía convertirse en 2 llamadas
+     a Gemini de golpe. setOcrBusy(true) es async (no se ve hasta el siguiente render), así que un ref
+     síncrono es la única forma fiable de bloquear el segundo disparo en el mismo tick. */
+  const ocrLockRef = useRef(false);
   const [ocrMsg, setOcrMsg] = useState("");
   const base = { elNlv: nlv ? el / nlv : NaN, elMrgn: margin ? el / margin : NaN };
   const baseEmpty = !nlv && !margin;
@@ -1572,7 +1467,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
 
   const setTr = (id, k) => (v) => setTrades((ts) => ts.map((t) => (t.id === id ? { ...t, [k]: v } : t)));
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
-  const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "", delta: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
+  const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "", delta: "", pop: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
 
   const errToStr = (err) => {
@@ -1590,6 +1485,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
     if (p.margin) parts.push("margen $" + p.margin);
     if (p.underlying) parts.push("subyacente $" + p.underlying);
     if (p.delta) parts.push("delta " + p.delta);
+    if (p.pop) parts.push("POP " + p.pop + "%");
     return (prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}` : "no pude leer los datos con claridad");
   };
   /* lee UNA captura y devuelve { trade, message } sin tocar el estado de UI — así el llamador
@@ -1597,62 +1493,86 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
      onWaiting(ms) es opcional: se llama mientras esperamos el cooldown de un 429 para poder avisar en pantalla. */
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
   const readOneScreenshot = async (file, gkey, onWaiting) => {
+    if (!gkey) return { trade: null, message: "añade tu API key de Gemini en Ajustes para leer capturas" };
     let geminiErr = "";
-    if (gkey) {
-      for (let attempt = 0; attempt < 2; attempt++) {
+    /* Ante 429 (cupo gratuito agotado): prueba el SIGUIENTE modelo de GEMINI_MODELS — tiene cupo
+       independiente (Flash → Flash-Lite). Solo si TODOS están a 429 esperamos el cooldown del
+       primero y reintentamos una última vuelta antes de rendirnos. */
+    for (let round = 0; round < 2; round++) {
+      let rateLimited = false, waitMs = 0;
+      for (let mi = 0; mi < GEMINI_MODELS.length; mi++) {
+        const model = GEMINI_MODELS[mi];
         try {
-          const data = await extractOptionFromImage(file, gkey);
+          const data = await extractOptionFromImage(file, gkey, model);
           const trade = buildTradeFromGemini(data, file);
           return { trade, message: summarizeTrade(trade) };
         } catch (err) {
-          console.error("[Comparador] Gemini OCR falló:", err);
+          console.error("[Comparador] Gemini OCR falló (" + model + "):", err);
           geminiErr = errToStr(err);
-          /* 429 con cooldown conocido (típico del free tier: 20 req/min) → espera ese tiempo exacto y
-             reintenta UNA vez con Gemini antes de resignarse al lector local, que es bastante menos fiable */
-          if (attempt === 0 && err && err.status === 429 && err.retryAfterMs) {
-            const waitMs = Math.min(err.retryAfterMs + 500, 65000);
-            if (onWaiting) onWaiting(waitMs);
-            await sleep(waitMs);
-            continue;
+          if (err && err.status === 429) {
+            rateLimited = true;
+            if (err.retryAfterMs) waitMs = Math.max(waitMs, err.retryAfterMs);
+            continue; // prueba el siguiente modelo
           }
-          break;
+          // error que no es de cupo (key inválida, respuesta rara…): no tiene sentido seguir probando
+          return { trade: null, message: "Gemini falló: " + geminiErr };
         }
       }
+      // llegamos aquí = todos los modelos dieron 429 en esta vuelta
+      if (round === 0 && rateLimited && waitMs) {
+        const ms = Math.min(waitMs + 500, 65000);
+        if (onWaiting) onWaiting(ms);
+        await sleep(ms);
+        continue; // una segunda y última vuelta tras esperar
+      }
+      break;
     }
-    if (!window.Tesseract) {
-      return { trade: null, message: (geminiErr ? "Gemini falló (" + geminiErr + "). " : "") + (gkey ? "sin lectura local disponible" : "añade tu API key de Gemini en Ajustes para leer capturas") };
-    }
-    try {
-      const input = await preprocessScreenshotForOcr(file);
-      const { data } = await window.Tesseract.recognize(input, "eng");
-      const rawText = (data && data.text) || "";
-      const trade = parseOptionScreenshotText(rawText);
-      return { trade, message: summarizeTrade(trade, geminiErr ? "Gemini falló (" + geminiErr + "), usé el lector local. " : "") };
-    } catch (err) {
-      console.error("[Comparador] Lector local (Tesseract) falló:", err);
-      return { trade: null, message: (geminiErr ? "Gemini: " + geminiErr + " · " : "") + "lector local: " + errToStr(err) };
-    }
+    return { trade: null, message: "Gemini falló en Flash y Flash-Lite (cupo agotado en ambos): " + geminiErr };
   };
   /* acepta una o varias fotos; las procesa en orden y añade cada operación YA COLAPSADA
      (sin abrir el editable) — revisar los campos leídos es opcional, no forzoso */
   const runOcr = async (files) => {
     const list = Array.from(files || []).filter(Boolean);
     if (!list.length) return;
+    if (ocrLockRef.current) { console.warn("[Comparador] runOcr ya en curso, ignoro disparo duplicado"); return; }
+    ocrLockRef.current = true;
     const gkey = (() => { try { return localStorage.getItem(KEY_GEMINI) || ""; } catch (e) { return ""; } })();
     setOcrBusy(true);
     const multi = list.length > 1;
-    const results = [];
-    for (let i = 0; i < list.length; i++) {
-      setOcrMsg(multi ? `Leyendo captura ${i + 1}/${list.length}…` : (gkey ? "Leyendo captura con Gemini…" : "Leyendo captura…"));
-      const onWaiting = (ms) => setOcrMsg(`${multi ? `Captura ${i + 1}/${list.length}: ` : ""}límite de Gemini alcanzado, esperando ${Math.ceil(ms / 1000)}s para reintentar…`);
-      const { trade, message } = await readOneScreenshot(list[i], gkey, onWaiting);
+    /* Antes se leía una captura por vez (i=0..n-1 en serie): con un lote de varias fotos, el tiempo
+       total era la SUMA de la latencia de cada llamada a Gemini. Cada foto es independiente, así que
+       las lanzamos en paralelo con un límite de 3 a la vez (evita disparar 429 de golpe si hay muchas). */
+    const CONCURRENCY = Math.min(3, list.length);
+    const results = new Array(list.length);
+    const trades = new Array(list.length);
+    let doneCount = 0;
+    setOcrMsg(multi ? `Leyendo ${list.length} capturas… (0/${list.length})` : (gkey ? "Leyendo captura con Gemini…" : "Leyendo captura…"));
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < list.length) {
+        const i = nextIndex++;
+        const onWaiting = (ms) => setOcrMsg(`${multi ? `Captura ${i + 1}/${list.length}: ` : ""}límite de Gemini alcanzado, esperando ${Math.ceil(ms / 1000)}s para reintentar…`);
+        const { trade, message } = await readOneScreenshot(list[i], gkey, onWaiting);
+        trades[i] = trade;
+        results[i] = multi ? `#${i + 1}: ${message}` : message;
+        doneCount++;
+        if (multi) setOcrMsg(`Leyendo ${list.length} capturas… (${doneCount}/${list.length})`);
+      }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    /* insertamos en el mismo orden final que daba la versión en serie: la última foto del lote queda
+       arriba del todo (más reciente primero), igual que antes. */
+    const newRows = [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const trade = trades[i];
       if (trade) {
         const id = newId();
-        setTrades((ts) => [{ id, tkr: trade.tkr || "", dte: trade.dte || "30", strike: trade.strike || "", credit: trade.credit || "", margin: trade.margin || "", right: trade.right || "P", expiry: trade.expiry || "", underlying: trade.underlying || "", delta: trade.delta || "" }, ...ts]);
+        newRows.push({ id, tkr: trade.tkr || "", dte: trade.dte || "30", strike: trade.strike || "", credit: trade.credit || "", margin: trade.margin || "", right: trade.right || "P", expiry: trade.expiry || "", underlying: trade.underlying || "", delta: trade.delta || "", pop: trade.pop || "" });
       }
-      results.push(multi ? `#${i + 1}: ${message}` : message);
     }
+    if (newRows.length) setTrades((ts) => [...newRows, ...ts]);
     setOcrBusy(false);
+    ocrLockRef.current = false;
     setOcrMsg(results.join("  ·  ") + ". Revisa los campos antes de usarlos.");
     setTimeout(() => setOcrMsg(""), Math.min(10000 + list.length * 3000, 22000));
   };
@@ -1732,7 +1652,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <div style={{ fontSize: 12, color: T.sub, fontWeight: 500 }}>Annualized ROI</div>
                 </div>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 22, marginBottom: 14, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 26 }}>
                   <MiniStat label="Premium" value={"$" + money2(c.premium)} />
                   <MiniStat label="ROI" value={signPct(c.roi, 2)} color={T.green} />
@@ -1747,6 +1667,12 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                     <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{isFinite(c.bep) ? "$" + money2(c.bep) : "—"}</div>
                     {isFinite(c.bepMargin) && <div style={{ fontSize: 11, fontWeight: 700, color: c.bepMargin <= 0 ? T.green : T.red }}>({pct(c.bepMargin, 0)})</div>}
                   </div>
+                  {c.pop && (
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>POP</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{c.pop}%</div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1770,6 +1696,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   <EditField label="Margin" prefix="$" value={c.margin} onChange={setTr(c.id, "margin")} />
                   <EditField label="Precio subyacente" prefix="$" value={c.underlying} onChange={setTr(c.id, "underlying")} span={2} />
                   <EditField label="Delta" value={c.delta} onChange={setTr(c.id, "delta")} span={2} />
+                  <EditField label="POP (%)" value={c.pop} onChange={setTr(c.id, "pop")} span={2} />
                 </div>
               )}
 
@@ -2640,7 +2567,7 @@ function App() {
         <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{geminiKey ? "Cambiar API key de Gemini" : "API key de Gemini"}</div>
-            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Con ella, "📷 Leer captura" del Comparador usa Gemini (visión) en vez del lector local, mucho más fiable.</div>
+            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Sin ella, "📷 Leer captura" del Comparador no puede leer nada. Si se agota el cupo gratuito de un modelo (429), prueba automáticamente con Flash-Lite (cupo aparte) antes de rendirse.</div>
             <input type="text" value={geminiInput} onChange={(e) => setGeminiInput(e.target.value)} placeholder="Pega aquí tu API key"
               style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 14 }} />
             <div style={{ display: "flex", gap: 10 }}>
