@@ -284,7 +284,7 @@ function parseOptionScreenshotText(raw) {
   const upper = text.toUpperCase();
   const isTkrCandidate = (t) => t.length >= 2 && !OCR_STOPWORDS.has(t) && !(t in OCR_MONTHS);
 
-  let strike = "", dte = "", right = "", tkr = "";
+  let strike = "", dte = "", right = "", tkr = "", expiryISO = "";
   const mMonth = upper.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b/);
   if (mMonth) {
     /* ticker: el token en mayúsculas más cercano justo ANTES del mes (ej. "ASTS AUG 21 '26 70 Put") — mucho
@@ -304,6 +304,8 @@ function parseOptionScreenshotText(raw) {
       const month = OCR_MONTHS[mMonth[1]];
       const expiry = new Date(Date.UTC(year, month, day));
       if (!isNaN(expiry.getTime())) {
+        const pad = (x) => String(x).padStart(2, "0");
+        expiryISO = `${year}-${pad(month + 1)}-${pad(day)}`;
         const today = new Date(); today.setUTCHours(0, 0, 0, 0);
         dte = String(Math.max(Math.round((expiry - today) / 86400000), 0));
       }
@@ -337,7 +339,13 @@ function parseOptionScreenshotText(raw) {
   const marginVal = mMargin ? parseFloat(mMargin[1].replace(/,/g, "")) : NaN;
   const margin = isFinite(marginVal) && marginVal > 0 && marginVal < 1000000 ? String(marginVal) : "";
 
-  return { tkr, strike, dte, credit, margin, right, ask: askOk ? ask : null, bid: bidOk ? bid : null };
+  /* precio del subyacente: primer número tras la etiqueta "Underlying", antes de los signos +/- del cambio del día
+     (ej. "Underlying ASTS NASDAQ.NMS 74.67 +0.46 +0.62%" → 74.67; el [^0-9+\-] frena antes del cambio con signo) */
+  const mUnder = upper.match(/UNDERLYING[^0-9+\-]{0,40}?(\d{1,6}(?:[.,]\d{1,2})?)/);
+  const underVal = mUnder ? parseFloat(mUnder[1].replace(",", ".")) : NaN;
+  const underlying = isFinite(underVal) && underVal > 0 && underVal < 100000 ? String(underVal) : "";
+
+  return { tkr, strike, dte, credit, margin, right, expiry: expiryISO, underlying, ask: askOk ? ask : null, bid: bidOk ? bid : null };
 }
 /* ---------- lector de capturas con Gemini (visión), alternativa al Tesseract de arriba ---------- */
 function fileToBase64(file) {
