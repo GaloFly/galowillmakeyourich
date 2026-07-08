@@ -99,7 +99,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Empezamos en 1.0 y sumamos 0.1 por entrega: 1.0, 1.1, 1.2… */
-const APP_VERSION = "2.5";
+const APP_VERSION = "2.8";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 8 copias automáticas (raw localStorage)
@@ -335,7 +335,12 @@ function parseOptionScreenshotText(raw) {
   else if (askOk) credit = String(ask);
   else if (bidOk) credit = String(bid);
 
-  const mMargin = upper.match(/MARGIN\s*IMPACT\D{0,6}([\d,]+[.,]?\d*)/);
+  /* "Margin Impact" suele venir en una fila de 3 etiquetas (Commission% · Margin Impact · MinInvest) cuyo valor
+     numérico aparece en la fila de ABAJO, no pegado a la etiqueta — por eso una ventana corta (pocos caracteres)
+     falla. Usamos un salto largo pero perezoso: para en el PRIMER número que encuentre tras la etiqueta, que en
+     la práctica es el de Margin Impact porque Commission%/MinInvest casi siempre están vacíos ("--") en la vista
+     previa de la orden. */
+  const mMargin = upper.match(/MARGIN\s*IMPACT\D{0,120}?([\d,]+[.,]\d+)/);
   const marginVal = mMargin ? parseFloat(mMargin[1].replace(/,/g, "")) : NaN;
   const margin = isFinite(marginVal) && marginVal > 0 && marginVal < 1000000 ? String(marginVal) : "";
 
@@ -1407,8 +1412,6 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
   const [editSet, setEditSet] = useState(() => new Set());
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrMsg, setOcrMsg] = useState("");
-  const [ocrRawText, setOcrRawText] = useState("");
-  const [ocrShowRaw, setOcrShowRaw] = useState(false);
   const base = { elNlv: nlv ? el / nlv : NaN, elMrgn: margin ? el / margin : NaN };
   const baseEmpty = !nlv && !margin;
 
@@ -1473,64 +1476,72 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
   const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
-  const runOcr = async (file) => {
-    const errToStr = (err) => {
-      if (!err) return "error desconocido";
-      if (err.message) return err.message;
-      try { return String(err); } catch (_) { return "error desconocido"; }
-    };
-    const gkey = (() => { try { return localStorage.getItem(KEY_GEMINI) || ""; } catch (e) { return ""; } })();
-    const addTrade = (p, prefix) => {
-      const id = newId();
-      setTrades((ts) => [{ id, tkr: p.tkr || "", dte: p.dte || "30", strike: p.strike || "", credit: p.credit || "", margin: p.margin || "", right: p.right || "P", expiry: p.expiry || "", underlying: p.underlying || "" }, ...ts]);
-      setEditSet((s) => new Set(s).add(id));
-      const parts = [];
-      if (p.tkr) parts.push(p.tkr + (p.right || ""));
-      if (p.strike) parts.push("strike $" + p.strike);
-      if (p.dte) parts.push(p.dte + " DTE");
-      if (p.ask != null && p.bid != null) parts.push(`mid $${p.credit} (ask ${p.ask} / bid ${p.bid})`);
-      else if (p.credit) parts.push("prima $" + p.credit);
-      if (p.margin) parts.push("margen $" + p.margin);
-      if (p.underlying) parts.push("subyacente $" + p.underlying);
-      setOcrMsg((prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}. Revisa los campos antes de usarlo.` : "No pude leer los datos con claridad — completa los campos a mano."));
-    };
+
+  const errToStr = (err) => {
+    if (!err) return "error desconocido";
+    if (err.message) return err.message;
+    try { return String(err); } catch (_) { return "error desconocido"; }
+  };
+  const summarizeTrade = (p, prefix) => {
+    const parts = [];
+    if (p.tkr) parts.push(p.tkr + (p.right || ""));
+    if (p.strike) parts.push("strike $" + p.strike);
+    if (p.dte) parts.push(p.dte + " DTE");
+    if (p.ask != null && p.bid != null) parts.push(`mid $${p.credit} (ask ${p.ask} / bid ${p.bid})`);
+    else if (p.credit) parts.push("prima $" + p.credit);
+    if (p.margin) parts.push("margen $" + p.margin);
+    if (p.underlying) parts.push("subyacente $" + p.underlying);
+    return (prefix || "") + (parts.length ? `Leído: ${parts.join(" · ")}` : "no pude leer los datos con claridad");
+  };
+  /* lee UNA captura y devuelve { trade, message } sin tocar el estado de UI — así el llamador
+     (una sola foto o un lote de varias) decide cómo mostrar progreso/errores */
+  const readOneScreenshot = async (file, gkey) => {
     let geminiErr = "";
     if (gkey) {
-      setOcrBusy(true); setOcrMsg("Leyendo captura con Gemini…"); setOcrRawText("");
       try {
         const data = await extractOptionFromImage(file, gkey);
-        setOcrRawText(JSON.stringify(data, null, 2));
-        addTrade(buildTradeFromGemini(data, file));
-        setOcrBusy(false);
-        setTimeout(() => setOcrMsg(""), 10000);
-        return;
+        const trade = buildTradeFromGemini(data, file);
+        return { trade, message: summarizeTrade(trade) };
       } catch (err) {
         console.error("[Comparador] Gemini OCR falló:", err);
         geminiErr = errToStr(err);
-        setOcrBusy(false);
-        setOcrMsg("Gemini falló (" + geminiErr + "). Probando lectura local…");
       }
     }
     if (!window.Tesseract) {
-      setOcrMsg((geminiErr ? "Gemini falló (" + geminiErr + "). " : "") + (gkey ? "Sin lectura local disponible. Rellena a mano." : "Añade tu API key de Gemini en Ajustes para leer capturas. Rellena a mano de momento."));
-      setTimeout(() => setOcrMsg(""), 12000);
-      return;
+      return { trade: null, message: (geminiErr ? "Gemini falló (" + geminiErr + "). " : "") + (gkey ? "sin lectura local disponible" : "añade tu API key de Gemini en Ajustes para leer capturas") };
     }
-    setOcrBusy(true); if (!gkey) setOcrMsg("Leyendo captura…"); setOcrRawText("");
     try {
       const input = await preprocessScreenshotForOcr(file);
       const { data } = await window.Tesseract.recognize(input, "eng");
       const rawText = (data && data.text) || "";
-      setOcrRawText(rawText);
-      addTrade(parseOptionScreenshotText(rawText));
+      const trade = parseOptionScreenshotText(rawText);
+      return { trade, message: summarizeTrade(trade, geminiErr ? "Gemini falló (" + geminiErr + "), usé el lector local. " : "") };
     } catch (err) {
       console.error("[Comparador] Lector local (Tesseract) falló:", err);
-      const localErr = errToStr(err);
-      setOcrMsg((geminiErr ? "Gemini: " + geminiErr + " · " : "") + "Lector local: " + localErr);
-    } finally {
-      setOcrBusy(false);
-      setTimeout(() => setOcrMsg(""), 14000);
+      return { trade: null, message: (geminiErr ? "Gemini: " + geminiErr + " · " : "") + "lector local: " + errToStr(err) };
     }
+  };
+  /* acepta una o varias fotos; las procesa en orden y añade cada operación YA COLAPSADA
+     (sin abrir el editable) — revisar los campos leídos es opcional, no forzoso */
+  const runOcr = async (files) => {
+    const list = Array.from(files || []).filter(Boolean);
+    if (!list.length) return;
+    const gkey = (() => { try { return localStorage.getItem(KEY_GEMINI) || ""; } catch (e) { return ""; } })();
+    setOcrBusy(true);
+    const multi = list.length > 1;
+    const results = [];
+    for (let i = 0; i < list.length; i++) {
+      setOcrMsg(multi ? `Leyendo captura ${i + 1}/${list.length}…` : (gkey ? "Leyendo captura con Gemini…" : "Leyendo captura…"));
+      const { trade, message } = await readOneScreenshot(list[i], gkey);
+      if (trade) {
+        const id = newId();
+        setTrades((ts) => [{ id, tkr: trade.tkr || "", dte: trade.dte || "30", strike: trade.strike || "", credit: trade.credit || "", margin: trade.margin || "", right: trade.right || "P", expiry: trade.expiry || "", underlying: trade.underlying || "" }, ...ts]);
+      }
+      results.push(multi ? `#${i + 1}: ${message}` : message);
+    }
+    setOcrBusy(false);
+    setOcrMsg(results.join("  ·  ") + ". Revisa los campos antes de usarlos.");
+    setTimeout(() => setOcrMsg(""), Math.min(10000 + list.length * 3000, 22000));
   };
 
   const seg = (key, label) => (
@@ -1571,22 +1582,14 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       {ocrMsg && (
         <div style={{ fontSize: 12, color: ocrMsg.startsWith("Error") ? T.red : T.green, fontWeight: 700, marginBottom: 12, background: ocrMsg.startsWith("Error") ? T.tileRed : T.tileGreen, borderRadius: 12, padding: "8px 12px", lineHeight: 1.4 }}>{ocrMsg}</div>
       )}
-      {ocrRawText && (
-        <div style={{ marginBottom: 12 }}>
-          <button onClick={() => setOcrShowRaw((v) => !v)} style={{ background: "transparent", border: "none", fontSize: 11.5, fontWeight: 700, color: T.sub, textDecoration: "underline", cursor: "pointer", padding: 0 }}>{ocrShowRaw ? "Ocultar texto reconocido" : "Ver texto reconocido (para corregir a mano)"}</button>
-          {ocrShowRaw && (
-            <div style={{ marginTop: 6, background: T.tile, borderRadius: 12, padding: 10, fontSize: 11, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.sub, whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{ocrRawText}</div>
-          )}
-        </div>
-      )}
 
       {/* añadir / limpiar */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 4px 12px", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>Candidatas · {computed.length}</span>
         <div style={{ display: "flex", gap: 8 }}>
-          <input id="ocr-file-input" type="file" accept="image/*" style={{ display: "none" }}
-            onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) runOcr(f); }} />
-          <button onClick={() => document.getElementById("ocr-file-input").click()} disabled={ocrBusy} style={{ background: T.card, border: "none", borderRadius: 14, padding: "9px 14px", fontSize: 13.5, fontWeight: 700, color: T.ink, cursor: "pointer", boxShadow: T.shadow }}>{ocrBusy ? "Leyendo…" : "📷 Leer captura"}</button>
+          <input id="ocr-file-input" type="file" accept="image/*" multiple style={{ display: "none" }}
+            onChange={(e) => { const fs = e.target.files ? Array.from(e.target.files) : []; e.target.value = ""; if (fs.length) runOcr(fs); }} />
+          <button onClick={() => document.getElementById("ocr-file-input").click()} disabled={ocrBusy} style={{ background: T.card, border: "none", borderRadius: 14, padding: "9px 14px", fontSize: 13.5, fontWeight: 700, color: T.ink, cursor: "pointer", boxShadow: T.shadow }}>{ocrBusy ? "Leyendo…" : "📷 Leer captura(s)"}</button>
           <button onClick={addTrade} style={{ background: T.green, border: "none", borderRadius: 14, padding: "9px 16px", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>+ Operación</button>
         </div>
       </div>
@@ -1681,7 +1684,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
       </div>
 
       <div style={{ fontSize: 11.5, color: T.sub, lineHeight: 1.6, marginTop: 18, padding: "0 4px" }}>
-        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. El % entre paréntesis bajo el BEP es cuánto tendría que CAER el subyacente (desde su precio actual) para tocar el BEP — negativo (verde) = margen a favor; positivo (rojo) = el subyacente ya está por debajo del BEP. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit), el Margin Impact y el precio del subyacente (fila "Underlying") de una captura de tu broker; revisa siempre los campos antes de usarlo, el reconocimiento de texto no es infalible.
+        El estado base (NLV, Margin, Excess Liq) sale directamente de la tarjeta Cuenta — respeta el filtro de broker de arriba ({brokerLabel}). Notional = (Strike − Credit) × 100 · Premium = Credit × 100 · BEP = Strike − Credit. El % entre paréntesis bajo el BEP es cuánto tendría que CAER el subyacente (desde su precio actual) para tocar el BEP — negativo (verde) = margen a favor; positivo (rojo) = el subyacente ya está por debajo del BEP. ROI = Premium/Notional; Return on margin = Premium/Margin; los "Annualized" × 365/DTE. Cada operación se evalúa contra el base (no acumulativo). EL/NLV post = (EL − Margin op) / NLV · EL/MRGN post = (EL − Margin op) / (Margin base + Margin op). Marca gris = base, marca oscura = dónde quedas. Suelos EL/NLV 25% / EL/MRGN 50%; objetivos 40% / 100%. Los trades entran en el mismo backup que las posiciones. "📷 Leer captura(s)" extrae ticker, strike, expiry (→ DTE), la media entre Ask y Bid (→ Credit), el Margin Impact y el precio del subyacente (fila "Underlying") de una o varias capturas de tu broker a la vez (cada una añade su propia operación, ya colapsada); revisa siempre los campos antes de usarlos, el reconocimiento de texto no es infalible.
       </div>
     </>
   );
