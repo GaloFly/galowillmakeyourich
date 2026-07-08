@@ -166,10 +166,11 @@ const natOf = (p) => p.nat || inferNat(p);
 const isCashNat = (p) => natOf(p) === "CASH";
 const isOptionNat = (p) => { const x = natOf(p); return x !== "ACC" && x !== "CASH"; };
 const contractsOf = (p) => n(p.qty) / 100;
-/* BEP automático por prima: Short Put/Short Call cobran prima (crédito) → BEP = Strike − Prima. Long Call Leaps la paga (débito) → BEP = Strike + Prima. Cualquier otra estrategia sigue con BEP manual. */
-const BEP_CREDIT_STRATS = new Set(["Short Put", "Short Call"]);
+/* BEP automático por prima: cualquier posición de Tipo "Crédito" (short put, covered call, hybrid collar) cobra prima → BEP = Strike − Prima.
+   Se basa en "nat" (Tipo), no en el texto de Estrategia, para que funcione siempre que el Tipo sea Crédito, se haya elegido la estrategia como se haya elegido.
+   "Long Call Leaps" es la única estrategia de débito con esta fórmula simple (Strike + Prima); el resto de nat=Débito son multi-pata y llevan BEP manual. */
 const BEP_DEBIT_STRATS = new Set(["Long Call Leaps"]);
-const bepAutoStrat = (p) => (BEP_CREDIT_STRATS.has(p.tipo) ? "CREDIT" : BEP_DEBIT_STRATS.has(p.tipo) ? "DEBIT" : null);
+const bepAutoStrat = (p) => (natOf(p) === "CRED" ? "CREDIT" : BEP_DEBIT_STRATS.has(p.tipo) ? "DEBIT" : null);
 const effBep = (p) => {
   const s = bepAutoStrat(p);
   if (s === "CREDIT") return n(p.strike) - n(p.prima);
@@ -394,7 +395,7 @@ const toneNlv = (v) => (!isFinite(v) ? "muted" : v >= RULES.elNlv.green ? "green
 const toneMrgn = (v) => (!isFinite(v) ? "muted" : v >= RULES.elMrgn.green ? "green" : v >= RULES.elMrgn.amber ? "amber" : "red");
 const ibkrDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return ""; return `${MONTHS[d.getMonth()]} ${d.getDate()} '${String(d.getFullYear()).slice(-2)}`; };
 const optionDetail = (p) => {
-  if (n(p.strike) > 0 && p.expiry) return `${ibkrDate(p.expiry)} ${strikeStr(p.strike)}${p.right}`;
+  if (n(p.strike) > 0 && p.expiry) return `${strikeStr(p.strike)}${p.right} ${ibkrDate(p.expiry)}`;
   if (n(p.strike) > 0) return `${strikeStr(p.strike)}${p.right}`;
   if (p.expiry) return ibkrDate(p.expiry);
   return "";
@@ -691,6 +692,8 @@ function ChartCard({ scope, setScope, scopeOptions, slices, total, denomPct, den
 
 /* ---------- exposición agregada por subyacente ---------- */
 function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleRow = (tkr) => setExpanded((s) => { const next = new Set(s); if (next.has(tkr)) next.delete(tkr); else next.add(tkr); return next; });
   return (
     <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -704,36 +707,58 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
         <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500 }}>Sin posiciones.</div>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const isOpen = expanded.has(row.tkr);
+            return (
             <div key={row.tkr} style={{ borderRadius: 16, background: T.tile, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{row.tkr}</span>
-                  {row.last > 0 && <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>${money2(row.last)}</span>}
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>${money(row.riesgo)} riesgo total</span>
+              <div onClick={() => toggleRow(row.tkr)} style={{ cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                  <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{row.tkr}</span>
+                    {row.last > 0 && <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>${money2(row.last)}</span>}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>${money(row.riesgo)} riesgo total</span>
+                </div>
+                {row.blockChips.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {row.blockChips.map((c) => (
+                      <span key={c.id} style={{ fontSize: 10.5, fontWeight: 800, color: c.color, background: c.bg, borderRadius: 8, padding: "3px 7px" }}>{c.name} {pct(c.value, 0)}</span>
+                    ))}
+                  </div>
+                )}
+                {showPnl && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "6px 10px", borderRadius: 10, background: row.pnl > 0 ? T.tileGreen : row.pnl < 0 ? T.tileRed : T.tile }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>P&L</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: row.pnl > 0 ? T.green : row.pnl < 0 ? T.red : T.sub }}>{signMoney(row.pnl)}{isFinite(row.pnlPct) ? <span style={{ fontSize: 12, fontWeight: 700, marginLeft: 6 }}>{(row.pnlPct >= 0 ? "+" : "") + (row.pnlPct * 100).toFixed(1) + "%"}</span> : null}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <MicroStat label="% MKT VL" value={pct(row.pctMktvl, 1)} />
+                  <MicroStat label="% NLV" value={pct(row.pctNlv, 1)} />
+                  <MicroStat label="% Margen" value={pct(row.pctMargen, 1)} />
+                  <MicroStat label="Plausible" value={"$" + money(row.plausible)} />
+                </div>
               </div>
-              {row.blockChips.length > 0 && (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                  {row.blockChips.map((c) => (
-                    <span key={c.id} style={{ fontSize: 10.5, fontWeight: 800, color: c.color, background: c.bg, borderRadius: 8, padding: "3px 7px" }}>{c.name} {pct(c.value, 0)}</span>
-                  ))}
+              {isOpen && row.detailRows && row.detailRows.length > 0 && (
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1.5px solid ${T.line}`, display: "grid", gap: 3 }}>
+                  {row.detailRows.map((d, i) => {
+                    const b = BLOCKS.find((x) => x.id === d.block);
+                    return (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "3px 0" }}>
+                        <span style={{ fontSize: 12, color: T.ink, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span style={{ color: b ? b.color : T.sub, fontWeight: 800 }}>{b ? b.name.replace("Bloque ", "B") : ""}</span>
+                          {" · x " + d.qtyNum}{d.desc ? " " + d.desc : ""}
+                          {" · BEP $" + money2(d.bep)}
+                        </span>
+                        <span style={{ fontSize: 12, color: T.sub, fontWeight: 800, flexShrink: 0 }}>${money(d.riesgo)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-              {showPnl && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "6px 10px", borderRadius: 10, background: row.pnl > 0 ? T.tileGreen : row.pnl < 0 ? T.tileRed : T.tile }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>P&L</span>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: row.pnl > 0 ? T.green : row.pnl < 0 ? T.red : T.sub }}>{signMoney(row.pnl)}{isFinite(row.pnlPct) ? <span style={{ fontSize: 12, fontWeight: 700, marginLeft: 6 }}>{(row.pnlPct >= 0 ? "+" : "") + (row.pnlPct * 100).toFixed(1) + "%"}</span> : null}</span>
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <MicroStat label="% MKT VL" value={pct(row.pctMktvl, 1)} />
-                <MicroStat label="% NLV" value={pct(row.pctNlv, 1)} />
-                <MicroStat label="% Margen" value={pct(row.pctMargen, 1)} />
-                <MicroStat label="Plausible" value={"$" + money(row.plausible)} />
-              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -1119,7 +1144,13 @@ function PositionRow({ p, editing, onToggle, onChange, onDelete, pctBloque, pctC
           <EditField label="Ticker" value={p.tkr} onChange={onChange("tkr")} text />
           <SelectField label="Estrategia" value={p.tipo} options={STRATS[p.block] || []} span={2}
             onChange={(val) => { onChange("tipo")(val); const newNat = natFromStrat(val); onChange("nat")(newNat); if (newNat === "CASH") onChange("tkr")("CASH"); }} />
-          {!cash && <EditField label={isOptionNat(p) ? "Cantidad (100 = 1 contrato)" : "Cantidad (acciones)"} value={p.qty} onChange={onChange("qty")} span={2} />}
+          {!cash && (isOptionNat(p) ? (
+            <EditField label="Cantidad (contratos)" span={2}
+              value={p.qty === "" || p.qty == null ? "" : String(n(p.qty) / 100)}
+              onChange={(v) => { if (v === "") { onChange("qty")(""); return; } const shares = Math.round(n(v) * 100 * 1e6) / 1e6; onChange("qty")(String(shares)); }} />
+          ) : (
+            <EditField label="Cantidad (acciones)" value={p.qty} onChange={onChange("qty")} span={2} />
+          ))}
           <label style={{ gridColumn: "span 2" }}>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Tipo · define riesgo total y plausible</span>
             <Pill options={natsForBlock(p.block).map((x) => x.label)} value={(NATS.find((x) => x.id === natOf(p)) || {}).label} onChange={(lbl) => { const newNat = (NATS.find((x) => x.label === lbl) || {}).id || "ACC"; onChange("nat")(newNat); if (newNat === "CASH") onChange("tkr")("CASH"); }} size="sm" />
@@ -1928,7 +1959,7 @@ function App() {
     const map = {};
     filtered.forEach((p) => {
       if (!p.tkr) return;
-      if (!map[p.tkr]) map[p.tkr] = { tkr: p.tkr, riesgo: 0, plausible: 0, margen: 0, pnl: 0, pnlBasis: 0, last: 0, byBlock: {} };
+      if (!map[p.tkr]) map[p.tkr] = { tkr: p.tkr, riesgo: 0, plausible: 0, margen: 0, pnl: 0, pnlBasis: 0, last: 0, byBlock: {}, items: [] };
       map[p.tkr].riesgo += capDesplegado(p);
       map[p.tkr].plausible += plausibleOf(p);
       map[p.tkr].margen += effMargen(p);
@@ -1936,19 +1967,46 @@ function App() {
       map[p.tkr].pnlBasis += Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegado(p);
       if (n(p.last) > 0 && (natOf(p) === "ACC" || !map[p.tkr].last)) map[p.tkr].last = n(p.last);
       map[p.tkr].byBlock[p.block] = (map[p.tkr].byBlock[p.block] || 0) + capDesplegado(p);
+      if (natOf(p) !== "CASH") map[p.tkr].items.push(p);
     });
-    return Object.values(map).filter((r) => r.riesgo > 0).sort((a, b) => b.riesgo - a.riesgo).map((r) => ({
-      ...r,
-      pctMktvl: mktvl ? r.riesgo / mktvl : NaN,
-      pctNlv: nlv ? r.riesgo / nlv : NaN,
-      pctMargen: margin ? r.margen / margin : NaN,
-      pnlPct: r.pnlBasis ? r.pnl / r.pnlBasis : NaN,
-      blockChips: Object.entries(r.byBlock).map(([bid, val]) => {
-        const b = BLOCKS.find((x) => x.id === Number(bid));
-        return { id: bid, name: b.name.replace("Bloque ", "B"), color: b.color, bg: b.bg, value: blockTotals[bid] ? val / blockTotals[bid] : NaN };
-      }),
-    }));
-  }, [filtered, mktvl, nlv, margin, blockTotals]);
+    return Object.values(map).filter((r) => r.riesgo > 0).sort((a, b) => b.riesgo - a.riesgo).map((r) => {
+      /* filas de detalle: agrupa por bloque + (acciones: solo bloque) / (opción: bloque+right+strike+expiry) —
+         así "2 put" con el mismo strike/vencimiento en el mismo bloque se funden en una fila con BEP ponderado */
+      const groups = {};
+      r.items.forEach((p) => {
+        const isOpt = isOptionNat(p);
+        const key = p.block + "|" + (isOpt ? (p.right || "") + "|" + (p.strike || "") + "|" + (p.expiry || "") : "ACC");
+        if (!groups[key]) groups[key] = { block: p.block, isOpt, right: p.right, strike: p.strike, expiry: p.expiry, qty: 0, bepW: 0, riesgo: 0 };
+        groups[key].qty += n(p.qty);
+        groups[key].bepW += effBep(p) * n(p.qty);
+        groups[key].riesgo += capDesplegado(p);
+      });
+      const detailRows = Object.values(groups).map((g) => {
+        const contratos = g.qty / 100;
+        return {
+          block: g.block,
+          isOpt: g.isOpt,
+          qtyNum: g.isOpt ? (Number.isInteger(contratos) ? contratos : g.qty) : g.qty,
+          qtyUnit: g.isOpt ? (Number.isInteger(contratos) ? "contr." : "opc") : "acc",
+          desc: g.isOpt ? optionDetail({ strike: g.strike, expiry: g.expiry, right: g.right }) : "",
+          bep: g.qty ? g.bepW / g.qty : NaN,
+          riesgo: g.riesgo,
+        };
+      }).sort((a, b) => a.block - b.block || (a.isOpt === b.isOpt ? 0 : a.isOpt ? 1 : -1));
+      return {
+        ...r,
+        pctMktvl: mktvl ? r.riesgo / mktvl : NaN,
+        pctNlv: nlv ? r.riesgo / nlv : NaN,
+        pctMargen: margin ? r.margen / margin : NaN,
+        pnlPct: r.pnlBasis ? r.pnl / r.pnlBasis : NaN,
+        blockChips: Object.entries(r.byBlock).map(([bid, val]) => {
+          const b = BLOCKS.find((x) => x.id === Number(bid));
+          return { id: bid, name: b.name.replace("Bloque ", "B"), color: b.color, bg: b.bg, value: r.riesgo ? val / r.riesgo : NaN };
+        }),
+        detailRows,
+      };
+    });
+  }, [filtered, mktvl, nlv, margin]);
 
   /* ---------- exportar cartera completa (ignora filtro de broker) para pegar y pedir feedback ---------- */
   const [exportOpen, setExportOpen] = useState(false);
