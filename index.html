@@ -39,17 +39,23 @@ const T_LIGHT = {
 };
 /* paleta oscura: mismo carácter cálido, luminancia invertida — se activa a mano con el icono ☀️/🌙, por defecto claro */
 const T_DARK = {
-  bg: "#17140F", card: "#221D16", tile: "#2B2419",
-  tileGreen: "#16291D", tileAmber: "#2E2510", tileRed: "#2E1917", tilePurple: "#211D34",
-  ink: "#F0EBE0", sub: "#9C948A",
-  green: "#34C874", purple: "#A99AF0", gold: "#E0B84A", orange: "#F0995A", red: "#F2716A",
-  dark: "#3A3327", line: "#3A342A", shadow: "0 6px 20px rgba(0,0,0,0.35)",
+  bg: "#0A0A0A", card: "#161616", tile: "#1C1C1E",
+  tileGreen: "#0F2318", tileAmber: "#2A2110", tileRed: "#2A1512", tilePurple: "#1B1826",
+  ink: "#FFFFFF", sub: "#8E8E93",
+  green: "#20C46E", purple: "#A99AF0", gold: "#F0B90B", orange: "#F7931A", red: "#FF4D4D",
+  dark: "#2C2C2E", line: "#26262A", shadow: "0 6px 20px rgba(0,0,0,0.55)",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
 /* T, HEX, BLOCKS, TABS, PALETTE dependen todos del tema activo. Son "let" (no "const") y se reconstruyen
    entera vía applyTheme() cuando cambia el modo claro/oscuro del sistema — ver el listener en App(). */
-let T, HEX, BLOCKS, TABS, PALETTE;
+let T, HEX, BLOCKS, TABS, PALETTE, DARK = false;
+function hexToRgba(hex, a) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
 function applyTheme(dark) {
+  DARK = dark;
   T = dark ? T_DARK : T_LIGHT;
   HEX = { green: T.green, amber: T.gold, red: T.red, purple: T.purple, orange: T.orange, muted: T.sub };
   PALETTE = [T.green, T.purple, T.orange, T.red, T.gold, "#4A90D9", "#D96BA0", "#5FBAA3", "#B08D57", "#7E8CE0", "#E0A85F", "#6BAF6B", "#C4739B", "#5C9AC7"];
@@ -74,8 +80,9 @@ const SEED_BROKERS = ["IBKR"];
 const emptyAcc = () => ({ cash: "0", margin: "0" });
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
-const Z_NLV = [{ to: 0.25, color: "rgba(224,86,77,0.22)" }, { to: 0.40, color: "rgba(195,148,41,0.26)" }, { to: 0.60, color: "rgba(27,163,76,0.20)" }];
-const Z_MRGN = [{ to: 0.5, color: "rgba(224,86,77,0.22)" }, { to: 1.0, color: "rgba(195,148,41,0.26)" }, { to: 1.5, color: "rgba(27,163,76,0.20)" }];
+function zoneAlpha(base) { return DARK ? Math.min(0.55, base + 0.24) : base; }
+function Z_NLV() { return [{ to: 0.25, color: hexToRgba(T.red, zoneAlpha(0.22)) }, { to: 0.40, color: hexToRgba(T.gold, zoneAlpha(0.26)) }, { to: 0.60, color: hexToRgba(T.green, zoneAlpha(0.20)) }]; }
+function Z_MRGN() { return [{ to: 0.5, color: hexToRgba(T.red, zoneAlpha(0.22)) }, { to: 1.0, color: hexToRgba(T.gold, zoneAlpha(0.26)) }, { to: 1.5, color: hexToRgba(T.green, zoneAlpha(0.20)) }]; }
 const M_NLV_MINI = [{ at: 0.25, label: "25" }, { at: 0.40, label: "40" }, { at: 0.60, label: "60" }];
 const M_MRGN_MINI = [{ at: 0.5, label: "50" }, { at: 1.0, label: "100" }, { at: 1.5, label: "150" }];
 const M_NLV_FULL = [{ at: 0.25, label: "25% suelo" }, { at: 0.40, label: "40% obj" }, { at: 0.60, label: "60%" }];
@@ -105,7 +112,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.07";
+const APP_VERSION = "4.17";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -412,11 +419,11 @@ function bandZones(blk) {
   const clamp = (x) => Math.max(mn, Math.min(mx, x));
   const p1 = clamp(tMin - band), p2 = clamp(tMin), p3 = clamp(tMax), p4 = clamp(tMax + band);
   return [
-    { to: p1, color: "rgba(224,86,77,0.22)" },
-    { to: p2, color: "rgba(195,148,41,0.26)" },
-    { to: p3, color: "rgba(27,163,76,0.20)" },
-    { to: p4, color: "rgba(195,148,41,0.26)" },
-    { to: mx, color: "rgba(224,86,77,0.22)" },
+    { to: p1, color: hexToRgba(T.red, zoneAlpha(0.22)) },
+    { to: p2, color: hexToRgba(T.gold, zoneAlpha(0.26)) },
+    { to: p3, color: hexToRgba(T.green, zoneAlpha(0.20)) },
+    { to: p4, color: hexToRgba(T.gold, zoneAlpha(0.26)) },
+    { to: mx, color: hexToRgba(T.red, zoneAlpha(0.22)) },
   ];
 }
 
@@ -1735,8 +1742,8 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                 <Tile label="Annualized return on margin" value={pct(c.annRom, 0)} tone="green" />
               </div>
 
-              <ElRow label="EL / NLV post" post={c.elNlv} base={base.elNlv} delta={c.dElNlv} color={HEX[toneNlv(c.elNlv)]} min={0} max={0.6} zones={Z_NLV} marks={M_NLV_FULL} />
-              <ElRow label="EL / MRGN post" post={c.elMrgn} base={base.elMrgn} delta={c.dElMrgn} color={HEX[toneMrgn(c.elMrgn)]} min={0} max={1.5} zones={Z_MRGN} marks={M_MRGN_FULL} />
+              <ElRow label="EL / NLV post" post={c.elNlv} base={base.elNlv} delta={c.dElNlv} color={HEX[toneNlv(c.elNlv)]} min={0} max={0.6} zones={Z_NLV()} marks={M_NLV_FULL} />
+              <ElRow label="EL / MRGN post" post={c.elMrgn} base={base.elMrgn} delta={c.dElMrgn} color={HEX[toneMrgn(c.elMrgn)]} min={0} max={1.5} zones={Z_MRGN()} marks={M_MRGN_FULL} />
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4, paddingTop: 13, borderTop: `1px solid ${T.line}` }}>
                 <button onClick={() => toggleEdit(c.id)} style={{ background: editing ? T.dark : T.tile, border: "none", borderRadius: 12, padding: "8px 16px", fontSize: 13.5, fontWeight: 700, color: editing ? "#fff" : T.ink, cursor: "pointer" }}>{editing ? "✓ Hecho" : "✎ Editar"}</button>
@@ -2487,7 +2494,7 @@ function App() {
                 <span style={{ fontSize: 13, color: T.ink, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}>EL / NLV <InfoDot onClick={() => setInfo("nlv")} /></span>
                 <span style={{ fontSize: 17, fontWeight: 800, color: HEX[toneNlv(elNlv)] }}>{pct(elNlv)}</span>
               </div>
-              <ZoneBar value={elNlv} min={0} max={0.6} zones={Z_NLV} />
+              <ZoneBar value={elNlv} min={0} max={0.6} zones={Z_NLV()} />
               <Scale min={0} max={0.6} marks={M_NLV_MINI} />
             </div>
             <div>
@@ -2495,7 +2502,7 @@ function App() {
                 <span style={{ fontSize: 13, color: T.ink, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}>EL / MRGN <InfoDot onClick={() => setInfo("mrgn")} /></span>
                 <span style={{ fontSize: 17, fontWeight: 800, color: HEX[toneMrgn(elMrgn)] }}>{pct(elMrgn)}</span>
               </div>
-              <ZoneBar value={elMrgn} min={0} max={1.5} zones={Z_MRGN} />
+              <ZoneBar value={elMrgn} min={0} max={1.5} zones={Z_MRGN()} />
               <Scale min={0} max={1.5} marks={M_MRGN_MINI} />
             </div>
           </div>
