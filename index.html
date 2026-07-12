@@ -122,7 +122,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.13";
+const APP_VERSION = "1.16";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3122,6 +3122,41 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
    · Estrategias — TODAS las posiciones (abiertas y cerradas) archivadas por tipo: Acciones, Covered
      Calls, Short Puts, PMCC, DC/DD, Otras. Selector Abiertas/Cerradas. Al pulsar una posición se expande
      con: cadena de rolls, prima acumulada, BEP, ROM (prima/riesgo), DTE, DIT e IVR de apertura. ---------- */
+/* ---------- AJUSTES: iconos de línea (v1.16) — mismo trazo que NavIcon (stroke 2, redondeado) ---------- */
+function SetIcon({ name, color }) {
+  const P = { fill: "none", stroke: color || "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
+  return (
+    <svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
+      {name === "refresh" && (<g {...P}><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 5.5V11h-5.5" /></g>)}
+      {name === "theme" && (<g {...P}><circle cx="12" cy="12" r="4" /><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7" /></g>)}
+      {name === "bank" && (<g {...P}><path d="M3.5 9.5L12 4l8.5 5.5" /><path d="M5 10v8M9.7 10v8M14.3 10v8M19 10v8" /><path d="M3.5 20.5h17" /></g>)}
+      {name === "export" && (<g {...P}><path d="M12 14.5V3.5" /><path d="M7.5 7.5L12 3l4.5 4.5" /><path d="M4.5 13v5.5A2 2 0 0 0 6.5 20.5h11a2 2 0 0 0 2-2V13" /></g>)}
+      {name === "backup" && (<g {...P}><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8" /><path d="M4.5 5.5v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5.5" /><path d="M4.5 12v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V12" /></g>)}
+      {name === "key" && (<g {...P}><circle cx="8" cy="14.5" r="4.5" /><path d="M11.5 11L20 2.5" /><path d="M16.5 6l3 3M14 8.5l2 2" /></g>)}
+      {name === "camera" && (<g {...P}><rect x="3" y="6.5" width="18" height="13" rx="2.5" /><path d="M8.5 6.5L10 4h4l1.5 2.5" /><circle cx="12" cy="12.8" r="3.4" /></g>)}
+      {name === "trash" && (<g {...P}><path d="M4 6.5h16" /><path d="M9 6.5V4.8A1.3 1.3 0 0 1 10.3 3.5h3.4A1.3 1.3 0 0 1 15 4.8v1.7" /><path d="M6 6.5l1 13a1.8 1.8 0 0 0 1.8 1.7h6.4a1.8 1.8 0 0 0 1.8-1.7l1-13" /><path d="M10 10.5v6M14 10.5v6" /></g>)}
+      {name === "broom" && (<g {...P}><path d="M14.5 3.5L11 10" /><path d="M11 10l-6.5 6.5c-.9.9-1 2.3-.2 3.2.9.8 2.3.7 3.2-.2L14 13" /><path d="M11 10l3 3" /><path d="M6.5 20.5L10 17" /></g>)}
+    </svg>
+  );
+}
+
+/* ---------- AJUSTES: fila de lista (v1.15) — icono en cuadrado tintado, título + subtítulo,
+   accesorio a la derecha (texto o chevron), separador fino entre filas ---------- */
+function SettingsRow({ icon, tint, iconColor, title, sub, right, onClick, danger, last, active }) {
+  return (
+    <button onClick={onClick} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, background: active ? T.tileRed : "transparent", border: "none", borderBottom: last ? "none" : `1px solid ${T.line}`, borderRadius: active ? 14 : 0, padding: "13px 6px", cursor: "pointer", textAlign: "left" }}>
+      <span style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 11, background: tint || T.tile, display: "flex", alignItems: "center", justifyContent: "center" }}><SetIcon name={icon} color={iconColor || T.ink} /></span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: danger ? T.red : T.ink }}>{title}</span>
+        {sub ? <span style={{ display: "block", fontSize: 11.5, fontWeight: 500, color: T.sub, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</span> : null}
+      </span>
+      {right != null
+        ? <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, color: danger ? T.red : T.sub, whiteSpace: "nowrap" }}>{right}</span>
+        : <span style={{ flexShrink: 0, color: T.sub, fontSize: 17, fontWeight: 700, opacity: 0.55 }}>›</span>}
+    </button>
+  );
+}
+
 function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, snapshots, flows, saveSnapshot, deleteSnapshot }) {
   const [sub, setSub] = useState("primas");
   const [stratCat, setStratCat] = useState("Acciones");
@@ -3132,6 +3167,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const [stratWin, setStratWin] = useState("Todas"); /* v1.07: filtro de resultado — Todas | Ganadoras | Perdedoras */
   const [stratTkr, setStratTkr] = useState("Todos"); /* v1.07: filtro por ticker dentro de la estrategia */
   const [filterOpen, setFilterOpen] = useState(false); /* v1.08: modal de filtros */
+  const [exportMsg, setExportMsg] = useState(""); /* v1.14: confirmación del export */
   const [expanded, setExpanded] = useState(new Set());
   const toggleExpand = (id) => setExpanded((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
   const [openMonths, setOpenMonths] = useState(new Set());
@@ -3388,6 +3424,53 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       return stratDateOf(b) < stratDateOf(a) ? -1 : 1;
     });
   const todayIso = new Date().toISOString().slice(0, 10);
+  /* v1.14: exportar las cerradas de la estrategia activa (respetando filtros) como JSON compacto para
+     pegar en un chat y que la evalúe una IA — condiciones de entrada, gestión y resultado por operación,
+     más el resumen agregado. Copia al portapapeles; si no se puede, abre la hoja de compartir. */
+  const exportStrat = () => {
+    const ops = stratItems.map((p) => {
+      const isOpt = isOptionNat(p);
+      const rolls = (p.rollChain || []).length;
+      const openStrike = openingStrike(p), openExpiry = openingExpiry(p), openPrima = openingPrimaPerShare(p);
+      const o = {
+        tkr: p.tkr || null, tipo: p.tipo || categoryOf(p), bloque: "B" + p.block,
+        abierta: p.entryDate || null, cerrada: p.closeDate || null,
+        dit: isFinite(daysBetween(p.entryDate, p.closeDate)) ? daysBetween(p.entryDate, p.closeDate) : null,
+        resultado: Math.round(closedResultOf(p) * 100) / 100,
+        ejercida: !!p.exercised,
+      };
+      if (isOpt) {
+        o.contratos = Number.isInteger(n(p.qty) / 100) ? n(p.qty) / 100 : n(p.qty) + " opc";
+        o.right = p.right || null;
+        o.strikeApertura = openStrike || null; o.expiryApertura = openExpiry || null;
+        o.primaAperturaPorAcc = n(openPrima) || null;
+        o.dteApertura = isFinite(daysBetween(p.entryDate, openExpiry)) ? daysBetween(p.entryDate, openExpiry) : null;
+        o.deltaApertura = p.delta || null; o.ivrApertura = p.ivr || null;
+        o.rolls = rolls;
+        if (rolls > 0) { o.strikeFinal = p.strike || null; o.expiryFinal = p.expiry || null; }
+        if (isCreditSpread(p)) { o.putSpread = p.putSpread || null; o.callSpread = p.callSpread || null; o.riesgoManual = n(p.margen) || null; }
+        else if (natOf(p) === "CRED" && !isPMCC(p)) o.riesgo = Math.round(Math.abs((n(openStrike) - n(openPrima)) * n(p.qty)));
+      } else {
+        o.acciones = n(p.qty);
+        o.bep = n(effBep(p)) || null; o.precioVenta = n(p.closePrice) || null;
+      }
+      if (p.closeNote) o.nota = p.closeNote;
+      return o;
+    });
+    const wins = stratItems.filter((pp) => !pp.exercised && closedResultOf(pp) > 0).length;
+    const total = stratItems.reduce((s, pp) => s + closedResultOf(pp), 0);
+    const payload = {
+      app: "Bloques v" + APP_VERSION, exportado: todayIso, estrategia: stratCat,
+      filtro: { ticker: stratTkr, resultado: stratWin },
+      resumen: { operaciones: ops.length, ganadoras: wins, perdedoras: stratItems.filter((pp) => pp.exercised || closedResultOf(pp) < 0).length, winRate: ops.length ? Math.round((wins / ops.length) * 100) + "%" : null, profitTotal: Math.round(total * 100) / 100, mediaPorOp: ops.length ? Math.round((total / ops.length) * 100) / 100 : null },
+      operaciones: ops,
+    };
+    const text = JSON.stringify(payload, null, 1);
+    const done = () => { setExportMsg("Copiado — pégalo en el chat para evaluarlo"); setTimeout(() => setExportMsg(""), 3500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => { if (navigator.share) navigator.share({ text }).catch(() => {}); else done(); });
+    } else if (navigator.share) { navigator.share({ text }).catch(() => {}); }
+  };
   const shortDate = (iso) => { if (!iso) return ""; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y.slice(-2)}`; };
 
   return (
@@ -3818,6 +3901,13 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               </div>
             );
           })()}
+
+          {stratStatus === "Cerradas" && stratItems.length > 0 && (
+            /* v1.14: exporta las cerradas visibles (con filtros aplicados) para pegarlas en un chat y evaluarlas */
+            <button onClick={exportStrat} style={{ width: "100%", marginTop: -6, marginBottom: 14, background: exportMsg ? T.tileGreen : T.tilePurple, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 13, fontWeight: 800, color: exportMsg ? T.green : T.purple, cursor: "pointer" }}>
+              {exportMsg || ("📤 Exportar " + stratItems.length + (stratItems.length === 1 ? " operación" : " operaciones") + " para análisis")}
+            </button>
+          )}
 
           {stratCat === "DC/DD" && (() => {
             /* auditoría DC/DD (v5.08): "en qué falla y en qué no". Sobre las CERRADAS (resultado MTM),
@@ -5658,8 +5748,12 @@ function App() {
   const [exportCopied, setExportCopied] = useState(false);
 
   const buildExportText = () => {
-    const invAll = positions.reduce((s, p) => s + (isCashNat(p) ? 0 : effMkt(p)), 0);
-    const posCashAll = positions.reduce((s, p) => s + (isCashNat(p) ? effMkt(p) : 0), 0);
+    /* v1.15: SOLO abiertas — las cerradas conservan qty/BEP/último y estaban inflando riesgo,
+       MKT VL y exposición del export. La foto de cartera es de lo vivo; el histórico cerrado
+       se exporta desde Histórico → Cerradas → "Exportar para análisis". */
+    const openPos = positions.filter((p) => !p.closed);
+    const invAll = openPos.reduce((s, p) => s + (isCashNat(p) ? 0 : effMkt(p)), 0);
+    const posCashAll = openPos.reduce((s, p) => s + (isCashNat(p) ? effMkt(p) : 0), 0);
     const mktvlAll = invAll + posCashAll; /* MKT VL total = invertido + posiciones Cash B0 (v5.61) */
     const manualCashAll = brokers.reduce((s, b) => s + n((accounts[b] || {}).cash), 0);
     const cashAll = manualCashAll + posCashAll;
@@ -5667,7 +5761,7 @@ function App() {
     const nlvAll = mktvlAll + Math.min(manualCashAll, 0);
     const elAll = nlvAll - marginAll;
     const blockTotalsAll = {};
-    BLOCKS.forEach((b) => { blockTotalsAll[b.id] = positions.filter((p) => p.block === b.id).reduce((s, p) => s + capDesplegado(p), 0); });
+    BLOCKS.forEach((b) => { blockTotalsAll[b.id] = openPos.filter((p) => p.block === b.id).reduce((s, p) => s + capDesplegado(p), 0); });
 
     const lines = [];
     lines.push(`CARTERA — ${new Date().toLocaleDateString("es-ES")}`);
@@ -5684,7 +5778,7 @@ function App() {
     lines.push("");
 
     BLOCKS.forEach((b) => {
-      const bp = positions.filter((p) => p.block === b.id);
+      const bp = openPos.filter((p) => p.block === b.id);
       const capTotal = bp.reduce((s, p) => s + capDesplegado(p), 0);
       const plausible = bp.reduce((s, p) => s + plausibleOf(p), 0);
       const pnl = bp.reduce((s, p) => s + effPnl(p), 0);
@@ -5700,7 +5794,7 @@ function App() {
 
     lines.push("EXPOSICIÓN POR SUBYACENTE (todas las posiciones agregadas por ticker)");
     const expMap = {};
-    positions.forEach((p) => {
+    openPos.forEach((p) => {
       if (!p.tkr) return;
       if (!expMap[p.tkr]) expMap[p.tkr] = { riesgo: 0, margen: 0 };
       expMap[p.tkr].riesgo += capDesplegado(p);
@@ -5711,8 +5805,8 @@ function App() {
     });
     lines.push("");
 
-    const totalRiesgoAll = positions.filter((p) => p.block !== 0).reduce((s, p) => s + capDesplegado(p), 0);
-    const totalPnlAll = positions.reduce((s, p) => s + effPnl(p), 0);
+    const totalRiesgoAll = openPos.filter((p) => p.block !== 0).reduce((s, p) => s + capDesplegado(p), 0);
+    const totalPnlAll = openPos.reduce((s, p) => s + effPnl(p), 0);
     lines.push(`TOTAL RIESGO (sin B0): $${money(totalRiesgoAll)} · P&L TOTAL: ${signMoney(totalPnlAll)}`);
     return lines.join("\n");
   };
@@ -5725,7 +5819,9 @@ function App() {
 
   /* ---------- snapshots de rendimiento: siempre sobre la cartera completa, no el filtro actual ---------- */
   const buildSnapshot = (posArg) => {
-    const pos = posArg || positions;
+    /* v1.15: SOLO abiertas — mismo arreglo que buildExportText: las cerradas conservan qty/último
+       y contaminaban MKT VL, NLV, riesgo y P&L de los snapshots de Rendimiento. */
+    const pos = (posArg || positions).filter((p) => !p.closed);
     const invAll = pos.reduce((s, p) => s + (isCashNat(p) ? 0 : effMkt(p)), 0);
     const posCashAll = pos.reduce((s, p) => s + (isCashNat(p) ? effMkt(p) : 0), 0);
     const mktvlAll = invAll + posCashAll; /* v5.61: MKT VL total incluye posiciones Cash B0 */
@@ -6005,48 +6101,32 @@ function App() {
         {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
         {view === "ajustes" && (
-          <div style={{ display: "grid", gap: 16 }}>
-            <div style={{ background: T.card, borderRadius: 24, padding: 18, boxShadow: T.shadow }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 12 }}>Precios</div>
-              <button onClick={onRefreshClick} disabled={refreshing} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>{refreshing ? "Actualizando…" : "🔄 Actualizar precios"}</button>
+          /* v1.15: ajustes rediseñados — 4 tarjetas de lista agrupada estilo iOS (icono tintado,
+             título + subtítulo, accesorio), en vez de una tarjeta por botón suelto */
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>General</div>
+              <SettingsRow icon="refresh" tint={T.tileGreen} iconColor={T.green} title={refreshing ? "Actualizando precios…" : "Actualizar precios"} sub="Cotizaciones en vivo vía Finnhub" onClick={onRefreshClick} />
+              <SettingsRow icon="theme" tint={T.tileAmber} iconColor={T.gold} title="Apariencia" sub="Toca para cambiar el tema" right={isDark ? "Oscuro" : "Claro"} onClick={toggleDark} />
+              <SettingsRow icon="bank" tint={T.tilePurple} iconColor={T.purple} title="Brokers" sub={brokers.join(" · ")} onClick={() => { setBrokerModalOpen(true); setNewBrokerName(""); setRemoveTarget({}); }} last />
             </div>
 
-            <div style={{ background: T.card, borderRadius: 24, padding: 18, boxShadow: T.shadow }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 12 }}>Apariencia</div>
-              <button onClick={toggleDark} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: T.tile, border: "none", borderRadius: 14, padding: "13px 16px", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>
-                <span>{isDark ? "Modo oscuro" : "Modo claro"}</span>
-                <span style={{ fontSize: 20 }}>{isDark ? "🌙" : "☀️"}</span>
-              </button>
+            <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>Datos</div>
+              <SettingsRow icon="export" tint={T.tileGreen} iconColor={T.green} title="Exportar cartera" sub="Foto de la cartera abierta para pegar en el chat" onClick={openExport} />
+              <SettingsRow icon="backup" tint={T.tilePurple} iconColor={T.purple} title="Backup" sub="Copiar / restaurar · archivo entre dispositivos" onClick={openBackup} last />
             </div>
 
-            <div style={{ background: T.card, borderRadius: 24, padding: 18, boxShadow: T.shadow }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 12 }}>Brokers</div>
-              <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, lineHeight: 1.4, marginBottom: 10 }}>{brokers.join(" · ")}</div>
-              <button onClick={() => { setBrokerModalOpen(true); setNewBrokerName(""); setRemoveTarget({}); }} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>⚙ Gestionar brokers (añadir / quitar)</button>
+            <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>API keys</div>
+              <SettingsRow icon="key" tint={apiKey ? T.tileGreen : T.tileAmber} iconColor={apiKey ? T.green : T.gold} title="Precios (Finnhub)" sub={apiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para cotizaciones"} right={apiKey ? "Cambiar" : "Activar"} onClick={openChangeKey} />
+              <SettingsRow icon="camera" tint={geminiKey ? T.tileGreen : T.tileAmber} iconColor={geminiKey ? T.green : T.gold} title="Lector de capturas (Gemini)" sub={geminiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para leer capturas"} right={geminiKey ? "Cambiar" : "Activar"} onClick={openGeminiModal} last />
             </div>
 
-            <div style={{ background: T.card, borderRadius: 24, padding: 18, boxShadow: T.shadow }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 12 }}>Datos</div>
-              <div style={{ display: "grid", gap: 10 }}>
-                <button onClick={openExport} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Exportar cartera</button>
-                <button onClick={openBackup} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Backup (copiar / restaurar)</button>
-                <button onClick={clearAll} style={{ width: "100%", background: confirmClear ? T.red : T.tileRed, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: confirmClear ? "#fff" : T.red, cursor: "pointer" }}>{confirmClear ? "¿Seguro? Vacía toda la cartera" : "Limpiar cartera (Portfolio)"}</button>
-                {trades.length > 0 && <button onClick={clearTrades} style={{ width: "100%", background: confirmClearTr ? T.red : T.tileRed, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: confirmClearTr ? "#fff" : T.red, cursor: "pointer" }}>{confirmClearTr ? "¿Seguro? Vacía el Comparador" : "Limpiar operaciones del Comparador"}</button>}
-              </div>
-            </div>
-
-            <div style={{ background: T.card, borderRadius: 24, padding: 18, boxShadow: T.shadow }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 12 }}>API keys</div>
-              <div style={{ display: "grid", gap: 10 }}>
-                <button onClick={openChangeKey} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: apiKey ? T.tile : T.tileAmber, border: "none", borderRadius: 14, padding: "13px 16px", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>
-                  <span>Precios (Finnhub)</span>
-                  <span style={{ fontSize: 12, color: T.sub, fontWeight: 700 }}>{apiKey ? "🔑 cambiar" : "🔑 activar"}</span>
-                </button>
-                <button onClick={openGeminiModal} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: geminiKey ? T.tile : T.tileAmber, border: "none", borderRadius: 14, padding: "13px 16px", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>
-                  <span>Lector de capturas (Gemini, Comparador)</span>
-                  <span style={{ fontSize: 12, color: T.sub, fontWeight: 700 }}>{geminiKey ? "🔑 cambiar" : "🔑 activar"}</span>
-                </button>
-              </div>
+            <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: T.red, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px", opacity: 0.85 }}>Zona de riesgo</div>
+              <SettingsRow danger icon="trash" tint={T.tileRed} iconColor={T.red} active={confirmClear} title={confirmClear ? "¿Seguro? Vacía toda la cartera" : "Limpiar cartera (Portfolio)"} sub={confirmClear ? "Pulsa otra vez para confirmar" : "Borra todas las posiciones"} right={confirmClear ? "Confirmar" : undefined} onClick={clearAll} last={trades.length === 0} />
+              {trades.length > 0 && <SettingsRow danger icon="broom" tint={T.tileRed} iconColor={T.red} active={confirmClearTr} title={confirmClearTr ? "¿Seguro? Vacía el Comparador" : "Limpiar Comparador"} sub={confirmClearTr ? "Pulsa otra vez para confirmar" : "Borra las operaciones guardadas del Comparador"} right={confirmClearTr ? "Confirmar" : undefined} onClick={clearTrades} last />}
             </div>
           </div>
         )}
