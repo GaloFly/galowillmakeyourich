@@ -122,7 +122,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.01";
+const APP_VERSION = "1.13";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -229,7 +229,7 @@ const STRATS = {
   0: ["Treasury ETF", "Money Market", "Cash"],
   1: ["Long Stock", "Short Put", "Covered Call", "Collar"],
   2: ["Long Stock", "Short Put", "Covered Call", "Diagonal", "PMCC", "Long Call"],
-  3: ["Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Call Broken Wing", "Put Broken Wing", "Credit Spread"],
+  3: ["Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Credit Spread"],
 };
 const natFromStrat = (strat) => {
   const t = (strat || "").toLowerCase();
@@ -355,10 +355,10 @@ const showsUnitPremium = (p) => isCreditSpread(p) || isGenericDebitPos(p);
    · Iron Condor / Broken Wings → llevan campos de spread de strikes (put/call).
    · Iron Fly (Iron Butterfly) → crédito "simple" (v5.12): sin campos de strikes, solo open price + riesgo
      + fee + VIX opcional para trackear. Se contabiliza igual (crédito al cierre). */
-const CREDIT_SPREAD_STRATS = new Set(["Iron Condor", "Call Broken Wing", "Put Broken Wing", "Iron Fly", "Credit Spread"]);
-const SPREAD_STRIKE_STRATS = new Set(["Iron Condor", "Call Broken Wing", "Put Broken Wing"]); // credit spreads con campos de strikes
+const CREDIT_SPREAD_STRATS = new Set(["Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Iron Fly", "Credit Spread"]); /* v1.06: Earnings = calco de Iron Condor con etiqueta propia */
+const SPREAD_STRIKE_STRATS = new Set(["Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing"]); // credit spreads con campos de strikes
 const hasSpreadStrikes = (p) => SPREAD_STRIKE_STRATS.has((p && p.tipo) || p);
-const csAbbr = (tipo) => (tipo === "Iron Condor" ? "IC" : tipo === "Iron Fly" ? "IF" : tipo === "Credit Spread" ? "CS" : "BW");
+const csAbbr = (tipo) => (tipo === "Iron Condor" ? "IC" : tipo === "Earnings" ? "ER" : tipo === "Iron Fly" ? "IF" : tipo === "Credit Spread" ? "CS" : "BW");
 const isCreditSpread = (p) => natOf(p) === "DEF" && CREDIT_SPREAD_STRATS.has(p.tipo);
 /* crédito "simple" (v5.13): Iron Fly y Credit Spread — credit spread sin campos de strikes, formulario
    mínimo (open price + riesgo + fee + VIX opcional). Comparten el flujo de entrada de Iron Fly. */
@@ -1998,6 +1998,18 @@ function RollChainEditor({ p, onSave, onClose }) {
   const [cCom, setCCom] = useState(p.closeComision != null ? String(p.closeComision) : "");
   const [cNote, setCNote] = useState(p.closeNote || "");
   const [cExercised, setCExercised] = useState(!!p.exercised);
+  /* v1.07: recategorizar desde el editor — cambia p.tipo (y nat/right coherentes) al guardar.
+     Opciones: las estrategias del bloque de la posición, más la actual si no está en la lista. */
+  const [tipoV, setTipoV] = useState(p.tipo || "");
+  const stratOpts = Array.from(new Set([...(STRATS[p.block] || []), ...(p.tipo ? [p.tipo] : [])]));
+  const applyTipo = (obj) => {
+    if ((tipoV || "") === (p.tipo || "")) return obj;
+    const next = { ...obj, tipo: tipoV };
+    const newNat = natFromStrat(tipoV);
+    next.nat = newNat;
+    if (newNat === "CRED") next.right = tipoV.toLowerCase().includes("call") ? "C" : "P";
+    return next;
+  };
   const setOpenF = (k) => (v) => setOpen((o) => ({ ...o, [k]: v }));
   const setRollF = (i, k) => (v) => setRolls((rs) => rs.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
   const delRoll = (i) => setRolls((rs) => rs.filter((_, idx) => idx !== i));
@@ -2012,11 +2024,11 @@ function RollChainEditor({ p, onSave, onClose }) {
 
   const save = () => {
     if (editableChain) {
-      onSave(rebuildCredChain(p, open, rolls, { date: cDate, price: cPrice, comision: cCom, note: cNote, exercised: cExercised }));
+      onSave(applyTipo(rebuildCredChain(p, open, rolls, { date: cDate, price: cPrice, comision: cCom, note: cNote, exercised: cExercised })));
     } else {
       const next = { ...p, entryDate: open.date };
       if (p.closed) { next.closeDate = cDate; next.closePrice = cExercised ? "0" : cPrice; next.closeComision = cCom; next.closeNote = cNote; next.exercised = !!cExercised; }
-      onSave(next);
+      onSave(applyTipo(next));
     }
     onClose();
   };
@@ -2035,6 +2047,16 @@ function RollChainEditor({ p, onSave, onClose }) {
         </div>
 
         {/* APERTURA */}
+        {/* v1.07: recategorización rápida — selector de estrategia arriba del todo */}
+        <div style={{ margin: "2px 0 10px" }}>
+          <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Estrategia</span>
+          <select value={tipoV} onChange={(e) => setTipoV(e.target.value)}
+            style={{ width: "100%", boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${tipoV !== (p.tipo || "") ? T.purple : T.line}`, borderRadius: 11, color: T.ink, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none", appearance: "none", WebkitAppearance: "none" }}>
+            {stratOpts.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {tipoV !== (p.tipo || "") && <div style={{ fontSize: 10.5, color: T.purple, fontWeight: 700, marginTop: 4 }}>Se recategorizará como "{tipoV}" al guardar{natFromStrat(tipoV) !== natOf(p) ? " — cambia la naturaleza: revisa después los campos de la posición" : ""}.</div>}
+        </div>
+
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "6px 0 8px" }}>
           <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>Apertura</span>
           {editableChain && <span style={{ fontSize: 11, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>BEP tras apertura ${money2(bepOpen)}</span>}
@@ -2562,7 +2584,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           ))}
           {!cash && hasLots(p) && <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginTop: -4 }}>Cantidad y BEP se calculan desde los lotes. Edítalos con 📦 Lotes más abajo.</div>}
           {!cash && isCreditSpread(p) && (
-            (p.tipo === "Iron Condor") ? (
+            (p.tipo === "Iron Condor" || p.tipo === "Earnings") ? (
               <>
                 <EditField label="Put spread (ej. 715/720)" value={p.putSpread} onChange={onChange("putSpread")} />
                 <EditField label="Call spread (ej. 760/765)" value={p.callSpread} onChange={onChange("callSpread")} />
@@ -3104,6 +3126,12 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const [sub, setSub] = useState("primas");
   const [stratCat, setStratCat] = useState("Acciones");
   const [stratStatus, setStratStatus] = useState("Abiertas");
+  const [stratView, setStratView] = useState("cats"); /* v1.02: "cats" (por estrategia) | "tikr" (Acumulado TIKR) */
+  const [stratSort, setStratSort] = useState("fecha"); /* v1.02: orden del listado — fecha | ticker | profit */
+  const [tikrStatus, setTikrStatus] = useState("Todas"); /* v1.03: filtro de la vista Por ticker — Todas | Abiertas | Cerradas */
+  const [stratWin, setStratWin] = useState("Todas"); /* v1.07: filtro de resultado — Todas | Ganadoras | Perdedoras */
+  const [stratTkr, setStratTkr] = useState("Todos"); /* v1.07: filtro por ticker dentro de la estrategia */
+  const [filterOpen, setFilterOpen] = useState(false); /* v1.08: modal de filtros */
   const [expanded, setExpanded] = useState(new Set());
   const toggleExpand = (id) => setExpanded((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
   const [openMonths, setOpenMonths] = useState(new Set());
@@ -3301,7 +3329,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const monthLabel = (key) => { if (key === "sin-fecha") return "Sin fecha"; const [y, m] = key.split("-"); return MESES[Number(m) - 1] + " " + y; };
 
   /* ---------- Estrategias: todas las posiciones archivadas por tipo ---------- */
-  const STRAT_CATS = ["Acciones", "Covered Calls", "Short Puts", "Long Calls", "PMCC", "Diagonal", "Iron Condor", "Iron Fly", "Iron Man", "DC/DD", "Otras"];
+  const STRAT_CATS = ["Acciones", "Covered Calls", "Short Puts", "Long Calls", "PMCC", "Diagonal", "Iron Condor", "Earnings", "Iron Fly", "Iron Man", "DC/DD", "Otras"];
   const categoryOf = (p) => {
     const t = (p.tipo || "").toLowerCase();
     if (isCashNat(p)) return null; // cash no es una estrategia
@@ -3310,6 +3338,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     if (t === "diagonal") return "Diagonal";
     if (isLongCallPos(p)) return "Long Calls";
     if (t === "iron condor") return "Iron Condor";
+    if (t === "earnings") return "Earnings"; /* v1.06: calco de IC con pestaña propia */
     if (t === "iron fly") return "Iron Fly";
     if (t === "iron man") return "Iron Man";
     if (["dc", "dd", "calendar"].includes(t)) return "DC/DD";
@@ -3321,9 +3350,6 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     return "Otras"; /* Credit Spread, Broken Wings y demás débitos genéricos caen aquí */
   };
   const catCount = (c, closed) => positions.filter((p) => categoryOf(p) === c && !!p.closed === closed).length;
-  const stratItems = positions
-    .filter((p) => categoryOf(p) === stratCat && !!p.closed === (stratStatus === "Cerradas"))
-    .sort((a, b) => ((b.closeDate || b.entryDate || "") < (a.closeDate || a.entryDate || "") ? -1 : 1));
 
   const primaSumOf = (p) => primaEvents.filter((e) => e.posId === p.id).reduce((s, e) => s + e.cash, 0);
   const mtmSumOf = (p) => mtmEvents.filter((e) => e.posId === p.id).reduce((s, e) => s + e.cash, 0);
@@ -3335,13 +3361,39 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     const noOpenBooked = isLongCallPos(p) || isCreditSpread(p);
     return noOpenBooked ? mtmSumOf(p) : primaSumOf(p);
   };
+  /* v1.02: resultado "hasta ahora" de una posición ABIERTA — en opciones, la prima ya cobrada (aperturas +
+     rolls registrados en Primas); en acciones/otros, el realizado MTM (dividendos, ventas parciales). Los
+     credit spreads abiertos no registran nada hasta el cierre (por diseño), así que su abierto es 0. */
+  const openResultOf = (p) => (isOptionNat(p) ? primaSumOf(p) : mtmSumOf(p));
+  const stratResultOf = (p) => (p.closed ? closedResultOf(p) : openResultOf(p));
+  /* v1.02: listado de la estrategia activa con orden seleccionable — fecha (cierre/apertura, reciente
+     primero, el comportamiento histórico), ticker (alfabético, empate por fecha) o profit (mayor primero;
+     cerradas usan el realizado y abiertas la prima acumulada hasta ahora). */
+  const stratDateOf = (p) => p.closeDate || p.entryDate || "";
+  /* v1.07: ganadora/perdedora con el mismo criterio del resumen — cerradas: ejercida cuenta como perdedora
+     aunque quede prima; abiertas: signo del acumulado hasta ahora. Combinable con el filtro de ticker. */
+  const isWinner = (p) => (p.closed ? !p.exercised && closedResultOf(p) > 0 : openResultOf(p) > 0);
+  const isLoser = (p) => (p.closed ? p.exercised || closedResultOf(p) < 0 : openResultOf(p) < 0);
+  const stratBase = positions.filter((p) => categoryOf(p) === stratCat && !!p.closed === (stratStatus === "Cerradas"));
+  const stratTkrs = Array.from(new Set(stratBase.map((p) => (p.tkr || "").toUpperCase().trim()).filter(Boolean))).sort();
+  const stratItems = stratBase
+    .filter((p) => stratTkr === "Todos" || (p.tkr || "").toUpperCase().trim() === stratTkr)
+    .filter((p) => stratWin === "Todas" || (stratWin === "Ganadoras" ? isWinner(p) : isLoser(p)))
+    .sort((a, b) => {
+      if (stratSort === "ticker") {
+        const t = (a.tkr || "").localeCompare(b.tkr || "");
+        return t !== 0 ? t : (stratDateOf(b) < stratDateOf(a) ? -1 : 1);
+      }
+      if (stratSort === "profit") return stratResultOf(b) - stratResultOf(a);
+      return stratDateOf(b) < stratDateOf(a) ? -1 : 1;
+    });
   const todayIso = new Date().toISOString().slice(0, 10);
   const shortDate = (iso) => { if (!iso) return ""; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y.slice(-2)}`; };
 
   return (
     <>
       <div style={{ display: "flex", gap: 6, background: T.card, borderRadius: 18, padding: 6, marginBottom: 14, boxShadow: T.shadow }}>
-        {[["primas", "Primas"], ["mtm", "MTM"], ["rendimiento", "Rendimiento"], ["estrategias", "Estrategias"]].map(([id, label]) => (
+        {[["primas", "Primas"], ["mtm", "MTM"], ["rendimiento", "Rendimiento"], ["estrategias", "Histórico"]].map(([id, label]) => (
           <button key={id} onClick={() => setSub(id)} style={{
             flex: 1, border: "none", cursor: "pointer", borderRadius: 13, padding: "8px 0 7px", fontSize: 12, fontWeight: 700,
             display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
@@ -3497,15 +3549,155 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       ) : (
         <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Estrategias</div>
-            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500, marginTop: 1 }}>Todas tus posiciones archivadas por tipo. Toca una para ver el detalle completo (rolls, primas, ROM, DTE, DIT, IVR).</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Histórico</div>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500, marginTop: 1 }}>{stratView === "tikr" ? "Lo que ha generado cada subyacente: primas de abiertas, realizado de cerradas y distribución por estrategia." : "Todas tus posiciones archivadas por tipo. Toca una para ver el detalle completo (rolls, primas, ROM, DTE, DIT, IVR)."}</div>
           </div>
+
+          {/* v1.12: menú cuadrado — todos los segmentados comparten geometría (contenedor tile, radio 14,
+             padding 5). Jerarquía por color: la vista activa va en OSCURO (nivel 1), el estado en claro (nivel 2). */}
+          <div style={{ display: "flex", gap: 6, background: T.tile, borderRadius: 14, padding: 5, marginBottom: 10 }}>
+            {[["cats", "Por estrategia"], ["tikr", "Por ticker"]].map(([id, label]) => (
+              <button key={id} onClick={() => setStratView(id)} style={{
+                flex: 1, border: "none", cursor: "pointer", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800,
+                background: stratView === id ? T.dark : "transparent", color: stratView === id ? "#fff" : T.sub,
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {stratView === "tikr" ? (() => {
+            /* v1.02: Acumulado TIKR — agrega por subyacente todo lo que aparece en Estrategias (cash excluido).
+               Por ticker: prima acumulada de las ABIERTAS (openResultOf), realizado de las CERRADAS
+               (closedResultOf, mismo criterio que la tarjeta de cada operación) y distribución por
+               estrategia (Short Puts, Covered Calls, etc.) con nº de operaciones y resultado de cada una. */
+            const byTkr = {};
+            positions.forEach((p) => {
+              const cat = categoryOf(p);
+              if (!cat) return;
+              if (tikrStatus === "Abiertas" && p.closed) return; /* v1.03: filtro de estado */
+              if (tikrStatus === "Cerradas" && !p.closed) return;
+              const k = (p.tkr || "—").toUpperCase().trim() || "—";
+              if (!byTkr[k]) byTkr[k] = { open: 0, closed: 0, nOpen: 0, nClosed: 0, cats: {} };
+              const g = byTkr[k];
+              const r = p.closed ? closedResultOf(p) : openResultOf(p);
+              if (p.closed) { g.closed += r; g.nClosed++; } else { g.open += r; g.nOpen++; }
+              if (!g.cats[cat]) g.cats[cat] = { n: 0, res: 0, shOpen: 0, shClosed: 0 };
+              g.cats[cat].n++;
+              /* v1.05: los dividendos (incluidos en el MTM realizado de la acción) se sacan a su propia
+                 línea "Dividendos" — se restan de la fila Acciones para que las filas sumen el total del
+                 ticker sin duplicar. Siguen el estado de su posición (abierta/cerrada) para el filtro. */
+              const dv = cat === "Acciones" && Array.isArray(p.dividends) ? p.dividends.reduce((s, d) => s + n(d.amount) - n(d.fee), 0) : 0;
+              const nDv = cat === "Acciones" && Array.isArray(p.dividends) ? p.dividends.length : 0;
+              g.cats[cat].res += r - dv;
+              if (nDv > 0 || dv !== 0) {
+                if (!g.cats["Dividendos"]) g.cats["Dividendos"] = { n: 0, res: 0, shOpen: 0, shClosed: 0 };
+                g.cats["Dividendos"].n += nDv; g.cats["Dividendos"].res += dv;
+              }
+              /* v1.04: en Acciones, además del nº de posiciones se acumulan los títulos — abiertos
+                 (lo que tienes ahora) y cerrados por separado, para mostrar el que toque según el filtro */
+              if (cat === "Acciones") { if (p.closed) g.cats[cat].shClosed += n(p.qty); else g.cats[cat].shOpen += n(p.qty); }
+            });
+            const tkrs = Object.keys(byTkr).sort((a, b) => (byTkr[b].open + byTkr[b].closed) - (byTkr[a].open + byTkr[a].closed));
+            const sumOpen = tkrs.reduce((s, k) => s + byTkr[k].open, 0);
+            const sumClosed = tkrs.reduce((s, k) => s + byTkr[k].closed, 0);
+            const sumAll = sumOpen + sumClosed;
+            return (
+              <>
+                {/* v1.03: filtro de estado, como en Por estrategia pero con "Todas" para el acumulado completo */}
+                <div style={{ display: "flex", gap: 6, background: T.tile, borderRadius: 14, padding: 5, marginBottom: 14 }}>
+                  {["Todas", "Abiertas", "Cerradas"].map((s) => (
+                    <button key={s} onClick={() => setTikrStatus(s)} style={{
+                      flex: 1, border: "none", cursor: "pointer", borderRadius: 10, padding: "8px 0", fontSize: 12.5, fontWeight: 800,
+                      background: tikrStatus === s ? T.card : "transparent", color: tikrStatus === s ? T.ink : T.sub,
+                    }}>{s}</button>
+                  ))}
+                </div>
+                {tkrs.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, padding: "8px 0" }}>No hay posiciones {tikrStatus === "Todas" ? "con ticker" : tikrStatus.toLowerCase() + " con ticker"} que agregar.</div>
+                ) : (
+                <>
+                {/* resumen global — mismo formato oscuro que el resumen de estrategia cerradas */}
+                <div style={{ background: T.dark, borderRadius: 18, padding: "14px 16px", marginBottom: 14, color: "#fff", boxShadow: T.shadow }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 800 }}>💠 Acumulado por ticker</div>
+                      <div style={{ fontSize: 10.5, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{tkrs.length} {tkrs.length === 1 ? "subyacente" : "subyacentes"}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: sumAll >= 0 ? T.green : T.red, letterSpacing: -0.5 }}>{signMoney(sumAll)}</div>
+                      <div style={{ fontSize: 10.5, color: "#B9C2CC", fontWeight: 600 }}>Total generado</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: tikrStatus === "Todas" ? "1fr 1fr" : "1fr", gap: 8 }}>
+                    {(tikrStatus === "Abiertas" ? [["Primas · abiertas", sumOpen]] : tikrStatus === "Cerradas" ? [["Realizado · cerradas", sumClosed]] : [["Primas · abiertas", sumOpen], ["Realizado · cerradas", sumClosed]]).map(([lbl, val]) => (
+                      <div key={lbl} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "9px 6px", textAlign: "center" }}>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: val >= 0 ? T.green : T.red, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{signMoney(val)}</div>
+                        <div style={{ fontSize: 9.5, color: "#B9C2CC", marginTop: 2, fontWeight: 600 }}>{lbl}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {tkrs.map((k) => {
+                  const g = byTkr[k];
+                  const total = g.open + g.closed;
+                  const nOps = g.nOpen + g.nClosed;
+                  const isOpenT = expanded.has("tikr-" + k);
+                  const catList = [...STRAT_CATS.filter((c) => g.cats[c]), ...(g.cats["Dividendos"] ? ["Dividendos"] : [])];
+                  return (
+                    <div key={k} onClick={() => toggleExpand("tikr-" + k)} style={{ borderTop: `1px solid ${T.line}`, padding: "10px 0", cursor: "pointer" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 14.5, fontWeight: 800, color: T.ink }}>{k}</div>
+                          <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 2 }}>{nOps} {nOps === 1 ? "operación" : "operaciones"}{tikrStatus === "Todas" ? ` · ${g.nOpen} abiertas · ${g.nClosed} cerradas` : ` ${tikrStatus.toLowerCase()}`}</div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 14.5, fontWeight: 800, color: total >= 0 ? T.green : T.red, fontVariantNumeric: "tabular-nums" }}>{signMoney(total)}</div>
+                          <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 1 }}>{isOpenT ? "▲" : "▼"} detalle</div>
+                        </div>
+                      </div>
+                      {isOpenT && (
+                        <div onClick={(ev) => ev.stopPropagation()} style={{ marginTop: 8, background: T.tile, borderRadius: 16, padding: "12px 12px" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: tikrStatus === "Todas" ? "1fr 1fr" : "1fr", gap: 8, marginBottom: catList.length ? 10 : 0 }}>
+                            {(tikrStatus === "Abiertas" ? [["Primas · abiertas", g.open, g.nOpen]] : tikrStatus === "Cerradas" ? [["Realizado · cerradas", g.closed, g.nClosed]] : [["Primas · abiertas", g.open, g.nOpen], ["Realizado · cerradas", g.closed, g.nClosed]]).map(([lbl, val, cnt]) => (
+                              <div key={lbl} style={{ background: T.card, borderRadius: 12, padding: "9px 6px", textAlign: "center" }}>
+                                <div style={{ fontSize: 14.5, fontWeight: 800, color: val >= 0 ? T.green : T.red, fontVariantNumeric: "tabular-nums" }}>{signMoney(val)}</div>
+                                <div style={{ fontSize: 9.5, color: T.sub, marginTop: 2, fontWeight: 600 }}>{lbl} ({cnt})</div>
+                              </div>
+                            ))}
+                          </div>
+                          {catList.length > 0 && (
+                            <div style={{ background: T.card, borderRadius: 12, padding: "9px 12px" }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Distribución por estrategia</div>
+                              {catList.map((c) => {
+                                /* v1.04: la fila Acciones muestra los títulos, no solo el nº de posiciones —
+                                   en Todas/Abiertas los que tienes ahora; en Cerradas, los vendidos */
+                                const sh = c === "Acciones" ? (tikrStatus === "Cerradas" ? g.cats[c].shClosed : g.cats[c].shOpen) : 0;
+                                return (
+                                <div key={c} style={{ display: "grid", gridTemplateColumns: "1fr auto 90px", gap: 6, alignItems: "center", padding: "4px 0", fontVariantNumeric: "tabular-nums" }}>
+                                  <span style={{ fontSize: 11.5, fontWeight: 700, color: T.ink }}>{c}</span>
+                                  <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, textAlign: "right", whiteSpace: "nowrap" }}>{sh > 0 ? money(sh) + " acc" : c === "Dividendos" ? "×" + g.cats[c].n + (g.cats[c].n === 1 ? " pago" : " pagos") : "×" + g.cats[c].n}</span>
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: g.cats[c].res >= 0 ? T.green : T.red, textAlign: "right" }}>{signMoney(g.cats[c].res)}</span>
+                                </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                </>
+                )}
+              </>
+            );
+          })() : (<>
 
           <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
             {STRAT_CATS.map((c) => {
               const cnt = positions.filter((p) => categoryOf(p) === c).length;
               return (
-                <button key={c} onClick={() => setStratCat(c)} style={{
+                <button key={c} onClick={() => { setStratCat(c); setStratTkr("Todos"); }} style={{
                   flex: "1 0 auto", border: "none", cursor: "pointer", borderRadius: 12, padding: "8px 12px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
                   background: stratCat === c ? T.dark : T.tile, color: stratCat === c ? "#fff" : T.sub,
                 }}>{c}{cnt > 0 ? ` (${cnt})` : ""}</button>
@@ -3513,7 +3705,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             })}
           </div>
 
-          <div style={{ display: "flex", gap: 6, background: T.tile, borderRadius: 14, padding: 5, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 6, background: T.tile, borderRadius: 14, padding: 5, marginBottom: 10 }}>
             {["Abiertas", "Cerradas"].map((s) => (
               <button key={s} onClick={() => setStratStatus(s)} style={{
                 flex: 1, border: "none", cursor: "pointer", borderRadius: 10, padding: "8px 0", fontSize: 12.5, fontWeight: 800,
@@ -3521,6 +3713,70 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               }}>{s} ({catCount(stratCat, s === "Cerradas")})</button>
             ))}
           </div>
+
+          {/* v1.12: una sola barra Ordenar + Filtrar — dos controles gemelos (misma altura, mismo radio,
+             mismo fondo) en vez de dos filas desiguales. El desplegable de orden muestra el criterio
+             actual ("Orden: Fecha"); Filtrar se oscurece y numera cuando hay filtros activos. */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <select value={stratSort} onChange={(e) => setStratSort(e.target.value)}
+              style={{ flex: 1, minWidth: 0, height: 42, background: T.tile, border: "none", borderRadius: 14, color: T.ink, fontSize: 12.5, fontWeight: 800, padding: "0 12px", outline: "none", appearance: "none", WebkitAppearance: "none", textAlignLast: "center", cursor: "pointer" }}>
+              {[["fecha", "Orden: Fecha"], ["ticker", "Orden: Ticker"], ["profit", "Orden: Profit"]].map(([id, label]) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
+            </select>
+            <button onClick={() => setFilterOpen(true)} style={{
+              flex: 1, minWidth: 0, height: 42, border: "none", cursor: "pointer", borderRadius: 14, fontSize: 12.5, fontWeight: 800,
+              background: (stratWin !== "Todas" || stratTkr !== "Todos") ? T.dark : T.tile, color: (stratWin !== "Todas" || stratTkr !== "Todos") ? "#fff" : T.ink,
+            }}>Filtrar{(stratWin !== "Todas" ? 1 : 0) + (stratTkr !== "Todos" ? 1 : 0) > 0 ? " (" + ((stratWin !== "Todas" ? 1 : 0) + (stratTkr !== "Todos" ? 1 : 0)) + ")" : ""}</button>
+          </div>
+
+          {/* chips de filtros activos: solo aparecen cuando hay algo filtrado, con el nº de resultados */}
+          {(stratWin !== "Todas" || stratTkr !== "Todos") && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14, marginTop: -6, flexWrap: "wrap" }}>
+              {stratTkr !== "Todos" && (
+                <button onClick={() => setStratTkr("Todos")} style={{ border: "none", cursor: "pointer", borderRadius: 10, padding: "8px 12px", fontSize: 11.5, fontWeight: 800, background: T.tilePurple, color: T.purple }}>{stratTkr} ✕</button>
+              )}
+              {stratWin !== "Todas" && (
+                <button onClick={() => setStratWin("Todas")} style={{ border: "none", cursor: "pointer", borderRadius: 10, padding: "8px 12px", fontSize: 11.5, fontWeight: 800, background: stratWin === "Ganadoras" ? T.tileGreen : T.tileRed, color: stratWin === "Ganadoras" ? T.green : T.red }}>{stratWin} ✕</button>
+              )}
+              <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: T.sub }}>{stratItems.length} {stratItems.length === 1 ? "resultado" : "resultados"}</span>
+            </div>
+          )}
+
+          {filterOpen && (
+            <div onClick={() => setFilterOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 70 }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: "26px 26px 0 0", padding: "18px 18px calc(22px + env(safe-area-inset-bottom))", width: "100%", maxWidth: 560, boxSizing: "border-box", boxShadow: "0 -20px 60px rgba(0,0,0,0.35)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: T.ink }}>Filtrar · {stratCat}</div>
+                  <button onClick={() => setFilterOpen(false)} style={{ background: T.tile, border: "none", borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, color: T.sub, cursor: "pointer" }}>✕</button>
+                </div>
+
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>Resultado</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  {[["Todas", "Todas", T.ink], ["Ganadoras", "Ganadoras", T.green], ["Perdedoras", "Perdedoras", T.red]].map(([id, label, col]) => (
+                    <button key={id} onClick={() => setStratWin(id)} style={{
+                      flex: 1, cursor: "pointer", borderRadius: 14, padding: "13px 0", fontSize: 12.5, fontWeight: 800,
+                      border: stratWin === id ? `2px solid ${col}` : `1.5px solid ${T.line}`,
+                      background: stratWin === id ? T.tile : T.card, color: stratWin === id ? col : T.sub,
+                    }}>{label}</button>
+                  ))}
+                </div>
+
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>Ticker</div>
+                {/* v1.11: un solo control — desplegable nativo (en iOS sale la rueda que rola los tickers) */}
+                <select value={stratTkr} onChange={(e) => setStratTkr(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", height: 48, background: stratTkr !== "Todos" ? T.dark : T.tile, border: stratTkr !== "Todos" ? "none" : `1.5px solid ${T.line}`, borderRadius: 14, color: stratTkr !== "Todos" ? "#fff" : T.ink, fontSize: 14, fontWeight: 800, padding: "0 14px", outline: "none", appearance: "none", WebkitAppearance: "none", marginBottom: 18 }}>
+                  <option value="Todos">Todos los tickers</option>
+                  {stratTkrs.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => { setStratWin("Todas"); setStratTkr("Todos"); }} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 13, padding: "13px 0", fontSize: 13, fontWeight: 800, color: T.sub, cursor: "pointer" }}>Limpiar</button>
+                  <button onClick={() => setFilterOpen(false)} style={{ flex: 2, background: T.dark, border: "none", borderRadius: 13, padding: "13px 0", fontSize: 13, fontWeight: 800, color: "#fff", cursor: "pointer" }}>Ver {stratItems.length} {stratItems.length === 1 ? "resultado" : "resultados"}</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {stratStatus === "Cerradas" && stratItems.length > 0 && (() => {
             /* resumen agregado de la estrategia (v5.13): sobre las cerradas de la categoría activa —
@@ -3539,15 +3795,20 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div>
                     <div style={{ fontSize: 12.5, fontWeight: 800 }}>📊 {stratCat} · cerradas</div>
-                    <div style={{ fontSize: 10.5, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{nAll} {nAll === 1 ? "operación" : "operaciones"} · win rate {isFinite(winRate) ? (winRate * 100).toFixed(0) + "%" : "—"}</div>
+                    <div style={{ fontSize: 10.5, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{nAll} {nAll === 1 ? "operación" : "operaciones"}{stratWin === "Todas" ? " · win rate " + (isFinite(winRate) ? (winRate * 100).toFixed(0) + "%" : "—") : " · filtro: " + stratWin.toLowerCase()}{stratTkr !== "Todos" ? " · " + stratTkr : ""}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 22, fontWeight: 800, color: total >= 0 ? T.green : T.red, letterSpacing: -0.5 }}>{signMoney(total)}</div>
                     <div style={{ fontSize: 10.5, color: "#B9C2CC", fontWeight: 600 }}>Profit total</div>
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-                  {[["Ganadoras", String(wins), T.green], ["Perdedoras", String(losses), T.red], ["Win rate", isFinite(winRate) ? (winRate * 100).toFixed(0) + "%" : "—", "#fff"], ["Media/op", signMoney(avg), avg >= 0 ? T.green : T.red]].map(([lbl, val, col]) => (
+                <div style={{ display: "grid", gridTemplateColumns: stratWin === "Todas" ? "1fr 1fr 1fr 1fr" : "1fr 1fr", gap: 8 }}>
+                  {/* v1.08: con filtro Ganadoras/Perdedoras, los tiles de win rate y G/P no aportan
+                     (saldría 100%/0% por definición) — se muestran solo Operaciones y Media/op */}
+                  {(stratWin === "Todas"
+                    ? [["Ganadoras", String(wins), T.green], ["Perdedoras", String(losses), T.red], ["Win rate", isFinite(winRate) ? (winRate * 100).toFixed(0) + "%" : "—", "#fff"], ["Media/op", signMoney(avg), avg >= 0 ? T.green : T.red]]
+                    : [["Operaciones", String(nAll), "#fff"], ["Media/op", signMoney(avg), avg >= 0 ? T.green : T.red]]
+                  ).map(([lbl, val, col]) => (
                     <div key={lbl} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "9px 6px", textAlign: "center" }}>
                       <div style={{ fontSize: 15, fontWeight: 800, color: col, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{val}</div>
                       <div style={{ fontSize: 9.5, color: "#B9C2CC", marginTop: 2, fontWeight: 600 }}>{lbl}</div>
@@ -3563,7 +3824,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                compara ganadoras vs perdedoras en las variables de la ficha: ratio shorts/longs, IV spread,
                DTE corto y % con evento dentro del vencimiento corto. Las medias solo cuentan operaciones
                con ese dato registrado — el histórico antiguo sin ficha no contamina. */
-            const closed = positions.filter((x) => categoryOf(x) === "DC/DD" && x.closed);
+            const closed = positions.filter((x) => categoryOf(x) === "DC/DD" && x.closed && (stratTkr === "Todos" || (x.tkr || "").toUpperCase().trim() === stratTkr)); /* v1.13: respeta el filtro de ticker */
             if (closed.length < 2) return null;
             const resOf = (x) => mtmSumOf(x);
             const wins = closed.filter((x) => resOf(x) > 0), losses = closed.filter((x) => resOf(x) <= 0);
@@ -3587,7 +3848,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               <div style={{ background: T.tile, borderRadius: 18, padding: "13px 14px", marginBottom: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                   <div>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>🔬 Auditoría DC/DD · cerradas</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>🔬 Auditoría DC/DD{stratTkr !== "Todos" ? " · " + stratTkr : ""} · cerradas</div>
                     <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 500, marginTop: 1 }}>{closed.length} operaciones · medias solo con dato registrado</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -3600,6 +3861,65 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                   <span style={{ fontSize: 10, fontWeight: 800, color: T.green, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.4 }}>Ganadoras</span>
                   <span style={{ fontSize: 10, fontWeight: 800, color: T.red, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.4 }}>Perdedoras</span>
                   {rows.map(([lbl, w, l]) => (
+                    <React.Fragment key={lbl}>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, padding: "5px 0" }}>{lbl}</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, textAlign: "right", padding: "5px 0", fontVariantNumeric: "tabular-nums" }}>{w}</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, textAlign: "right", padding: "5px 0", fontVariantNumeric: "tabular-nums" }}>{l}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {(stratCat === "Short Puts" || stratCat === "Covered Calls") && (() => {
+            /* auditoría SP/CC (v1.09): "en qué falla y en qué no", calcada a la de DC/DD. Sobre las
+               CERRADAS de la categoría, compara ganadoras vs perdedoras (mismo criterio que el resumen:
+               ejercida = perdedora) en las condiciones DE ENTRADA: delta de apertura, DTE de apertura
+               (vencimiento ORIGINAL, pre-rolls), IVR de apertura y DIT real.
+               Las medias solo cuentan operaciones con ese dato registrado — el histórico sin ficha no
+               contamina. Diferencias grandes entre columnas = esa variable discrimina; iguales = no. */
+            /* v1.13: la auditoría respeta el filtro de TICKER (delta/DTE/IVR/DIT de UN subyacente).
+               El filtro Ganadoras/Perdedoras NO se aplica: la auditoría compara precisamente ambos
+               grupos entre sí — aplicarlo vaciaría una columna y perdería el sentido. */
+            const closedA = positions.filter((x) => categoryOf(x) === stratCat && x.closed && (stratTkr === "Todos" || (x.tkr || "").toUpperCase().trim() === stratTkr));
+            if (closedA.length < 2) return null;
+            const winsA = closedA.filter((x) => !x.exercised && closedResultOf(x) > 0);
+            const lossesA = closedA.filter((x) => x.exercised || closedResultOf(x) < 0);
+            const totalA = closedA.reduce((s, x) => s + closedResultOf(x), 0);
+            const avgOf = (arr, fn) => { const v = arr.map(fn).filter(isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
+            /* delta guardada como 0.30 o como 30 según la época — se normaliza a fracción */
+            const normDelta = (x) => { const d = Math.abs(n(x.delta)); return d ? (d > 1 ? d / 100 : d) : NaN; };
+            const grpA = (arr) => ({
+              delta: avgOf(arr, normDelta),
+              dte: avgOf(arr, (x) => daysBetween(x.entryDate, openingExpiry(x))),
+              ivr: avgOf(arr, (x) => (n(x.ivr) ? n(x.ivr) : NaN)),
+              dit: avgOf(arr, (x) => daysBetween(x.entryDate, x.closeDate)),
+            });
+            const WA = grpA(winsA), LA = grpA(lossesA);
+            const rowsA = [
+              ["Delta apertura media", isFinite(WA.delta) ? WA.delta.toFixed(2) : "—", isFinite(LA.delta) ? LA.delta.toFixed(2) : "—"],
+              ["DTE apertura medio", isFinite(WA.dte) ? WA.dte.toFixed(0) + "d" : "—", isFinite(LA.dte) ? LA.dte.toFixed(0) + "d" : "—"],
+              ["IVR apertura medio", isFinite(WA.ivr) ? WA.ivr.toFixed(0) : "—", isFinite(LA.ivr) ? LA.ivr.toFixed(0) : "—"],
+              ["DIT medio", isFinite(WA.dit) ? WA.dit.toFixed(0) + "d" : "—", isFinite(LA.dit) ? LA.dit.toFixed(0) + "d" : "—"],
+            ];
+            return (
+              <div style={{ background: T.tile, borderRadius: 18, padding: "13px 14px", marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>🔬 Auditoría {stratCat}{stratTkr !== "Todos" ? " · " + stratTkr : ""} · cerradas</div>
+                    <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 500, marginTop: 1 }}>{closedA.length} operaciones · medias solo con dato registrado</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: totalA >= 0 ? T.green : T.red }}>{signMoney(totalA)}</div>
+                    <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600 }}>Win rate {((winsA.length / closedA.length) * 100).toFixed(0)}% ({winsA.length}W/{lossesA.length}L)</div>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 0, background: T.card, borderRadius: 12, padding: "9px 12px" }}>
+                  <span />
+                  <span style={{ fontSize: 10, fontWeight: 800, color: T.green, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.4 }}>Ganadoras</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: T.red, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.4 }}>Perdedoras</span>
+                  {rowsA.map(([lbl, w, l]) => (
                     <React.Fragment key={lbl}>
                       <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, padding: "5px 0" }}>{lbl}</span>
                       <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, textAlign: "right", padding: "5px 0", fontVariantNumeric: "tabular-nums" }}>{w}</span>
@@ -3811,6 +4131,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               </div>
             );
           })}
+          </>)}
         </div>
       )}
     </>
@@ -4913,7 +5234,7 @@ function App() {
       long: isPMCCw ? { strike: f.lgStrike || "", expiry: f.lgExpiry || "", prima: isFinite(pmLongPS) ? String(pmLongPS) : "", comision: f.lgComision || "", delta: f.lgDelta || "" } : undefined,
       delta: f.delta || "",
       putSpread: SPREAD_STRIKE_STRATS.has(wizStrat) ? (f.putSpread || "") : "",
-      callSpread: wizStrat === "Iron Condor" ? (f.callSpread || "") : "",
+      callSpread: (wizStrat === "Iron Condor" || wizStrat === "Earnings") ? (f.callSpread || "") : "",
       vix: (CREDIT_SPREAD_STRATS.has(wizStrat) && !SPREAD_STRIKE_STRATS.has(wizStrat)) ? (f.vix || "") : "", /* crédito simple (v5.13): VIX de apertura */
       /* ficha DC/DD 4 patas (v5.09): short/long put + short/long call, cada una con strike/prima/fee */
       dcdd: isDCDDw ? {
@@ -6439,7 +6760,7 @@ function App() {
                       <WizInput label="Vencimiento" value={wizForm.expiry} onChange={wizF("expiry")} type="date" />
                       <WizInput label="Contratos" value={wizForm.contratos} onChange={wizF("contratos")} inputMode="numeric" />
                     </div>
-                    {wizStrat === "Iron Condor" ? (
+                    {(wizStrat === "Iron Condor" || wizStrat === "Earnings") ? (
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                         <WizInput label="Put spread (ej. 715/720)" value={wizForm.putSpread} onChange={wizF("putSpread")} placeholder="715/720" />
                         <WizInput label="Call spread (ej. 760/765)" value={wizForm.callSpread} onChange={wizF("callSpread")} placeholder="760/765" />
