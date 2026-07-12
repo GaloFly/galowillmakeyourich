@@ -122,7 +122,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.16";
+const APP_VERSION = "1.18";
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3466,7 +3466,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       operaciones: ops,
     };
     const text = JSON.stringify(payload, null, 1);
-    const done = () => { setExportMsg("Copiado — pégalo en el chat para evaluarlo"); setTimeout(() => setExportMsg(""), 3500); };
+    const done = () => { setExportMsg("Copiado para el análisis"); setTimeout(() => setExportMsg(""), 3500); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(() => { if (navigator.share) navigator.share({ text }).catch(() => {}); else done(); });
     } else if (navigator.share) { navigator.share({ text }).catch(() => {}); }
@@ -4843,9 +4843,11 @@ function App() {
 
   const [backupOpen, setBackupOpen] = useState(false);
   const [backupText, setBackupText] = useState("");
+  const [backupAdv, setBackupAdv] = useState(false); /* v1.17: copiar/pegar JSON plegado por defecto */
   const [copied, setCopied] = useState(false);
   const [restoreMsg, setRestoreMsg] = useState("");
   const openBackup = () => {
+    setBackupAdv(false); /* v1.17: siempre se abre en la vista simple */
     // graba un snapshot de hoy antes de exportar, para no perder el track del rendimiento
     const snap = buildSnapshot();
     const nextSnaps = [...snapshots.filter((s) => s.date !== snap.date), snap];
@@ -6260,14 +6262,15 @@ function App() {
               <button onClick={() => setBackupOpen(false)} aria-label="Cerrar" style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
             </div>
             <div style={{ padding: "0 20px 20px" }}>
-            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Entre dispositivos: <b style={{ color: T.ink }}>Descargar archivo</b> y en el otro móvil <b style={{ color: T.ink }}>Importar archivo</b>. Guarda toda la app (posiciones, brokers, cuentas, snapshots y tu API key).</div>
+            {/* v1.17: modal limpio — el camino normal son dos botones (archivo); el copiar/pegar JSON
+               queda plegado en "Avanzado". Explicación reducida a una línea bajo los botones. */}
             <input id="backup-file-input" type="file" accept="application/json,.json" onChange={importBackupFile} style={{ display: "none" }} />
-            <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-              <button onClick={downloadBackup} style={{ flex: 1, background: T.dark, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: "#fff", cursor: "pointer" }}>⬇︎ Descargar archivo</button>
-              <button onClick={() => { const el = document.getElementById("backup-file-input"); if (el) el.click(); }} style={{ flex: 1, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>📂 Importar archivo</button>
+            <div style={{ display: "grid", gap: 10 }}>
+              <button onClick={downloadBackup} style={{ width: "100%", background: T.dark, border: "none", borderRadius: 14, padding: "14px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer" }}>Descargar archivo</button>
+              <button onClick={() => { const el = document.getElementById("backup-file-input"); if (el) el.click(); }} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 14, padding: "14px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Importar archivo</button>
             </div>
-            <textarea id="backup-ta" value={backupText} onChange={(e) => { setBackupText(e.target.value); setRestoreMsg(""); }} spellCheck={false} style={{ width: "100%", boxSizing: "border-box", height: 190, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: 12, fontSize: 12.5, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.ink, lineHeight: 1.5, resize: "vertical", outline: "none" }} />
-            <div style={{ height: 18, margin: "6px 2px 2px" }}>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500, lineHeight: 1.45, margin: "10px 2px 0" }}>Guarda toda la app: posiciones, brokers, cuentas, snapshots y tus keys. Para cambiar de móvil: descarga aquí, importa en el otro.</div>
+            <div style={{ minHeight: 18, margin: "8px 2px 0" }}>
               {copied && <span style={{ fontSize: 12.5, color: T.green, fontWeight: 700 }}>Copiado ✓ — guárdalo en Notas o email</span>}
               {restoreMsg === "ok" && <span style={{ fontSize: 12.5, color: T.green, fontWeight: 700 }}>Restaurado ✓</span>}
               {restoreMsg === "err" && <span style={{ fontSize: 12.5, color: T.red, fontWeight: 700 }}>Texto no válido — revisa que sea un backup completo</span>}
@@ -6275,13 +6278,21 @@ function App() {
               {restoreMsg === "pasteEmpty" && <span style={{ fontSize: 12.5, color: T.red, fontWeight: 700 }}>El portapapeles está vacío</span>}
               {restoreMsg === "pasteErr" && <span style={{ fontSize: 12.5, color: T.red, fontWeight: 700 }}>No se pudo leer el portapapeles — pega manualmente en el cuadro</span>}
               {restoreMsg === "downloaded" && <span style={{ fontSize: 12.5, color: T.green, fontWeight: 700 }}>Archivo descargado ✓</span>}
-              {restoreMsg === "fileErr" && <span style={{ fontSize: 12.5, color: T.red, fontWeight: 700 }}>No se pudo leer el archivo — prueba con copiar/pegar</span>}
+              {restoreMsg === "fileErr" && <span style={{ fontSize: 12.5, color: T.red, fontWeight: 700 }}>No se pudo leer el archivo — usa el modo avanzado (copiar/pegar)</span>}
             </div>
-            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-              <button onClick={copyBackup} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Copiar</button>
-              <button onClick={pasteBackup} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Pegar</button>
-              <button onClick={restoreBackup} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Restaurar</button>
-            </div>
+            <button onClick={() => setBackupAdv((v) => !v)} style={{ width: "100%", background: "transparent", border: "none", padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.sub, cursor: "pointer", textAlign: "left" }}>
+              {backupAdv ? "▲ Ocultar copiar / pegar JSON" : "▼ Avanzado · copiar / pegar JSON"}
+            </button>
+            {backupAdv && (
+              <>
+                <textarea id="backup-ta" value={backupText} onChange={(e) => { setBackupText(e.target.value); setRestoreMsg(""); }} spellCheck={false} style={{ width: "100%", boxSizing: "border-box", height: 170, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: 12, fontSize: 12.5, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.ink, lineHeight: 1.5, resize: "vertical", outline: "none" }} />
+                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                  <button onClick={copyBackup} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Copiar</button>
+                  <button onClick={pasteBackup} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Pegar</button>
+                  <button onClick={restoreBackup} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Restaurar</button>
+                </div>
+              </>
+            )}
             {autoBackups.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Copias automáticas (al detectar una versión nueva)</div>
