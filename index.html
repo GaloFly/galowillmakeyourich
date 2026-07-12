@@ -116,19 +116,22 @@ const KEY_BROKERS = "bloques_brokers_v1";
 const KEY_TRADES = "bloques_trades_v2";
 const KEY_BASIS = "bloques_comp_basis_v2";
 const KEY_VIEW = "bloques_view_v1";
+const KEY_RIESGO_OBJ = "bloques_riesgo_obj_v1"; // v1.19: presupuesto de pérdida máx por operación ($) para Earnings/IC
+const KEY_EARNCALC = "bloques_earncalc_v1";
+const KEY_TOOLSUB = "bloques_toolsub_v1"; // v1.21: sub-pestaña activa de Herramientas ("puts" | "earnings") // v1.19: estado de la Calculadora Earnings del Comparador
 const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standalone (mismo esquema: tkr/dte/strike/credit/margin)
 /* ---------- versión de proyecto: al detectar un update se guarda copia automática de los datos ----------
    REGLA (ampliada): Claude sube APP_VERSION aquí mismo en CUALQUIER entrega que se despliegue — no solo
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.18";
+const APP_VERSION = "1.27"; /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_MANUALBK = "bloques_manual_backups_v1"; // últimas copias JSON guardadas por el usuario (restaurables desde la lista)
 const KEY_FLOWS = "bloques_aportaciones_v1";
-const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, "bloques_show_pnl"];
+const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
 
 /* ---------- persistencia ---------- */
@@ -363,6 +366,22 @@ const isCreditSpread = (p) => natOf(p) === "DEF" && CREDIT_SPREAD_STRATS.has(p.t
 /* crédito "simple" (v5.13): Iron Fly y Credit Spread — credit spread sin campos de strikes, formulario
    mínimo (open price + riesgo + fee + VIX opcional). Comparten el flujo de entrada de Iron Fly. */
 const isSimpleCredit = (p) => isCreditSpread(p) && !hasSpreadStrikes(p);
+/* ---------- v1.19: riesgo de cóndores (Earnings / Iron Condor) ----------
+   El riesgo máximo de un cóndor está definido por estructura: (ancho del ala mayor − crédito) × 100.
+   Solo un lado puede perder, por eso manda el ala más ancha si son asimétricas. */
+const getRiesgoObj = () => { try { const v = parseFloat(String(localStorage.getItem(KEY_RIESGO_OBJ) || "").replace(",", ".")); return isFinite(v) && v > 0 ? v : 500; } catch (e) { return 500; } };
+const saveRiesgoObj = (v) => { try { localStorage.setItem(KEY_RIESGO_OBJ, String(v)); } catch (e) {} };
+const wingWidth = (s) => { const m = String(s || "").split(/[^0-9.,]+/).map((x) => parseFloat(String(x).replace(",", "."))).filter((x) => isFinite(x) && x > 0); return m.length >= 2 ? Math.abs(m[0] - m[1]) : NaN; };
+const condorRisk = (putSpread, callSpread, primaStr) => {
+  const wp = wingWidth(putSpread), wc = wingWidth(callSpread);
+  const widths = [wp, wc].filter((w) => isFinite(w) && w > 0);
+  if (!widths.length) return null;
+  const width = Math.max(...widths);
+  const credit = parseFloat(String(primaStr || "").replace(",", "."));
+  const hasCr = isFinite(credit) && credit > 0;
+  const maxLossPC = Math.max(width - (hasCr ? credit : 0), 0) * 100; // pérdida máx por contrato ($)
+  return { width, credit: hasCr ? credit : null, maxLossPC, ratio: hasCr && width > 0 ? credit / width : null };
+};
 /* agrupación VISUAL en el asistente: los credit spreads (IC/Broken Wings) se listan bajo "Crédito"
    porque cobran prima, aunque internamente sigan siendo nat=DEF (riesgo manual, sin prima hasta cierre,
    sin rolls). Esta función solo decide bajo qué botón del paso 2 aparece cada estrategia. */
@@ -603,6 +622,66 @@ async function extractOptionFromImage(file, apiKey, model) {
   const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
   const txt = (parts || []).map((p) => p.text || "").join("");
   try { return JSON.parse(txt); } catch (_) { throw new Error("respuesta no-JSON del modelo"); }
+}
+/* v1.22: lector de la gráfica "Expected vs Actual Move".
+   Cada captura muestra UNA serie (la leyenda de abajo dice "Actual Move from Open/Close/High/Low"),
+   así que el propio modelo la clasifica leyendo esa etiqueta — el usuario sube las 4 de golpe, sin
+   tener que decir cuál es cuál. Pedimos solo lo que se LEE (expected y actual por trimestre);
+   contar cuántas veces |actual| > expected y cuántas cerraron en verde lo hace JS, que no falla. */
+async function extractEarningsChartFromImage(file, apiKey, model) {
+  let b64, mime;
+  try { b64 = await resizeImageToBase64(file, OCR_MAX_DIM); mime = "image/png"; }
+  catch (e) { b64 = await fileToBase64(file); mime = file.type && file.type.startsWith("image/") ? file.type : "image/png"; }
+  const schema = { type: "object", properties: {
+    ticker: { type: "string" },
+    serie: { type: "string", description: "OPEN, CLOSE, HIGH o LOW — leído de la leyenda 'Actual Move from ___'." },
+    avgExpected: { type: "number", description: "El valor de 'Last Backtest: ±X%' si aparece. Solo el número." },
+    eventos: { type: "array", items: { type: "object", properties: {
+      periodo: { type: "string" }, expected: { type: "number" }, actual: { type: "number" }
+    } } }
+  } };
+  const prompt = [
+    "Esta es una captura de una gráfica 'Expected vs Actual Move' de earnings de una acción.",
+    "Cada trimestre tiene: una BARRA (verde = movimiento al alza, roja = a la baja) que es el ACTUAL MOVE,",
+    "y un BIGOTE/whisker vertical (líneas horizontales arriba y abajo) que marca el EXPECTED MOVE (±X%).",
+    "Extrae:",
+    "- ticker: símbolo de la acción (arriba a la izquierda, ej. NVDA).",
+    "- serie: lee la LEYENDA de abajo, que dice 'Actual Move from Open', 'from Close', 'from High' o 'from Low'.",
+    "  Devuelve exactamente OPEN, CLOSE, HIGH o LOW según lo que ponga. Este campo es obligatorio.",
+    "- avgExpected: si ves 'Last Backtest: ±X%' o 'Average change over last N earnings: ±X%', devuelve X.",
+    "- eventos: un objeto por cada trimestre del eje X, en orden, con:",
+    "    · periodo: la etiqueta del eje (ej. '2025Q2').",
+    "    · expected: la MITAD superior del bigote en % (siempre positivo, ej. 7.5 si el bigote va de -7.5% a +7.5%).",
+    "    · actual: la altura de la barra en %, CON SIGNO — positivo si la barra es verde (sube), NEGATIVO si es roja (baja).",
+    "Lee los valores contra el eje Y. Sé preciso con el signo del actual: el color de la barra manda.",
+    "Si un trimestre no tiene barra visible, omítelo. Devuelve ÚNICAMENTE el JSON."
+  ].join("\n");
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + (model || GEMINI_MODEL) + ":generateContent?key=" + encodeURIComponent(apiKey);
+  const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
+    generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    let detail = "HTTP " + r.status;
+    try { const e = await r.json(); if (e && e.error && e.error.message) detail = e.error.message; } catch (_) {}
+    if (r.status === 400 || r.status === 403) detail = "key inválida o sin permiso (" + detail + ")";
+    if (r.status === 429) detail = "límite diario/por minuto agotado (" + detail + ")";
+    const err = new Error(detail); err.status = r.status; throw err;
+  }
+  const j = await r.json();
+  const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
+  const txt = (parts || []).map((p) => p.text || "").join("");
+  try { return JSON.parse(txt); } catch (_) { throw new Error("respuesta no-JSON del modelo"); }
+}
+/* Cuenta lo que importa a partir de lo leído: M eventos, X veces que |actual| superó el expected,
+   y U veces que cerró en verde (solo tiene sentido en la serie CLOSE, que es la dirección real). */
+function tallyEarningsChart(data) {
+  const evs = Array.isArray(data && data.eventos) ? data.eventos.filter((e) => isFinite(n(e.expected)) && n(e.expected) > 0 && e.actual != null && isFinite(Number(e.actual))) : [];
+  const M = evs.length;
+  const X = evs.filter((e) => Math.abs(Number(e.actual)) > n(e.expected)).length;
+  const U = evs.filter((e) => Number(e.actual) > 0).length;
+  const serie = String((data && data.serie) || "").toUpperCase();
+  const key = serie.indexOf("OPEN") >= 0 ? "xOpen" : serie.indexOf("CLOSE") >= 0 ? "xClose" : serie.indexOf("HIGH") >= 0 ? "xHigh" : serie.indexOf("LOW") >= 0 ? "xLow" : null;
+  return { key, serie, M, X, U, ticker: String((data && data.ticker) || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8), avgExpected: n(data && data.avgExpected) || null };
 }
 function buildTradeFromGemini(data, file) {
   const tkr = (data.ticker || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8);
@@ -953,6 +1032,44 @@ function Tile({ label, value, tone }) {
     </div>
   );
 }
+/* v1.19: bloque de riesgo del cóndor (Earnings/IC) — pérdida máx por contrato desde las alas,
+   contratos sugeridos contra el riesgo objetivo (editable en la Calculadora Earnings del Comparador)
+   y badge de calidad crédito/ancho (≥⅓ verde · ¼–⅓ ámbar · <¼ rojo). */
+function CondorRiskInfo({ putSpread, callSpread, prima, contratos, appliedRisk, onApplyRisk }) {
+  const r = condorRisk(putSpread, callSpread, prima);
+  if (!r || !(r.maxLossPC > 0)) return null;
+  const obj = getRiesgoObj();
+  const cts = parseFloat(String(contratos || "").replace(",", "."));
+  const sug = Math.floor(obj / r.maxLossPC);
+  const over = isFinite(cts) && cts > 0 && cts > sug;
+  const riesgoTotal = isFinite(cts) && cts > 0 ? r.maxLossPC * cts : null;
+  const q = r.ratio == null ? null : r.ratio >= 1 / 3 ? { tone: "green", bg: T.tileGreen, col: T.green, txt: "Crédito ≥ ⅓ del ancho — entrada de calidad" } : r.ratio >= 0.25 ? { tone: "amber", bg: T.tileAmber, col: T.gold, txt: "Crédito entre ¼ y ⅓ del ancho — justa" } : { tone: "red", bg: T.tileRed, col: T.red, txt: "Crédito < ¼ del ancho — paga poco para lo que arriesga" };
+  const applied = riesgoTotal !== null && isFinite(n(appliedRisk)) && Math.abs(n(appliedRisk) - riesgoTotal) < 0.5;
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <Tile label={"Pérdida máx / contrato · ala " + r.width.toLocaleString("en-US", { maximumFractionDigits: 2 }) + (r.credit != null ? " − créd " + r.credit.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "")} value={"$" + r.maxLossPC.toLocaleString("en-US", { maximumFractionDigits: 0 })} />
+        <Tile label={"Contratos sugeridos · objetivo $" + obj.toLocaleString("en-US", { maximumFractionDigits: 0 })} value={sug > 0 ? String(sug) : "0 — no pasa"} tone={sug > 0 ? (over ? "amber" : "green") : "red"} />
+      </div>
+      {over && (
+        <div style={{ background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold, lineHeight: 1.4 }}>
+          ⚠️ {cts} contratos = ${(r.maxLossPC * cts).toLocaleString("en-US", { maximumFractionDigits: 0 })} de riesgo máx — supera tu objetivo de ${obj.toLocaleString("en-US", { maximumFractionDigits: 0 })}.
+        </div>
+      )}
+      {q && (
+        <div style={{ background: q.bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: q.col, lineHeight: 1.4 }}>
+          {q.txt} ({(r.ratio * 100).toFixed(0)}%)
+        </div>
+      )}
+      {onApplyRisk && riesgoTotal !== null && !applied && (
+        <button type="button" onClick={() => onApplyRisk(String(Math.round(riesgoTotal)))}
+          style={{ border: "none", cursor: "pointer", borderRadius: 12, padding: "10px 0", fontSize: 13, fontWeight: 800, background: T.tile, color: T.ink }}>
+          Usar ${riesgoTotal.toLocaleString("en-US", { maximumFractionDigits: 0 })} como Riesgo máximo
+        </button>
+      )}
+    </div>
+  );
+}
 function MiniStat({ label, value, color, size }) {
   return (
     <div>
@@ -1023,7 +1140,7 @@ function EditField({ label, value, onChange, prefix, span, text, signed, type, s
 function EditSection({ icon, title, first }) {
   return (
     <div style={{ gridColumn: "span 2", display: "flex", alignItems: "center", gap: 7, marginTop: first ? 0 : 10 }}>
-      <span style={{ fontSize: 12 }}>{icon}</span>
+      <span style={{ display: "flex", alignItems: "center", color: T.sub }}>{typeof icon === "string" && icon.length > 2 ? <ActIcon name={icon} size={14} /> : <span style={{ fontSize: 12 }}>{icon}</span>}</span>
       <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.6, whiteSpace: "nowrap" }}>{title}</span>
       <div style={{ flex: 1, height: 1, background: T.line }} />
     </div>
@@ -2040,7 +2157,7 @@ function RollChainEditor({ p, onSave, onClose }) {
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>✏️ Editar {p.tkr || "posición"}</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="edit" size={19} />Editar {p.tkr || "posición"}</div>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{p.tipo || "Opción"} · {optionDetail(p) || "—"}{editableChain ? " · corrige apertura, rolls y cierre" : " · apertura y cierre (cadena en solo-lectura)"}</div>
           </div>
           <button onClick={onClose} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -2080,7 +2197,7 @@ function RollChainEditor({ p, onSave, onClose }) {
             {rolls.map((r, i) => (
               <div key={i} style={{ background: T.tile, borderRadius: 14, padding: "12px 12px 10px", marginBottom: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 800, color: T.purple, whiteSpace: "nowrap" }}>🔄 Roll {i + 1}</span>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: T.purple, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}><ActIcon name="roll" size={13} />Roll {i + 1}</span>
                   <span style={{ fontSize: 11, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums", marginLeft: "auto" }}>BEP ${money2(rollBep[i])}</span>
                   <button onClick={() => delRoll(i)} style={{ background: "transparent", border: "none", fontSize: 11.5, fontWeight: 700, color: T.red, cursor: "pointer", whiteSpace: "nowrap" }}>Eliminar</button>
                 </div>
@@ -2201,7 +2318,7 @@ function LotsEditor({ p, onSave, onClose }) {
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>📦 Lotes de {p.tkr || "acciones"}</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="lots" size={19} />Lotes de {p.tkr || "acciones"}</div>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>Compra por fecha/acciones/precio (el BEP es la media ponderada). Puedes vender un lote entero o en parte: cada venta se registra en Movimientos/MTM.</div>
           </div>
           <button onClick={onClose} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -2327,7 +2444,7 @@ function DividendsEditor({ p, onSave, onClose }) {
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>💰 Dividendos de {p.tkr || "acciones"}</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="dividend" size={19} />Dividendos de {p.tkr || "acciones"}</div>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>Fecha, importe y comisión de cada cobro. Se registra en Movimientos → Primas y en MTM.</div>
           </div>
           <button onClick={onClose} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -2470,7 +2587,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.tkr || (cash ? "Cash" : "Sin ticker")}</span>
               {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{p.tipo}</span>}
               {detail && <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{detail}</span>}
-              {rollChain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>🔄 ×{rollChain.length}</span>}
+              {rollChain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{rollChain.length}</span>}
               {p.closed && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>Cerrada</span>}
             </div>
             {!cash && <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 700, marginTop: 3 }}>× {qtyNum} <span style={{ fontWeight: 600, fontSize: 11 }}>{qtyUnit}</span></div>}
@@ -2512,10 +2629,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         <div onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
           style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>✏️ Editar posición</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: T.ink, display: "inline-flex", alignItems: "center", gap: 7 }}><ActIcon name="edit" size={16} />Editar posición</span>
             <span style={{ fontSize: 9.5, fontWeight: 600, color: T.sub }}>se guarda al instante</span>
           </div>
-          <EditSection icon="📌" title="Posición" first />
+          <EditSection icon="pin" title="Posición" first />
           {!hideBroker && (
           <label>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Broker</span>
@@ -2548,7 +2665,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           </label>
           {isOptionNat(p) && (
             <>
-              <EditSection icon="📃" title="Contrato" />
+              <EditSection icon="contract" title="Contrato" />
               {natOf(p) === "CRED" && (
                 <div style={{ gridColumn: "span 2", display: "flex", alignItems: "center", justifyContent: "space-between", background: T.tile, borderRadius: 12, padding: "8px 11px" }}>
                   <span style={{ fontSize: 11.5, fontWeight: 700, color: T.ink }}>{isPMCC(p) ? "Call vendida (short)" : (p.right === "C" ? "Call" : "Put")} <span style={{ color: T.sub, fontWeight: 600 }}>· lo determina la estrategia ({p.tipo || "—"})</span></span>
@@ -2571,7 +2688,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </div>
             </>
           )}
-          {!cash && <EditSection icon="💲" title="Precios y entrada" />}
+          {!cash && <EditSection icon="price" title="Precios y entrada" />}
           {!cash && (bepAutoStrat(p) || isCreditSpread(p) ? (
             <EditField label={isPMCC(p) ? "Prima short cobrada $/acc" : isCreditSpread(p) ? "Open price $/acc" : "Prima por acción"} prefix="$" value={p.prima} onChange={onChange("prima")} />
           ) : hasLots(p) ? (
@@ -2582,12 +2699,16 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           ) : (
             <EditField label="BEP" prefix="$" value={p.bep} onChange={onChange("bep")} />
           ))}
-          {!cash && hasLots(p) && <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginTop: -4 }}>Cantidad y BEP se calculan desde los lotes. Edítalos con 📦 Lotes más abajo.</div>}
+          {!cash && hasLots(p) && <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginTop: -4 }}>Cantidad y BEP se calculan desde los lotes. Edítalos en Lotes, más abajo.</div>}
           {!cash && isCreditSpread(p) && (
             (p.tipo === "Iron Condor" || p.tipo === "Earnings") ? (
               <>
                 <EditField label="Put spread (ej. 715/720)" value={p.putSpread} onChange={onChange("putSpread")} />
                 <EditField label="Call spread (ej. 760/765)" value={p.callSpread} onChange={onChange("callSpread")} />
+                <div style={{ gridColumn: "span 2" }}>
+                  <CondorRiskInfo putSpread={p.putSpread} callSpread={p.callSpread} prima={p.prima} contratos={p.qty}
+                    appliedRisk={p.margen} onApplyRisk={(v) => { onChange("riesgo")(v); onChange("margen")(v); }} />
+                </div>
               </>
             ) : hasSpreadStrikes(p) ? (
               <EditField label={"Spread " + (p.tipo === "Call Broken Wing" ? "call" : "put") + " (ej. 760/765)"} value={p.putSpread} onChange={onChange("putSpread")} span={2} />
@@ -2666,7 +2787,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             const dateStyle = { width: "100%", boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: d.expiryLong ? T.ink : T.sub, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none", appearance: "none", WebkitAppearance: "none" };
             return (
               <>
-                <EditSection icon="📐" title={"Ficha " + (p.tipo === "DD" ? "Double Diagonal" : "Double Calendar")} />
+                <EditSection icon="ruler" title={"Ficha " + (p.tipo === "DD" ? "Double Diagonal" : "Double Calendar")} />
                 <div style={{ gridColumn: "span 2" }}>
                   <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Vto longs (largo) · el corto es el Expiry de arriba</span>
                   <input type="date" value={d.expiryLong || ""} onChange={(e) => setMeta("expiryLong")(e.target.value)} style={dateStyle} />
@@ -2714,7 +2835,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 )}
                 <EditField label="Subyacente al abrir" prefix="$" value={d.undOpen} onChange={setMeta("undOpen")} smallLabel />
                 <EditField label="Subyacente al cerrar" prefix="$" value={d.undClose} onChange={setMeta("undClose")} smallLabel />
-                <EditSection icon="🌡️" title="Volatilidad y catalizadores" />
+                <EditSection icon="vol" title="Volatilidad y catalizadores" />
                 <EditField label="VIX" value={d.vix} onChange={setMeta("vix")} smallLabel />
                 <EditField label="IVR" value={p.ivr} onChange={onChange("ivr")} smallLabel />
                 <EditField label="IV media (avg)" value={d.ivAvg} onChange={setMeta("ivAvg")} smallLabel />
@@ -2740,7 +2861,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </>
             );
           })()}
-          <EditSection icon="🛡️" title={cash ? "Importe" : "Riesgo y valoración"} />
+          <EditSection icon="shield" title={cash ? "Importe" : "Riesgo y valoración"} />
           {cash ? (
             <div style={{ gridColumn: "span 2" }}>
               <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Importe (USD)</span>
@@ -2786,7 +2907,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
              Se abre solo automáticamente si el P&L está en Manual (posiciones sin precio autodescargable). */}
           {!cash && (
             <button type="button" onClick={() => setShowAdv((v) => !v)} style={{ gridColumn: "span 2", background: "transparent", border: `1.5px dashed ${T.line}`, borderRadius: 11, padding: "9px 0", fontSize: 12, fontWeight: 700, color: T.sub, cursor: "pointer" }}>
-              ⚙️ Avanzado · valor mercado, margen y P&L {showAdv ? "▴" : "▾"}
+              <ActIcon name="gear" size={14} /> Avanzado · valor mercado, margen y P&L {showAdv ? "▴" : "▾"}
             </button>
           )}
           {!cash && showAdv && (
@@ -2849,7 +2970,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             )}
           </label>
           )}
-          {p.closed && !!onReopen && <EditSection icon="⚡" title="Acciones" />}
+          {p.closed && !!onReopen && <EditSection icon="bolt" title="Acciones" />}
           {p.closed && !!onReopen && (
             <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>Cerrada el {ibkrDate(p.closeDate)} a ${money2(n(p.closePrice))}</span>
@@ -2857,10 +2978,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             </div>
           )}
           {opt && onEditChain && (
-            <button type="button" onClick={() => onEditChain(p.id)} style={{ gridColumn: "span 2", background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer" }}>✏️ Editar aperturas, rolls y cierre</button>
+            <button type="button" onClick={() => onEditChain(p.id)} style={{ gridColumn: "span 2", background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={15} />Editar aperturas, rolls y cierre</button>
           )}
           {nat === "ACC" && onEditLots && (
-            <button type="button" onClick={() => onEditLots(p.id)} style={{ gridColumn: "span 2", background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer" }}>📦 Lotes / añadir lote{hasLots(p) ? " (" + p.lots.length + ")" : ""}</button>
+            <button type="button" onClick={() => onEditLots(p.id)} style={{ gridColumn: "span 2", background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="lots" size={15} />Lotes / añadir lote{hasLots(p) ? " (" + p.lots.length + ")" : ""}</button>
           )}
           <button type="button" onClick={onDone} style={{ gridColumn: "span 2", marginTop: 4, background: T.dark, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 800, color: "#fff", cursor: "pointer" }}>✓ Listo</button>
           <button onClick={onDelete} style={{ gridColumn: "span 2", background: "transparent", border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12.5, fontWeight: 700, color: T.red, cursor: "pointer", opacity: 0.85 }}>Eliminar posición</button>
@@ -2881,7 +3002,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>🔄 Rolar {p.tkr}</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />Rolar {p.tkr}</div>
                   <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{optionDetail(p)} · precios por acción, ×{rollQty} al calcular el cash{p.covered && p.right === "C" ? " · el neto del roll ajusta el BEP de la acción cubierta" : ""}</div>
                 </div>
                 <button onClick={() => setRolling(false)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -2895,7 +3016,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </div>
               <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
                 <button type="button" disabled={rollOcrBusy} onClick={() => rollPhotoRef.current && rollPhotoRef.current.click()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: T.tilePurple, border: "none", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, color: T.purple, cursor: rollOcrBusy ? "default" : "pointer", opacity: rollOcrBusy ? 0.6 : 1 }}>
-                  {rollOcrBusy ? "Leyendo captura…" : "📷 Leer captura del roll"}
+                  {rollOcrBusy ? "Leyendo captura…" : <><ActIcon name="camera" size={15} /> Leer captura del roll</>}
                 </button>
                 <input ref={rollPhotoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; if (file) onRollPhoto(file); }} />
                 {rollOcrMsg && <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, background: T.tile, borderRadius: 10, padding: "8px 10px", lineHeight: 1.4 }}>{rollOcrMsg}</div>}
@@ -2978,7 +3099,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 )}
                 {canExercise && closeExercised && (
                   <div style={{ gridColumn: "span 2", background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 800, color: T.gold, marginBottom: 3 }}>{p.right === "P" ? "📥 Asignación de put → B1" : "📤 Call asignada"}</div>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, color: T.gold, marginBottom: 3, display: "flex", alignItems: "center", gap: 6 }}><ActIcon name={p.right === "P" ? "assign" : "called"} size={14} />{p.right === "P" ? "Asignación de put → B1" : "Call asignada"}</div>
                     <div style={{ fontSize: 11.5, color: T.ink, fontWeight: 600, lineHeight: 1.45 }}>
                       {p.right === "P"
                         ? "Se creará una posición de " + n(p.qty) + " acciones de " + (p.tkr || "—") + " en B1 (Long Stock) con coste base = BEP a la fecha $" + money2(effBep(p)) + ". "
@@ -3136,6 +3257,36 @@ function SetIcon({ name, color }) {
       {name === "camera" && (<g {...P}><rect x="3" y="6.5" width="18" height="13" rx="2.5" /><path d="M8.5 6.5L10 4h4l1.5 2.5" /><circle cx="12" cy="12.8" r="3.4" /></g>)}
       {name === "trash" && (<g {...P}><path d="M4 6.5h16" /><path d="M9 6.5V4.8A1.3 1.3 0 0 1 10.3 3.5h3.4A1.3 1.3 0 0 1 15 4.8v1.7" /><path d="M6 6.5l1 13a1.8 1.8 0 0 0 1.8 1.7h6.4a1.8 1.8 0 0 0 1.8-1.7l1-13" /><path d="M10 10.5v6M14 10.5v6" /></g>)}
       {name === "broom" && (<g {...P}><path d="M14.5 3.5L11 10" /><path d="M11 10l-6.5 6.5c-.9.9-1 2.3-.2 3.2.9.8 2.3.7 3.2-.2L14 13" /><path d="M11 10l3 3" /><path d="M6.5 20.5L10 17" /></g>)}
+    </svg>
+  );
+}
+
+/* ---------- ACCIONES: iconos de línea (v1.25) — editar, rolar, lotes, dividendos, cámara.
+   Mismo trazo que NavIcon y SetIcon (stroke 2, redondeado) para que la app no mezcle emojis con SVG. ---------- */
+function ActIcon({ name, size, color }) {
+  const P = { fill: "none", stroke: color || "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
+  const s = size || 17;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-hidden="true" style={{ flexShrink: 0, verticalAlign: "-2px" }}>
+      {name === "edit" && (<g {...P}><path d="M4 20.5h4.2L19.3 9.4a2.1 2.1 0 0 0 0-3l-1.7-1.7a2.1 2.1 0 0 0-3 0L3.5 15.8V20z" /><path d="M13.8 6.2l4 4" /></g>)}
+      {name === "roll" && (<g {...P}><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 5.5V11h-5.5" /></g>)}
+      {name === "lots" && (<g {...P}><path d="M3.5 8.2L12 4l8.5 4.2v7.6L12 20l-8.5-4.2z" /><path d="M3.5 8.2L12 12.4l8.5-4.2" /><path d="M12 12.4V20" /></g>)}
+      {name === "dividend" && (<g {...P}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.2v9.6M14.8 8.8c-.6-.9-1.7-1.4-2.8-1.4-1.6 0-2.9 1-2.9 2.3s1.3 2 2.9 2.3c1.6.3 2.9 1 2.9 2.3s-1.3 2.3-2.9 2.3c-1.1 0-2.2-.5-2.8-1.4" /></g>)}
+      {name === "camera" && (<g {...P}><rect x="3" y="6.5" width="18" height="13" rx="2.5" /><path d="M8.5 6.5L10 4h4l1.5 2.5" /><circle cx="12" cy="12.8" r="3.4" /></g>)}
+      {name === "price" && (<g {...P}><path d="M3.5 20.5h17" /><path d="M4.5 15.5l4.4-4.8 3.5 3.2 6.6-7.4" /><path d="M19 10.2V6.5h-3.7" /></g>)}
+      {name === "gear" && (<g {...P}><circle cx="12" cy="12" r="3.2" /><path d="M12 2.8v2.7M12 18.5v2.7M2.8 12h2.7M18.5 12h2.7M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9" /></g>)}
+      {name === "assign" && (<g {...P}><path d="M12 3.5v11" /><path d="M7.5 10L12 14.5 16.5 10" /><path d="M4.5 17.5v1.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-1.5" /></g>)}
+      {name === "called" && (<g {...P}><path d="M12 14.5v-11" /><path d="M7.5 8L12 3.5 16.5 8" /><path d="M4.5 17.5v1.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-1.5" /></g>)}
+      {name === "puts" && (<g {...P}><path d="M3.5 4.5v15h17" /><path d="M7 8.5l4 4 3-3 4.5 4.5" /><path d="M19.5 10.5V14h-3.5" /></g>)}
+      {name === "pin" && (<g {...P}><path d="M12 21v-6.5" /><path d="M8 3.5h8l-1 5 2.5 2.5v1.5H6.5V11L9 8.5z" /></g>)}
+      {name === "contract" && (<g {...P}><path d="M6 3.5h8l4.5 4.5V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" /><path d="M13.8 3.8v4.4h4.4" /><path d="M8.5 13h7M8.5 16.5h4.5" /></g>)}
+      {name === "ruler" && (<g {...P}><path d="M3.5 15.5L15.5 3.5l5 5-12 12z" /><path d="M7 12l2 2M10 8.9l2 2M13.1 5.8l2 2" /></g>)}
+      {name === "vol" && (<g {...P}><path d="M10 13.8V5a2 2 0 0 1 4 0v8.8a5 5 0 1 1-4 0z" /><path d="M12 9v6.5" /></g>)}
+      {name === "shield" && (<g {...P}><path d="M12 3.2l7 2.6v5.4c0 4.3-2.9 8.1-7 9.6-4.1-1.5-7-5.3-7-9.6V5.8z" /></g>)}
+      {name === "bolt" && (<g {...P}><path d="M13.2 2.8L4.5 13.5h6l-.7 7.7 8.7-10.7h-6z" /></g>)}
+      {name === "close" && (<g {...P}><circle cx="12" cy="12" r="8.8" /><path d="M9 9l6 6M15 9l-6 6" /></g>)}
+      {name === "reopen" && (<g {...P}><path d="M4 11a8 8 0 1 1 2.3 6.3" /><path d="M4 5.5V11h5.5" /></g>)}
+      {name === "calc" && (<g {...P}><rect x="4.5" y="3" width="15" height="18" rx="2.5" /><rect x="8" y="6.5" width="8" height="3.2" rx="1" /><path d="M8.5 14h.01M12 14h.01M15.5 14h.01M8.5 17.5h.01M12 17.5h.01M15.5 17.5h.01" /></g>)}
     </svg>
   );
 }
@@ -3596,7 +3747,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                           const _h = _isDiv ? onEditDiv : _stock ? onEditLots : onEditChain;
                           if (!_h) return null;
                           const _lbl = _isDiv ? "dividendos" : _stock ? "lotes / ventas" : "este movimiento";
-                          return <button onClick={(ev) => { ev.stopPropagation(); _h(e.posId); }} style={{ width: "100%", marginTop: 9, background: T.tilePurple, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.purple, cursor: "pointer" }}>✏️ Editar {_lbl}</button>;
+                          return <button onClick={(ev) => { ev.stopPropagation(); _h(e.posId); }} style={{ width: "100%", marginTop: 9, background: T.tilePurple, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={14} />Editar {_lbl}</button>;
                         })()}
                       </div>
                     )}
@@ -4087,7 +4238,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                       {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{p.tipo}</span>}
                       {isOpt && optionDetail(p) && <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{optionDetail(p)}</span>}
                       {blk && <span style={{ fontSize: 9.5, fontWeight: 800, color: blk.color, background: blk.bg, borderRadius: 6, padding: "2px 5px" }}>{blk.name.replace("Bloque ", "B")}</span>}
-                      {chain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>🔄 ×{chain.length}</span>}
+                      {chain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{chain.length}</span>}
                       {p.exercised && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 6, padding: "2px 5px" }}>Asignada</span>}
                     </div>
                     <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, marginTop: 3 }}>× {qtyLabel} · {ibkrDate(p.entryDate)}{p.closed ? " → " + ibkrDate(p.closeDate) : " · abierta"}</div>
@@ -4214,7 +4365,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                       </div>
                     )}
                     {isOpt && onEditChain && (
-                      <button onClick={(ev) => { ev.stopPropagation(); onEditChain(p.id); }} style={{ width: "100%", marginTop: 12, background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer" }}>✏️ Editar {chain.length > 0 ? "rolls, apertura y cierre" : p.closed ? "apertura y cierre" : "apertura"}</button>
+                      <button onClick={(ev) => { ev.stopPropagation(); onEditChain(p.id); }} style={{ width: "100%", marginTop: 12, background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={15} />Editar {chain.length > 0 ? "rolls, apertura y cierre" : p.closed ? "apertura y cierre" : "apertura"}</button>
                     )}
                   </div>
                 )}
@@ -4250,8 +4401,371 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
 }
 
 /* ---------- COMPARADOR: contenido de la vista (la cuenta base viene de Portfolio) ---------- */
-function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis }) {
+/* v1.21: Herramientas — contenedor con selector Puts | Earnings (estilo Movimientos) */
+function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis }) {
+  const [sub, setSub] = useState(() => { try { const v = localStorage.getItem(KEY_TOOLSUB); return v === "earnings" ? "earnings" : "puts"; } catch (e) { return "puts"; } });
+  const pick = (id) => { setSub(id); try { localStorage.setItem(KEY_TOOLSUB, id); } catch (e) {} };
+  return (
+    <>
+      <div style={{ display: "flex", gap: 6, background: T.card, borderRadius: 18, padding: 6, marginBottom: 14, boxShadow: T.shadow }}>
+        {[["puts", "puts", "Puts"], ["calc", "earnings", "Earnings"]].map(([icon, id, label]) => (
+          <button key={id} onClick={() => pick(id)} style={{
+            flex: 1, border: "none", cursor: "pointer", borderRadius: 13, padding: "8px 0 7px", fontSize: 12, fontWeight: 700,
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+            background: sub === id ? T.dark : "transparent", color: sub === id ? "#fff" : T.sub,
+          }}>
+            <ActIcon name={icon} size={22} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+      {sub === "puts" ? (
+        <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} />
+      ) : (
+        <EarningsToolContent apiKey={apiKey} geminiKey={geminiKey} onOpenPosition={onOpenPosition} />
+      )}
+    </>
+  );
+}
+
+/* v1.21: Herramienta Earnings — flujo completo de decisión pre-trade:
+   1) Spot vía Finnhub (misma key que Portfolio) + expected move % → strikes cortos ±EM y generador de alas.
+   2) Histórico expected vs actual en 4 escenarios (open/close/high/low): X de M veces que el movimiento
+      superó el EM. El veredicto usa OPEN (salida al abrir); los otros calibran el plan B (aguantar/asignación).
+   3) Sesgo direccional (veces que cerró en verde) → recomendación de estrategia:
+      alcista consistente → short put / bull put spread · bajista → bear call · dentro del EM → iron condor ·
+      rompe el EM a menudo → skip o comprar la estructura.
+   4) Crédito + riesgo objetivo → contratos sugeridos, win rate mínimo, EV y GO/CAUTION/NO-GO. */
+function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrMsg, setOcrMsg] = useState("");
+  const ocrLockRef = useRef(false);
+  const [st, setSt] = useState(() => {
+    const base = { tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", obj: String(getRiesgoObj()), nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", cr25: "", cr5: "", cr10: "" };
+    try { const raw = localStorage.getItem(KEY_EARNCALC); if (raw) return { ...base, ...JSON.parse(raw), obj: String(getRiesgoObj()) }; } catch (e) {}
+    return base;
+  });
+  const [spotMsg, setSpotMsg] = useState("");
+  const [spotBusy, setSpotBusy] = useState(false);
+  const set = (k) => (v) => setSt((s) => {
+    const nx = { ...s, [k]: v };
+    try { localStorage.setItem(KEY_EARNCALC, JSON.stringify(nx)); } catch (e) {}
+    if (k === "obj") { const num = parseFloat(String(v).replace(",", ".")); if (isFinite(num) && num > 0) saveRiesgoObj(num); }
+    return nx;
+  });
+  const setMany = (obj) => setSt((s) => { const nx = { ...s, ...obj }; try { localStorage.setItem(KEY_EARNCALC, JSON.stringify(nx)); } catch (e) {} return nx; });
+  const pf = (v) => { const x = parseFloat(String(v || "").replace(",", ".")); return isFinite(x) ? x : NaN; };
+
+  /* v1.22: sube 1-4 capturas de "Expected vs Actual Move" (una por serie del desplegable).
+     Gemini clasifica cada una leyendo la leyenda, así que el orden de subida da igual.
+     M lo fija la primera lectura válida; U (dirección) sale de la serie CLOSE, que es la real. */
+  const runChartOcr = async (files) => {
+    const list = Array.from(files || []).slice(0, 4);
+    if (!list.length) return;
+    if (ocrLockRef.current) return;
+    if (!geminiKey) { setOcrMsg("Sin key de Gemini — actívala en Ajustes → Lector de capturas."); return; }
+    ocrLockRef.current = true; setOcrBusy(true); setOcrMsg("");
+    const patch = {}; const notes = []; let mSeen = null; let tkrSeen = "";
+    for (const f of list) {
+      let data = null, lastErr = null;
+      for (const model of GEMINI_MODELS) {
+        try { data = await extractEarningsChartFromImage(f, geminiKey, model); break; }
+        catch (err) { lastErr = err; if (err.status !== 429) break; }
+      }
+      if (!data) { notes.push("✕ " + (lastErr && lastErr.message ? lastErr.message : "no pude leerla")); continue; }
+      const t = tallyEarningsChart(data);
+      if (!t.key || !t.M) { notes.push("✕ una captura sin serie o sin barras legibles"); continue; }
+      patch[t.key] = String(t.X);
+      if (mSeen == null) mSeen = t.M;
+      if (t.ticker && !tkrSeen) tkrSeen = t.ticker;
+      if (t.key === "xClose") patch.nUp = String(t.U);
+      notes.push(t.serie + ": " + t.X + "/" + t.M + " fuera del EM");
+    }
+    if (mSeen != null) patch.nHist = String(mSeen);
+    if (tkrSeen && !String(st.tkr || "").trim()) patch.tkr = tkrSeen;
+    if (Object.keys(patch).length) setMany(patch);
+    setOcrBusy(false); ocrLockRef.current = false;
+    setOcrMsg(notes.join(" · ") + (Object.keys(patch).length ? ". Revisa los números antes de fiarte." : ""));
+    setTimeout(() => setOcrMsg(""), 20000);
+  };
+
+  const getSpot = async () => {
+    const sym = String(st.tkr || "").trim().toUpperCase();
+    if (!sym) { setSpotMsg("Escribe un ticker primero."); return; }
+    if (!apiKey) { setSpotMsg("Sin key de Finnhub — actívala en Ajustes → Precios."); return; }
+    setSpotBusy(true); setSpotMsg("");
+    const q = await fetchQuote(sym, apiKey);
+    setSpotBusy(false);
+    if (q.price) { setMany({ tkr: sym, spot: String(q.price) }); setSpotMsg(""); }
+    else setSpotMsg("No pude leer el precio: " + (q.error || "error desconocido"));
+  };
+
+  /* redondeo al incremento de strike típico según precio */
+  const strikeStep = (px) => (px >= 200 ? 5 : px >= 100 ? 2.5 : px >= 25 ? 1 : 0.5);
+  const roundStrike = (x, px) => { const s = strikeStep(px); return Math.round(x / s) * s; };
+  const spot = pf(st.spot), em = pf(st.em);
+  const emOk = isFinite(spot) && spot > 0 && isFinite(em) && em > 0;
+  const shortPut = emOk ? roundStrike(spot * (1 - em / 100), spot) : NaN;
+  const shortCall = emOk ? roundStrike(spot * (1 + em / 100), spot) : NaN;
+  const wing = pf(st.wing);
+  const fmtK = (x) => (Math.round(x * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const genSpreads = () => {
+    if (!emOk || !isFinite(wing) || wing <= 0) return;
+    setMany({ put: fmtK(shortPut) + "/" + fmtK(shortPut - wing), call: fmtK(shortCall) + "/" + fmtK(shortCall + wing) });
+  };
+
+  const r = condorRisk(st.put, st.call, st.credit);
+  const obj = pf(st.obj);
+  const creditPC = r && r.credit != null ? r.credit * 100 : NaN;
+  const sug = r && r.maxLossPC > 0 && isFinite(obj) && obj > 0 ? Math.floor(obj / r.maxLossPC) : null;
+  const beWr = r && r.maxLossPC > 0 && isFinite(creditPC) ? r.maxLossPC / (r.maxLossPC + creditPC) : NaN;
+
+  const M = pf(st.nHist);
+  const scen = [["xOpen", "Open"], ["xClose", "Close"], ["xHigh", "High"], ["xLow", "Low"]].map(([k, lbl]) => {
+    const X = pf(st[k]);
+    const pop = isFinite(M) && M > 0 && isFinite(X) && X >= 0 && X <= M ? 1 - X / M : NaN;
+    return { k, lbl, X, pop };
+  });
+  const popOpen = scen[0].pop;
+  const ev = r && isFinite(popOpen) && isFinite(creditPC) ? popOpen * creditPC - (1 - popOpen) * r.maxLossPC : NaN;
+  const evTot = isFinite(ev) && sug ? ev * sug : NaN;
+  const edge = isFinite(popOpen) && isFinite(beWr) ? popOpen - beWr : NaN;
+
+  /* recomendación de estrategia según el sesgo direccional y la permanencia dentro del EM */
+  const U = pf(st.nUp);
+  const dirUp = isFinite(M) && M > 0 && isFinite(U) && U >= 0 && U <= M ? U / M : NaN;
+  let reco = null;
+  if (isFinite(dirUp) && dirUp >= 0.7) reco = { t: "Short Put · Bull Put Spread", txt: "Sube tras earnings el " + (dirUp * 100).toFixed(0) + "% de las veces — sesgo alcista consistente. Vende la put (20-30Δ) o el bull put spread (25-50Δ) y deja el lado call en paz.", col: T.green, bg: T.tileGreen };
+  else if (isFinite(dirUp) && dirUp <= 0.3) reco = { t: "Bear Call Spread", txt: "Solo cierra en verde el " + (dirUp * 100).toFixed(0) + "% de las veces — sesgo bajista consistente. Vende el bear call spread (25-50Δ).", col: T.red, bg: T.tileRed };
+  else if (isFinite(popOpen) && popOpen >= 0.7) reco = { t: "Iron Condor", txt: "Sin dirección clara pero se queda dentro del expected move el " + (popOpen * 100).toFixed(0) + "% de las veces (open). Cóndor con strikes en el EM y crédito ≥ ⅓ del ancho.", col: T.green, bg: T.tileGreen };
+  else if (isFinite(popOpen) && popOpen < 0.5) reco = { t: "Skip · o comprar la estructura", txt: "Rompe el expected move más de la mitad de las veces — vender prima aquí es la apisonadora. Pasa, o dale la vuelta: compra el IC/Fly con las alas dentro de tu EM.", col: T.gold, bg: T.tileAmber };
+  else if (isFinite(dirUp) || isFinite(popOpen)) reco = { t: "Sin edge claro", txt: "Ni sesgo direccional consistente ni permanencia fiable dentro del EM. No te sientas obligado a tradear — a la siguiente.", col: T.sub, bg: T.tile };
+
+  /* v1.23: Plan B. Solo se plantea si el trade ABRE en pérdida (el gap se pasó de tus strikes).
+     La pregunta es si el día suele corregir ese gap o si lo profundiza:
+       · POP close > POP open  → el precio vuelve dentro del EM durante la sesión → aguantar tiene histórico a favor.
+       · POP close ≤ POP open  → los gaps se extienden → cerrar en el open, sin dudar.
+     High/Low miden la excursión adversa: si son mucho peores que el open, el intradía te puede sacar
+     mucho más lejos antes de cualquier recuperación — aguantar duele aunque acabe corrigiendo. */
+  const popClose = scen[1].pop, popHigh = scen[2].pop, popLow = scen[3].pop;
+  const revert = isFinite(popClose) && isFinite(popOpen) ? popClose - popOpen : NaN;
+  const worstIntra = [popHigh, popLow].filter((x) => isFinite(x));
+  const excursion = worstIntra.length && isFinite(popOpen) ? Math.min(...worstIntra) - popOpen : NaN;
+  let plan = null;
+  if (isFinite(revert)) {
+    const deep = isFinite(excursion) && excursion <= -0.15;
+    if (revert >= 0.05 && !deep) plan = { t: "AGUANTA", col: T.green, bg: T.tileGreen, txt: "El precio vuelve dentro del expected move más veces al cierre (" + (popClose * 100).toFixed(0) + "%) que al abrir (" + (popOpen * 100).toFixed(0) + "%): los gaps de este ticker tienden a corregirse durante la sesión. Si abre en pérdida, dale tiempo antes de asumirla." };
+    else if (revert >= 0.05 && deep) plan = { t: "AGUANTA CON DOLOR", col: T.gold, bg: T.tileAmber, txt: "Acaba corrigiendo al cierre, pero el intradía se va mucho más en contra primero (" + (Math.min(...worstIntra) * 100).toFixed(0) + "% frente a " + (popOpen * 100).toFixed(0) + "% al abrir). Aguantar funciona de media, pero verás números feos por el camino — solo si el tamaño te deja dormir." };
+    else plan = { t: "CIERRA", col: T.red, bg: T.tileRed, txt: "Al cierre no está mejor que al abrir (" + (popClose * 100).toFixed(0) + "% vs " + (popOpen * 100).toFixed(0) + "%): cuando este ticker se sale del expected move, el movimiento se extiende en vez de corregirse. Si abre en pérdida, cierra y a la siguiente." };
+  }
+
+  const verdict = !r || !isFinite(ev) ? null : ev > 0 && r.ratio != null && r.ratio >= 0.25 && edge >= 0.05 ? { t: "GO", col: T.green, bg: T.tileGreen, txt: "EV positiva con colchón — entra dentro de tu marco" } : ev > 0 ? { t: "CAUTION", col: T.gold, bg: T.tileAmber, txt: "EV positiva pero fina — poco margen si el histórico no se repite" } : { t: "NO-GO", col: T.red, bg: T.tileRed, txt: "EV negativa — con tu histórico esta estructura pierde dinero a la larga" };
+  const money0 = (v) => "$" + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+  return (
+    <div style={{ background: T.card, borderRadius: 24, padding: 18, marginBottom: 16, boxShadow: T.shadow }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color: T.ink, letterSpacing: -0.3, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="calc" size={18} />Análisis de earnings</div>
+      <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2, marginBottom: 14 }}>Estrategia · estructura · probabilidad · sizing — todo antes de abrir</div>
+      <div style={{ display: "grid", gap: 10 }}>
+        <WizSection>▸ Subyacente y expected move</WizSection>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" }}>
+          <WizInput label="Ticker" value={st.tkr} onChange={set("tkr")} upper placeholder="NVDA" />
+          <button type="button" onClick={getSpot} disabled={spotBusy}
+            style={{ border: "none", cursor: "pointer", borderRadius: 12, height: 47, fontSize: 13.5, fontWeight: 800, background: T.dark, color: "#fff", opacity: spotBusy ? 0.6 : 1 }}>
+            {spotBusy ? "Leyendo…" : "Obtener spot"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <WizInput label="Spot $" value={st.spot} onChange={set("spot")} inputMode="decimal" placeholder="210.96" />
+          <WizInput label="Expected move %" value={st.em} onChange={set("em")} inputMode="decimal" placeholder="5.39" />
+        </div>
+        {spotMsg && <div style={{ background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>{spotMsg}</div>}
+        {emOk && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <Tile label={"Short put · spot − " + em.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "%"} value={fmtK(shortPut)} />
+            <Tile label={"Short call · spot + " + em.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "%"} value={fmtK(shortCall)} />
+          </div>
+        )}
+        {emOk && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" }}>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 5 }}>Ancho del ala</div>
+              <Pill options={["2.5", "5", "10"]} value={st.wing} onChange={set("wing")} size="sm" />
+            </label>
+            <button type="button" onClick={genSpreads}
+              style={{ border: "none", cursor: "pointer", borderRadius: 12, height: 40, fontSize: 13, fontWeight: 800, background: T.tile, color: T.ink }}>
+              Generar spreads
+            </button>
+          </div>
+        )}
+        <WizSection>▸ Estructura</WizSection>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <WizInput label="Put spread" value={st.put} onChange={set("put")} placeholder="195/190" />
+          <WizInput label="Call spread" value={st.call} onChange={set("call")} placeholder="225/230" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <WizInput label="Crédito neto $/acc" value={st.credit} onChange={set("credit")} inputMode="decimal" placeholder="1.50" />
+          <WizInput label="Riesgo objetivo $ / op" value={st.obj} onChange={set("obj")} inputMode="decimal" placeholder="500" />
+        </div>
+        <WizSection>▸ Histórico expected vs actual</WizSection>
+        <label style={{ display: "block", cursor: ocrBusy ? "default" : "pointer" }}>
+          <div style={{ background: ocrBusy ? T.tile : T.tilePurple, borderRadius: 14, padding: "12px 14px", textAlign: "center", fontSize: 13.5, fontWeight: 800, color: ocrBusy ? T.sub : T.purple }}>
+            {ocrBusy ? "Leyendo capturas…" : <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ActIcon name="camera" size={15} />Leer capturas de Expected vs Actual</span>}
+          </div>
+          <input type="file" accept="image/*" multiple disabled={ocrBusy} style={{ display: "none" }}
+            onChange={(e) => { runChartOcr(e.target.files); e.target.value = ""; }} />
+        </label>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+          Sube hasta 4 capturas — una por cada serie del desplegable <b>Actual Move from</b> (Open · Close · High · Low). El lector identifica cada serie por su leyenda, así que el orden da igual. Rellena M, las X de cada escenario y U (cierres en verde, desde la serie Close).
+        </div>
+        {ocrMsg && <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.4 }}>{ocrMsg}</div>}
+        <WizInput label="Earnings analizados (M)" value={st.nHist} onChange={set("nHist")} inputMode="numeric" placeholder="16" span={2} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <WizInput label="Fuera del EM · Open" value={st.xOpen} onChange={set("xOpen")} inputMode="numeric" placeholder="2" />
+          <WizInput label="Fuera del EM · Close" value={st.xClose} onChange={set("xClose")} inputMode="numeric" placeholder="3" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <WizInput label="Fuera del EM · High" value={st.xHigh} onChange={set("xHigh")} inputMode="numeric" placeholder="4" />
+          <WizInput label="Fuera del EM · Low" value={st.xLow} onChange={set("xLow")} inputMode="numeric" placeholder="3" />
+        </div>
+        <WizInput label="Cerró en verde (U)" value={st.nUp} onChange={set("nUp")} inputMode="numeric" placeholder="11" />
+        {scen.some((s) => isFinite(s.pop)) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
+            {scen.map((s) => (
+              <Tile key={s.k} label={"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")} value={isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}
+                tone={!isFinite(s.pop) ? "muted" : s.k === "xOpen" ? (s.pop >= 0.7 ? "green" : s.pop >= 0.5 ? "amber" : "red") : "default"} />
+            ))}
+          </div>
+        )}
+        {scen.some((s) => isFinite(s.pop)) && (
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+            El veredicto usa <b>Open</b> (sales al abrir). Todas las series se miden contra el cierre previo a resultados: <b>High</b> y <b>Low</b> son los extremos del recorrido del día — lo mejor y lo peor que habrías visto en pantalla. Junto con <b>Close</b> te dicen si el plan B de aguantar una pérdida o tomar asignación tiene histórico a favor, o si toca cortar sin dudar.
+          </div>
+        )}
+        {reco && (
+          <div style={{ background: reco.bg, borderRadius: 15, padding: "12px 14px" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: reco.col }}>Estrategia sugerida: {reco.t}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.45 }}>{reco.txt}</div>
+          </div>
+        )}
+        {r && r.maxLossPC > 0 && (
+          <>
+            <WizSection>▸ Sizing y esperanza</WizSection>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <Tile label={"Pérdida máx / contrato · ala " + r.width.toLocaleString("en-US", { maximumFractionDigits: 2 })} value={money0(r.maxLossPC)} />
+              <Tile label={"Contratos sugeridos · objetivo $" + (isFinite(obj) ? obj.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "—")} value={sug == null ? "—" : sug > 0 ? String(sug) : "0 — no pasa"} tone={sug == null ? "muted" : sug > 0 ? "green" : "red"} />
+            </div>
+            {isFinite(beWr) && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <Tile label="Win rate mínimo (break-even)" value={(beWr * 100).toFixed(0) + "%"} tone="muted" />
+                <Tile label="Colchón (POP open − mínimo)" value={isFinite(edge) ? ((edge >= 0 ? "+" : "") + (edge * 100).toFixed(0) + " pts") : "—"} tone={isFinite(edge) ? (edge >= 0.05 ? "green" : edge >= 0 ? "amber" : "red") : "default"} />
+              </div>
+            )}
+            {r.ratio != null && (
+              <div style={{ background: r.ratio >= 1 / 3 ? T.tileGreen : r.ratio >= 0.25 ? T.tileAmber : T.tileRed, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: r.ratio >= 1 / 3 ? T.green : r.ratio >= 0.25 ? T.gold : T.red, lineHeight: 1.4 }}>
+                Crédito = {(r.ratio * 100).toFixed(0)}% del ancho {r.ratio >= 1 / 3 ? "(≥ ⅓ — entrada de calidad)" : r.ratio >= 0.25 ? "(¼–⅓ — justa)" : "(< ¼ — paga poco para lo que arriesga)"}
+              </div>
+            )}
+            {verdict && (
+              <div style={{ background: verdict.bg, borderRadius: 15, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: verdict.col }}>{verdict.t}</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: ev >= 0 ? T.green : T.red, fontVariantNumeric: "tabular-nums" }}>{(ev >= 0 ? "+" : "−") + money0(ev)} EV/contrato</span>
+                </div>
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.45 }}>
+                  {verdict.txt}{isFinite(evTot) && sug > 0 ? " · con " + sug + " contrato" + (sug > 1 ? "s" : "") + ": " + (evTot >= 0 ? "+" : "−") + money0(evTot) + " esperados por earnings" : ""}
+                </div>
+              </div>
+            )}
+            {onOpenPosition && sug > 0 && (
+              <button type="button" onClick={() => onOpenPosition({
+                block: 3, strat: "Earnings",
+                form: { tkr: String(st.tkr || "").trim().toUpperCase(), putSpread: st.put, callSpread: st.call,
+                  prima: st.credit, contratos: String(sug), margen: String(Math.round(r.maxLossPC * sug)) },
+              })}
+                style={{ border: "none", cursor: "pointer", borderRadius: 14, padding: "13px 0", fontSize: 14, fontWeight: 800, background: T.dark, color: "#fff" }}>
+                Abrir posición · B3 Earnings · {sug} contrato{sug > 1 ? "s" : ""}
+              </button>
+            )}
+            <WizSection>▸ Comparar anchos de ala</WizSection>
+            <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+              Apunta el crédito que cotiza cada ancho en tu bróker. El ancho bueno es el más estrecho que aún paga ≥ ⅓ — como cierras en el open casi nunca tocas el ala, así que pagarla cara es riesgo que no usas.
+            </div>
+            {[["2.5", "cr25"], ["5", "cr5"], ["10", "cr10"]].map(([w, ck]) => {
+              const wN = parseFloat(w);
+              const cN = pf(st[ck]);
+              const okC = isFinite(cN) && cN > 0;
+              const mlPC = okC ? Math.max(wN - cN, 0) * 100 : NaN;
+              const ratio = okC ? cN / wN : NaN;
+              const cts = okC && mlPC > 0 && isFinite(obj) && obj > 0 ? Math.floor(obj / mlPC) : null;
+              const bw = okC && mlPC > 0 ? mlPC / (mlPC + cN * 100) : NaN;
+              const evW = okC && isFinite(popOpen) ? popOpen * cN * 100 - (1 - popOpen) * mlPC : NaN;
+              const col = !okC ? T.sub : ratio >= 1 / 3 ? T.green : ratio >= 0.25 ? T.gold : T.red;
+              const bg = !okC ? T.tile : ratio >= 1 / 3 ? T.tileGreen : ratio >= 0.25 ? T.tileAmber : T.tileRed;
+              return (
+                <div key={w} style={{ background: bg, borderRadius: 14, padding: "10px 12px", display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "56px 1fr", gap: 10, alignItems: "center" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: col }}>{w} pt</div>
+                    <WizInput label={"Crédito $/acc · mín ⅓ = " + (wN / 3).toFixed(2)} value={st[ck]} onChange={set(ck)} inputMode="decimal" placeholder={(wN / 3).toFixed(2)} />
+                  </div>
+                  {okC && (
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 6, fontSize: 11.5, fontWeight: 700, color: T.sub, flexWrap: "wrap" }}>
+                      <span>{(ratio * 100).toFixed(0)}% del ancho</span>
+                      <span>{money0(mlPC)}/contr.</span>
+                      <span>{cts == null ? "—" : cts + " contr."}</span>
+                      <span>BE {isFinite(bw) ? (bw * 100).toFixed(0) + "%" : "—"}</span>
+                      <span style={{ color: isFinite(evW) ? (evW >= 0 ? T.green : T.red) : T.sub }}>{isFinite(evW) ? (evW >= 0 ? "+" : "−") + money0(evW) + " EV" : "EV —"}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+        {plan && (
+          <>
+            <WizSection>▸ Plan B · si abre en pérdida</WizSection>
+            <div style={{ background: plan.bg, borderRadius: 18, padding: "16px 16px 14px" }}>
+              <div style={{ fontSize: 26, fontWeight: 800, color: plan.col, letterSpacing: -0.6, lineHeight: 1 }}>{plan.t}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, marginTop: 6, lineHeight: 1.5 }}>{plan.txt}</div>
+              <div style={{ display: "grid", gap: 5, marginTop: 12 }}>
+                {scen.filter((s) => isFinite(s.pop)).map((s) => (
+                  <div key={s.k} style={{ display: "grid", gridTemplateColumns: "58px 1fr 40px", gap: 8, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: s.k === "xOpen" ? T.ink : T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>{s.lbl}</span>
+                    <div style={{ height: 9, background: T.line, borderRadius: 5, overflow: "hidden" }}>
+                      <div style={{ width: (s.pop * 100).toFixed(0) + "%", height: "100%", background: s.k === "xOpen" ? T.ink : s.pop >= 0.7 ? T.green : s.pop >= 0.5 ? T.gold : T.red, borderRadius: 5, transition: "width 0.3s" }} />
+                    </div>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: T.sub, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(s.pop * 100).toFixed(0)}%</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, marginTop: 10, lineHeight: 1.45 }}>
+                Barras = veces que el precio se quedó DENTRO del expected move en cada serie, todas medidas contra el cierre previo. Open es tu salida; que Close esté por encima significa que el gap tiende a corregirse durante la sesión. High y Low son los extremos del día: marcan hasta dónde llegó el intradía a favor y en contra antes de cerrar.
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, onOpenPosition }) {
   const [editSet, setEditSet] = useState(() => new Set());
+  const [blockPick, setBlockPick] = useState(null); /* v1.25: id de la operación que está eligiendo bloque (B1 o B2) */
+  /* v1.26: spot del subyacente vía Finnhub (misma key que Portfolio) — el precio del subyacente alimenta
+     el margen de seguridad del BEP, así que teclearlo a mano invita a errores. Por fila, con su propio estado. */
+  const [spotBusyId, setSpotBusyId] = useState(null);
+  const [spotMsg, setSpotMsg] = useState({});
+  const fetchSpotFor = async (tr) => {
+    const sym = String(tr.tkr || "").trim().toUpperCase();
+    if (!sym) { setSpotMsg((m) => ({ ...m, [tr.id]: "Escribe el ticker primero." })); return; }
+    if (!apiKey) { setSpotMsg((m) => ({ ...m, [tr.id]: "Sin key de Finnhub — actívala en Ajustes → Precios." })); return; }
+    setSpotBusyId(tr.id); setSpotMsg((m) => ({ ...m, [tr.id]: "" }));
+    const q = await fetchQuote(sym, apiKey);
+    setSpotBusyId(null);
+    if (q.price) setTrades((ts) => ts.map((t) => (t.id === tr.id ? { ...t, underlying: String(q.price) } : t)));
+    else setSpotMsg((m) => ({ ...m, [tr.id]: "No pude leer el precio: " + (q.error || "error") }));
+  };
   const [ocrBusy, setOcrBusy] = useState(false);
   /* algunos iOS disparan el evento "change" del <input type=file> DOS veces para la misma selección
      (sobre todo saliendo de la cámara/galería) — sin esto, "una foto" podía convertirse en 2 llamadas
@@ -4495,7 +5009,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
               {confirmClear ? "¿Vaciar todo?" : "🗑️"}
             </button>
           )}
-          <button onClick={() => document.getElementById("ocr-file-input").click()} disabled={ocrBusy} style={{ background: T.card, border: "none", borderRadius: 14, padding: "9px 14px", fontSize: 13.5, fontWeight: 700, color: T.ink, cursor: "pointer", boxShadow: T.shadow }}>{ocrBusy ? "Leyendo…" : "📷 Leer captura(s)"}</button>
+          <button onClick={() => document.getElementById("ocr-file-input").click()} disabled={ocrBusy} style={{ background: T.card, border: "none", borderRadius: 14, padding: "9px 14px", fontSize: 13.5, fontWeight: 700, color: T.ink, cursor: "pointer", boxShadow: T.shadow, display: "flex", alignItems: "center", gap: 7 }}>{ocrBusy ? "Leyendo…" : <><ActIcon name="camera" size={15} />Leer captura(s)</>}</button>
           <button onClick={addTrade} style={{ background: T.green, border: "none", borderRadius: 14, padding: "9px 16px", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>+ Operación</button>
         </div>
       </div>
@@ -4545,7 +5059,7 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
 
               {editing && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${T.line}` }}>
-                  <EditField label="Ticker / nombre" value={c.tkr} onChange={setTr(c.id, "tkr")} span={2} text />
+                  <EditField label="Ticker" value={c.tkr} onChange={(v) => setTr(c.id, "tkr")(String(v || "").toUpperCase())} span={2} text />
                   <EditField label="DTE" value={c.dte} onChange={setTr(c.id, "dte")} />
                   <EditField label="Strike" prefix="$" value={c.strike} onChange={setTr(c.id, "strike")} />
                   <label>
@@ -4561,7 +5075,14 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
                   </label>
                   <EditField label="Credit" prefix="$" value={c.credit} onChange={setTr(c.id, "credit")} />
                   <EditField label="Margin" prefix="$" value={c.margin} onChange={setTr(c.id, "margin")} />
-                  <EditField label="Precio subyacente" prefix="$" value={c.underlying} onChange={setTr(c.id, "underlying")} span={2} />
+                  <div style={{ gridColumn: "span 2", display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "end" }}>
+                    <EditField label="Precio subyacente" prefix="$" value={c.underlying} onChange={setTr(c.id, "underlying")} />
+                    <button type="button" onClick={() => fetchSpotFor(c)} disabled={spotBusyId === c.id}
+                      style={{ border: "none", cursor: spotBusyId === c.id ? "default" : "pointer", borderRadius: 11, height: 36, padding: "0 14px", fontSize: 12.5, fontWeight: 800, background: T.dark, color: "#fff", opacity: spotBusyId === c.id ? 0.6 : 1, whiteSpace: "nowrap" }}>
+                      {spotBusyId === c.id ? "Leyendo…" : "Obtener spot"}
+                    </button>
+                  </div>
+                  {spotMsg[c.id] && <div style={{ gridColumn: "span 2", background: T.tileAmber, borderRadius: 11, padding: "7px 11px", fontSize: 11, fontWeight: 700, color: T.gold, marginTop: -4 }}>{spotMsg[c.id]}</div>}
                   <EditField label="Delta" value={c.delta} onChange={setTr(c.id, "delta")} span={2} />
                   <EditField label="POP (%)" value={c.pop} onChange={setTr(c.id, "pop")} span={2} />
                 </div>
@@ -4576,10 +5097,36 @@ function ComparadorContent({ nlv, margin, el, brokerLabel, trades, setTrades, ba
               <ElRow label="EL / NLV post" post={c.elNlv} base={base.elNlv} delta={c.dElNlv} color={HEX[toneNlv(c.elNlv)]} min={0} max={0.6} zones={Z_NLV()} marks={M_NLV_FULL} />
               <ElRow label="EL / MRGN post" post={c.elMrgn} base={base.elMrgn} delta={c.dElMrgn} color={HEX[toneMrgn(c.elMrgn)]} min={0} max={1.5} zones={Z_MRGN()} marks={M_MRGN_FULL} />
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4, paddingTop: 13, borderTop: `1px solid ${T.line}` }}>
-                <button onClick={() => toggleEdit(c.id)} style={{ background: editing ? T.dark : T.tile, border: "none", borderRadius: 12, padding: "8px 16px", fontSize: 13.5, fontWeight: 700, color: editing ? "#fff" : T.ink, cursor: "pointer" }}>{editing ? "✓ Hecho" : "✎ Editar"}</button>
-                <button onClick={() => delTrade(c.id)} style={{ background: "transparent", border: "none", borderRadius: 12, padding: "8px 14px", fontSize: 13.5, fontWeight: 700, color: T.red, cursor: "pointer" }}>Eliminar</button>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 4, paddingTop: 13, borderTop: `1px solid ${T.line}` }}>
+                <button onClick={() => toggleEdit(c.id)} style={{ background: editing ? T.dark : T.tile, border: "none", borderRadius: 12, padding: "8px 14px", fontSize: 13.5, fontWeight: 700, color: editing ? "#fff" : T.ink, cursor: "pointer", flexShrink: 0 }}>{editing ? "Hecho" : "Editar"}</button>
+                {onOpenPosition && (
+                  <button onClick={() => setBlockPick(blockPick === c.id ? null : c.id)} style={{ background: blockPick === c.id ? T.dark : T.tileGreen, border: "none", borderRadius: 12, padding: "8px 14px", fontSize: 13.5, fontWeight: 800, color: blockPick === c.id ? "#fff" : T.green, cursor: "pointer", flexShrink: 0 }}>Abrir posición</button>
+                )}
+                <button onClick={() => delTrade(c.id)} style={{ background: "transparent", border: "none", borderRadius: 12, padding: "8px 10px", fontSize: 13.5, fontWeight: 700, color: T.red, cursor: "pointer", flexShrink: 0 }}>Eliminar</button>
               </div>
+              {blockPick === c.id && onOpenPosition && (
+                <div style={{ background: T.tile, borderRadius: 14, padding: 12, marginTop: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>¿A qué bloque va la put?</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {BLOCKS.filter((b) => b.id === 1 || b.id === 2).map((b) => (
+                      <button key={b.id} onClick={() => {
+                        setBlockPick(null);
+                        onOpenPosition({ block: b.id, strat: "Short Put", form: {
+                          tkr: (c.tkr || "").trim().toUpperCase(), right: "P",
+                          strike: compStrikeStr(c.strike), expiry: c.expiry || "",
+                          contratos: "1", prima: c.credit || "", ivr: "",
+                        } });
+                      }} style={{ display: "flex", alignItems: "center", gap: 10, background: b.bg, border: "none", borderRadius: 13, padding: "11px 12px", cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ width: 30, height: 30, borderRadius: 9, background: b.badge, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>B{b.id}</span>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: T.ink }}>{b.name}</span>
+                          <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, color: T.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.tag}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             </SwipeDelete>
           );
@@ -5229,6 +5776,19 @@ function App() {
     setWizOpen(true);
   };
   const wizF = (k) => (v) => setWizForm((f) => ({ ...f, [k]: v }));
+  /* v1.25: abre el wizard directo en el paso 3 con la estrategia y los campos ya rellenos —
+     lo usan las Herramientas ("Abrir posición") para no reteclear lo que ya modelaste. */
+  const openWizardPrefilled = ({ block, strat, form }) => {
+    const nat = wizNatOfStrat(strat);
+    setWizBlock(block); setWizNat(nat); setWizStrat(strat); setWizSub(1); setWizStep(3);
+    setWizForm({
+      broker: broker === "Todos" ? (brokers[0] || "IBKR") : broker,
+      entryDate: new Date().toISOString().slice(0, 10), covered: "SI", collarRisk: "NO",
+      ...form,
+    });
+    setWizOcrBusy(false); setWizOcrMsg("");
+    setWizOpen(true);
+  };
   /* lee una captura y prueba los modelos de GEMINI_MODELS por si el primero está a 429 (mismo patrón
      que el lector del Comparador). Devuelve { result, message } sin tocar el estado de UI. */
   const readLegsFallback = async (file, gkey, onWaiting) => {
@@ -5928,8 +6488,8 @@ function App() {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 8 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.8 }}>{view === "bloques" ? "Portfolio" : view === "movimientos" ? "Movimientos" : view === "vencimientos" ? "Vencimientos" : view === "ajustes" ? "Ajustes" : "Comparador"}</div>
-            <div style={{ fontSize: 15, color: T.sub, fontWeight: 500 }}>{view === "bloques" ? "Composición de cartera en tiempo real" : view === "movimientos" ? "Primas y resultado realizado (MTM)" : view === "vencimientos" ? "Opciones por fecha y riesgo de asignación" : view === "ajustes" ? "Brokers, backup, claves y apariencia" : "Sizing e impacto de margen"}</div>
+            <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.8 }}>{view === "bloques" ? "Portfolio" : view === "movimientos" ? "Movimientos" : view === "vencimientos" ? "Vencimientos" : view === "ajustes" ? "Ajustes" : "Herramientas"}</div>
+            <div style={{ fontSize: 15, color: T.sub, fontWeight: 500 }}>{view === "bloques" ? "Composición de cartera en tiempo real" : view === "movimientos" ? "Primas y resultado realizado (MTM)" : view === "vencimientos" ? "Opciones por fecha y riesgo de asignación" : view === "ajustes" ? "Brokers, backup, claves y apariencia" : "Comparador de puts y análisis de earnings"}</div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap", justifyContent: "flex-end" }}>
           </div>
@@ -6050,7 +6610,7 @@ function App() {
         )}
 
         {view === "comparador" && (
-          <ComparadorContent nlv={nlv} margin={margin} el={el} brokerLabel={broker === "Todos" ? "consolidado " + brokers.join(" + ") : broker}
+          <HerramientasView apiKey={apiKey} geminiKey={geminiKey} onOpenPosition={openWizardPrefilled} nlv={nlv} margin={margin} el={el} brokerLabel={broker === "Todos" ? "consolidado " + brokers.join(" + ") : broker}
             trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} />
         )}
 
@@ -6172,7 +6732,7 @@ function App() {
         <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{geminiKey ? "Cambiar API key de Gemini" : "API key de Gemini"}</div>
-            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Sin ella, "📷 Leer captura" del Comparador no puede leer nada. Si se agota el cupo gratuito de un modelo (429), prueba automáticamente con Flash-Lite (cupo aparte) antes de rendirse.</div>
+            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Sin ella, "Leer captura" del Comparador no puede leer nada. Si se agota el cupo gratuito de un modelo (429), prueba automáticamente con Flash-Lite (cupo aparte) antes de rendirse.</div>
             <input type="text" value={geminiInput} onChange={(e) => setGeminiInput(e.target.value)} placeholder="Pega aquí tu API key"
               style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 14 }} />
             <div style={{ display: "flex", gap: 10 }}>
@@ -6355,15 +6915,22 @@ function App() {
         const dte = p.expiry ? daysBetween(new Date().toISOString().slice(0, 10), p.expiry) : NaN;
         const contratos = n(p.qty) / 100;
         const blk = BLOCKS.find((b) => b.id === p.block);
-        const ActionBtn = ({ icon, label, sub, color, onClick, danger }) => (
-          <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: danger ? T.tileRed : T.tile, border: "none", borderRadius: 14, padding: "14px 14px", cursor: "pointer", textAlign: "left" }}>
-            <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{icon}</span>
-            <span>
-              <span style={{ display: "block", fontSize: 14.5, fontWeight: 800, color: danger ? T.red : (color || T.ink) }}>{label}</span>
-              {sub && <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 1 }}>{sub}</span>}
-            </span>
-          </button>
-        );
+        /* v1.25: iconos de línea en cuadrado tintado — misma familia visual que las filas de Ajustes,
+           en vez de emojis sueltos. `tint` es el fondo del cuadrado; `color` tiñe icono y título. */
+        const ActionBtn = ({ icon, label, sub, color, tint, onClick, danger }) => {
+          const c = danger ? T.red : (color || T.ink);
+          return (
+            <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: danger ? T.tileRed : T.tile, border: "none", borderRadius: 14, padding: "13px 14px", cursor: "pointer", textAlign: "left" }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: danger ? "rgba(0,0,0,0.06)" : (tint || T.card), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: c }}>
+                <ActIcon name={icon} size={18} color={c} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 14.5, fontWeight: 800, color: c }}>{label}</span>
+                {sub && <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 1 }}>{sub}</span>}
+              </span>
+            </button>
+          );
+        };
         return (
           <div onClick={() => setSheetPosId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
             <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
@@ -6396,13 +6963,13 @@ function App() {
                 </div>
               </div>
               <div style={{ display: "grid", gap: 8 }}>
-                {!p.closed && nat === "ACC" && <ActionBtn icon="📦" label="Lotes" sub="Ver lotes por fecha · editar · vender · añadir" color={T.purple} onClick={() => sheetDo("lotes")} />}
-                {p.tipo === "Long Stock" && <ActionBtn icon="💰" label="Dividendos" sub="Registrar cobros · van a Primas y MTM" color={T.green} onClick={() => sheetDo("dividendos")} />}
-                {!p.closed && <ActionBtn icon="✎" label="Editar" sub="Modificar cualquier campo de la posición" onClick={() => sheetDo("edit")} />}
-                {canRollP && <ActionBtn icon="🔄" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} onClick={() => sheetDo("roll")} />}
-                {canCloseP && <ActionBtn icon="✕" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
-                {p.closed && <ActionBtn icon="↩" label="Reabrir" sub="Deshace el cierre y vuelve a activa" onClick={() => sheetDo("reopen")} />}
-                {p.closed && <ActionBtn icon="✎" label="Editar" sub="Modificar campos de la posición cerrada" onClick={() => sheetDo("edit")} />}
+                {!p.closed && nat === "ACC" && <ActionBtn icon="lots" label="Lotes" sub="Ver lotes por fecha · editar · vender · añadir" color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("lotes")} />}
+                {p.tipo === "Long Stock" && <ActionBtn icon="dividend" label="Dividendos" sub="Registrar cobros · van a Primas y MTM" color={T.green} tint={T.tileGreen} onClick={() => sheetDo("dividendos")} />}
+                {!p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar cualquier campo de la posición" onClick={() => sheetDo("edit")} />}
+                {canRollP && <ActionBtn icon="roll" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
+                {canCloseP && <ActionBtn icon="close" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
+                {p.closed && <ActionBtn icon="reopen" label="Reabrir" sub="Deshace el cierre y vuelve a activa" onClick={() => sheetDo("reopen")} />}
+                {p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar campos de la posición cerrada" onClick={() => sheetDo("edit")} />}
                 <ActionBtn icon="🗑" danger label={sheetConfirmDel ? "¿Seguro? Se borra del todo" : "Eliminar"} sub={sheetConfirmDel ? "Esta acción no se puede deshacer" : "Borra la posición y su historial de rolls"} onClick={() => { if (!sheetConfirmDel) { setSheetConfirmDel(true); return; } delPos(p.id); setSheetPosId(null); }} />
               </div>
             </div>
@@ -6477,7 +7044,7 @@ function App() {
                 {(wizNat === "CRED" || wizNat === "DEF") && wizStrat && (
                   <div style={{ display: "grid", gap: 6 }}>
                     <button type="button" disabled={wizOcrBusy} onClick={() => wizPhotoRef.current && wizPhotoRef.current.click()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: T.tilePurple, border: "none", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, color: T.purple, cursor: wizOcrBusy ? "default" : "pointer", opacity: wizOcrBusy ? 0.6 : 1 }}>
-                      {wizOcrBusy ? "Leyendo captura…" : "📷 Leer captura"}
+                      {wizOcrBusy ? "Leyendo captura…" : <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ActIcon name="camera" size={15} />Leer captura</span>}
                     </button>
                     <input ref={wizPhotoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; if (file) onWizPhoto(file); }} />
                     {wizOcrMsg && <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, background: T.card, borderRadius: 10, padding: "8px 10px", lineHeight: 1.4 }}>{wizOcrMsg}</div>}
@@ -6600,7 +7167,7 @@ function App() {
                         <div style={{ background: T.tileAmber, borderRadius: 12, padding: "10px 12px", marginBottom: 2 }}>
                           <div style={{ fontSize: 12, fontWeight: 800, color: T.gold, marginBottom: 3 }}>Ya tienes {key} en acciones</div>
                           <div style={{ fontSize: 11.5, color: T.ink, fontWeight: 600, lineHeight: 1.45, marginBottom: 8 }}>{m.broker}{b ? " · " + b.name.replace("Bloque ", "B") : ""} · {n(m.qty)} acc · BEP ${money2(effBep(m))}. Añade un lote a esa posición en vez de crear una duplicada.</div>
-                          <button onClick={() => { setWizOpen(false); setEditLotsId(m.id); }} style={{ background: T.dark, border: "none", borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 800, color: "#fff", cursor: "pointer" }}>📦 Añadir lote a {key}</button>
+                          <button onClick={() => { setWizOpen(false); setEditLotsId(m.id); }} style={{ background: T.dark, border: "none", borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 800, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 7 }}><ActIcon name="lots" size={14} />Añadir lote a {key}</button>
                         </div>
                       );
                     })()}
@@ -7006,7 +7573,7 @@ function App() {
       <button onClick={openWizard} aria-label="Nueva posición" style={{ position: "fixed", right: "max(16px, calc(50% - 270px))", bottom: 100, zIndex: 41, width: 52, height: 52, border: "0.5px solid rgba(255,255,255,0.08)", cursor: "pointer", borderRadius: 26, background: "rgba(28,26,32,0.62)", backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)", boxShadow: "0 12px 34px rgba(0,0,0,0.35)", color: "#fff", fontSize: 26, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>+</button>
     )}
     {!wizOpen && (() => {
-      const NAV = [["bloques", "portfolio", "Portfolio"], ["movimientos", "movimientos", "Movimientos"], ["vencimientos", "vencimientos", "Vencimientos"], ["comparador", "comparador", "Comparador"], ["ajustes", "ajustes", "Ajustes"]];
+      const NAV = [["bloques", "portfolio", "Portfolio"], ["movimientos", "movimientos", "Movimientos"], ["vencimientos", "vencimientos", "Vencimientos"], ["comparador", "comparador", "Herramientas"], ["ajustes", "ajustes", "Ajustes"]];
       const NAV_BLUE = "#4C9AF5";
       const activeIdx = Math.max(0, NAV.findIndex(([id]) => id === view));
       /* deslizar el dedo por la barra: el pill sigue el dedo (navHover) y al soltar selecciona esa pestaña.
