@@ -1031,11 +1031,12 @@ function EditSection({ icon, title, first }) {
 }
 function Pill({ options, value, onChange, size }) {
   return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: size === "xs" ? 5 : 6, flexWrap: "wrap" }}>
       {options.map((o) => (
         <button key={o} onClick={() => onChange(o)} style={{
-          border: "none", cursor: "pointer", borderRadius: 10, padding: size === "sm" ? "6px 10px" : "8px 14px",
-          fontSize: size === "sm" ? 11.5 : 13, fontWeight: 700, background: value === o ? T.dark : T.tile, color: value === o ? "#fff" : T.ink,
+          border: "none", cursor: "pointer", borderRadius: 10, padding: size === "xs" ? "6px 8px" : size === "sm" ? "6px 10px" : "8px 14px",
+          fontSize: size === "sm" || size === "xs" ? 11.5 : 13, fontWeight: 700, background: value === o ? T.dark : T.tile, color: value === o ? "#fff" : T.ink,
+          whiteSpace: "nowrap",
         }}>{o}</button>
       ))}
     </div>
@@ -1457,10 +1458,18 @@ const METRICS = {
   "MKT VL": { get: (s) => s.mktvl, fmt: (v) => "$" + money(v), axis: (v) => "$" + kFmt(v), color: T.green },
   "P&L": { get: (s) => s.totalPnl, fmt: (v) => signMoney(v), axis: (v) => "$" + kFmt(v), color: T.purple },
   "Riesgo": { get: (s) => s.totalRiesgo, fmt: (v) => "$" + money(v), axis: (v) => "$" + kFmt(v), color: T.orange },
-  "Apalancamiento": { get: (s) => s.leverage, fmt: (v) => (isFinite(v) ? v.toFixed(2) + "×" : "—"), axis: (v) => v.toFixed(2), color: T.purple },
+  "Apal.": { get: (s) => s.leverage, fmt: (v) => (isFinite(v) ? v.toFixed(2) + "×" : "—"), axis: (v) => v.toFixed(2), color: T.purple },
   "EL/Margen": { get: (s) => s.elMrgn, fmt: (v) => pct(v), axis: (v) => Math.round(v * 100) + "%", color: T.gold },
   "EL/NLV": { get: (s) => s.elNlv, fmt: (v) => pct(v), axis: (v) => Math.round(v * 100) + "%", color: T.orange },
 };
+/* ---------- selector de métricas: dos filas fijas — arriba patrimonio/rentabilidad, abajo riesgo/exposición ---------- */
+const METRIC_ROW1 = ["NLV", "MKT VL", "P&L", "Rent. real", "Aportado"];
+const METRIC_ROW2 = ["Riesgo", "Apal.", "EL/Margen", "EL/NLV"];
+/* nombre largo para el encabezado (la pill va abreviada para que quepa en dos líneas) */
+const METRIC_TITLE = { "Apal.": "Apalancamiento" };
+/* métricas cuyo % de variación no significa nada: el divisor es la propia métrica en el primer snapshot
+   (P&L partiendo de casi cero da cifras absurdas tipo +781%; Aportado igual). Solo delta en $. */
+const NO_PCT = ["P&L", "Aportado"];
 /* ---------- rangos del gráfico de Rendimiento: filtra qué snapshots se muestran, evita saturación con historial largo ---------- */
 const RANGE_DAYS = { "7D": 7, "1M": 30, "3M": 90, "1A": 365 };
 const RANGE_KEYS = ["7D", "1M", "3M", "YTD", "1A", "Todo", "Fechas"];
@@ -1503,7 +1512,6 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
     "Rent. real": { series: twrSeries, fmt: (v) => (isFinite(v) ? (v / 100 - 1 >= 0 ? "+" : "") + ((v / 100 - 1) * 100).toFixed(1) + "%" : "—"), axis: (v) => Math.round(v - 100) + "%", color: T.green },
     "Aportado": { series: aportSeries, fmt: (v) => signMoney(v), axis: (v) => "$" + kFmt(v), color: T.purple },
   };
-  const METRIC_KEYS = [...Object.keys(METRICS), ...Object.keys(SPECIAL)];
   const sp = SPECIAL[metric];
   const m = sp ? null : METRICS[metric];
   const fullSeries = sp ? sp.series : asc.map((s) => ({ date: s.date, v: m.get(s) })).filter((p) => isFinite(p.v));
@@ -1529,6 +1537,7 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
   const dTotal = curV - firstV;
   const dTotalPct = firstV ? dTotal / Math.abs(firstV) : NaN;
   const isMoney = ["NLV", "MKT VL", "P&L", "Riesgo", "Aportado"].includes(metric);
+  const showPct = isMoney && !NO_PCT.includes(metric);
 
   return (
     <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
@@ -1543,8 +1552,11 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
 
       {snapshots.length >= 1 && (
         <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 6 }}>
+            <Pill options={METRIC_ROW1} value={metric} onChange={setMetric} size="xs" />
+          </div>
           <div style={{ marginBottom: 8 }}>
-            <Pill options={METRIC_KEYS} value={metric} onChange={setMetric} size="sm" />
+            <Pill options={METRIC_ROW2} value={metric} onChange={setMetric} size="xs" />
           </div>
           <div style={{ marginBottom: 8 }}>
             <Pill options={RANGE_KEYS} value={range} onChange={setRange} size="sm" />
@@ -1557,14 +1569,14 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
           )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
             <div>
-              <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{metric === "Rent. real" ? "Rentabilidad sin aportaciones ni traspasos (TWR)" : metric === "Aportado" ? "Aportaciones netas acumuladas" : metric + " · último snapshot"}</div>
+              <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{metric === "Rent. real" ? "Rentabilidad sin aportaciones ni traspasos (TWR)" : metric === "Aportado" ? "Aportaciones netas acumuladas" : (METRIC_TITLE[metric] || metric) + " · último snapshot"}</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: T.ink, letterSpacing: -0.5, marginTop: 1 }}>{isFinite(curV) ? mFmt(curV) : "—"}</div>
             </div>
             {series.length >= 2 && metric !== "Rent. real" && (
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>desde {shortDate(series[0].date)}</div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: dTotal >= 0 ? T.green : T.red, marginTop: 1 }}>
-                  {isMoney ? signMoney(dTotal) : (dTotal >= 0 ? "+" : "") + mFmt(dTotal).replace("+", "")}{isFinite(dTotalPct) && isMoney ? ` (${dTotalPct >= 0 ? "+" : ""}${(dTotalPct * 100).toFixed(1)}%)` : ""}
+                  {isMoney ? signMoney(dTotal) : (dTotal >= 0 ? "+" : "") + mFmt(dTotal).replace("+", "")}{isFinite(dTotalPct) && showPct ? ` (${dTotalPct >= 0 ? "+" : ""}${(dTotalPct * 100).toFixed(1)}%)` : ""}
                 </div>
               </div>
             )}
