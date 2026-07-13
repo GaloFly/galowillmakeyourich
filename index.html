@@ -125,7 +125,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.34"; /* v1.34 FIX de la migración a v1.33: al mover el enlace de la acción a la put (assignedTo), quedaron tres restos del modelo viejo — el aviso "asignada sin enlazar" comprobaba assignedFrom en la acción, así que no se satisfacía NUNCA y se quedaba clavado con un botón que no hacía nada (assignFromPut ya veía la put enlazada y salía sin tocar nada); el contador del menú hacía la misma comprobación; y el selector del panel leía cyc.stock.id cuando cyc.stock ya puede ser null. El aviso se sustituye por el único que ahora importa: falta la COTIZACIÓN del subyacente (sin precio no hay ciclo). "Crear acción" solo aparece si no existe ninguna acción de ese ticker. El enlace pasa a ser opcional (solo sirve para la rueda de covered calls). */ /* v1.33 FIX GORDO (dos bugs de v1.29-1.32): (1) effPnl de una ACCIÓN sin `last` devolvía (0 − BEP)×qty = la pérdida TOTAL de la posición — bug de la app entera, no solo del ciclo; ahora sin precio el P&L es 0. (2) assignFromPut CREABA una acción aunque la real ya existiera en cartera (importada del broker), duplicando cantidad, riesgo y MKT VL; ahora ENLAZA a la existente y solo crea si no hay ninguna. El enlace pasa a vivir en la PUT (assignedTo), de modo que varias puts pueden desembocar en un mismo paquete de acciones. REDISEÑO del ciclo: ya no depende de ninguna acción creada — ciclo = (precio actual − BEP de la put) × acciones, con el BEP que ya lleva la prima dentro; si no hay cotización, "sin precio" en vez de una cifra inventada. Las primas de las CC se reparten proporcionalmente entre las puts que alimentaron esa acción. Aviso rojo + botón para borrar las acciones duplicadas que creó v1.32. */ /* v1.32 ASIGNAR DESDE EL HISTÓRICO: hasta ahora la acción de B1 solo nacía al cerrar la put marcándola como asignada, así que las históricas e importadas no tenían forma de crearla (el selector "Enlazar acción" solo sirve si la acción YA existe). Nueva acción assignFromPut(): crea la Long Stock en B1 al BEP vigente, la enlaza y marca la put como asignada poniendo la recompra a $0. Botón "Asignar" en cualquier put cerrada NO marcada como asignada, botón "Crear acción" junto al selector cuando está marcada pero sin enlazar, y botón "Crear acción asignada" en el aviso correspondiente. Nota obsoleta del RollChainEditor corregida. */ /* v1.31 AVISOS: tarjeta de pendientes en Vencimientos + chapa roja en el menú. Dos familias — CORRECTIVOS (opción vencida y todavía abierta; call ejercida cuyas acciones siguen en cartera; put asignada sin enlazar) que ensucian el P&L en silencio, y PREVENTIVOS (covered call ITM cerca del vencimiento → te van a llamar las acciones). Además, una covered call cerrada como ejercida ahora VENDE automáticamente las acciones AL STRIKE (no a mercado): usa el enlace onStock, o la única acción abierta del mismo ticker/broker; si hay varias no adivina y salta el aviso. sellSharesFrom() reutiliza el FIFO por lotes. Botón de reparación fixCalledAway para las históricas. */ /* v1.30 LA RUEDA: las covered calls se enlazan a la acción sobre la que se escriben (campo onStock, selector "Escrita sobre"). Su prima NO entra en el coste base de la acción — la acción ya existía —, así que a diferencia de la put SÍ se suma: rueda = ciclo + primas de las CC. Números separados a propósito: el CICLO juzga la put (win rate), la RUEDA mide lo que ha dado el subyacente entero, y es una VISTA (esas primas ya cuentan en la pestaña de Covered Calls, sumarlas dos veces sería un error). Export con coveredCalls, primasCC, pnlRueda, resumen profitRueda. */ /* v1.29 CICLO DE LA ASIGNADA: una put asignada ya no se juzga por la prima cobrada sino por el P&L de la acción resultante — closePos crea esa acción con coste base = BEP (strike − prima acumulada), así que su P&L YA incorpora la prima; sumar ambas cosas la contaría dos veces. Nuevos helpers assignedStockOf/cicloOf/outcomeOf; win rate de TRES estados (ganadora · perdedora · en curso, esta última fuera del cálculo porque la acción sigue viva); franja "Resultado del ciclo" en el resumen de cerradas con la diferencia vs prima; panel de ciclo + selector "Enlazar acción" en cada asignada (para las históricas, anteriores al automatismo); export con pnlCiclo, desenlace, accionesAsignadas, costeBaseAccion y resumen profitPrimas vs profitCiclo. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
+const APP_VERSION = "1.28"; /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -319,25 +319,6 @@ function fifoSell(lots, qty, price, date, fee) {
   });
   return { outLots, sales };
 }
-/* v1.31: venta FIFO de N acciones de una posición dentro de la lista. Se usa cuando una covered call se
-   ejerce (called away): las acciones se van AL STRIKE de la call, no a mercado. Si se llevan todas, la
-   posición queda cerrada; si no, sigue abierta con el resto. */
-function sellSharesFrom(ps, stockId, shares, price, date) {
-  return ps.map((p) => {
-    if (p.id !== stockId || natOf(p) !== "ACC" || p.closed) return p;
-    const total = n(p.qty);
-    const Q = Math.min(n(shares) || total, total);
-    if (Q <= 0) return p;
-    const baseLots = hasLots(p) ? p.lots : [{ id: "l" + Math.random().toString(36).slice(2, 6), date: p.entryDate || "", qty: String(total), price: String(n(effBep(p))) }];
-    const { outLots, sales } = fifoSell(baseLots, Q, price, date, 0);
-    const merged = [...sales, ...(Array.isArray(p.soldLots) ? p.soldLots : [])];
-    const remaining = outLots.reduce((s2, l) => s2 + n(l.qty), 0);
-    const applied = applyLots(p, outLots);
-    return remaining <= 0
-      ? { ...applied, qty: "0", soldLots: merged, closed: true, closeDate: date, closePrice: "", closeComision: "", closeNote: "Called away @ $" + money2(price) }
-      : { ...applied, soldLots: merged, closed: false };
-  });
-}
 /* BEP vigente de una short put / covered call ROLADA: strike actual − prima NETA acumulada, donde la prima
    neta = prima de apertura + Σ(nueva venta − recompra) de cada roll. Es exactamente la fórmula de la columna
    BEP de la cadena de rolls. Sin rolls, la prima neta = p.prima (apertura), así que da strike − prima igual
@@ -516,10 +497,6 @@ const effPnl = (p) => {
     const perShare = p.right === "C" ? Math.min(prima, strike + prima - spot) : Math.min(prima, spot - effBep(p));
     return perShare * n(p.qty);
   }
-  /* v1.33 FIX: acción SIN precio (last vacío) → P&L 0, no −BEP×qty.
-     Antes, n("") = 0 y la fórmula devolvía (0 − BEP) × qty = la pérdida total de la posición.
-     Cualquier acción sin cotización cargada mostraba la ruina completa (NVO: −$38.885 fantasma). */
-  if (natOf(p) === "ACC" && !n(p.last)) return 0;
   return (n(p.last) - effBep(p)) * n(p.qty);
 };
 const money = (v) => n(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -1407,119 +1384,6 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
   );
 }
 
-/* ---------- v1.31: AVISOS ----------
-   Dos familias distintas, y confundirlas sería un error:
-     · PREVENTIVOS  — algo va a pasar (CC ITM cerca del vencimiento → te van a llamar las acciones).
-     · CORRECTIVOS  — algo YA pasó y no está registrado (opción vencida sin cerrar, call ejercida cuya
-       acción sigue en cartera, put asignada sin enlazar). Estos ensucian el P&L en silencio.
-   Los correctivos van primero: son los que hacen que los números mientan. */
-function AvisosCard({ positions, onFixCalledAway, onOpenChain, onAssignFromPut, onDropDuplicate }) {
-  const hoy = new Date().toISOString().slice(0, 10);
-  const opts = positions.filter((p) => natOf(p) === "CRED" && !isPMCC(p));
-  const avisos = [];
-
-  /* v1.33 · CORRECTIVO URGENTE · acción DUPLICADA creada por el botón «Asignar» de v1.32.
-     Se detecta por: tiene assignedFrom (la creó la app) Y existe otra acción abierta del mismo ticker
-     que NO la creó la app (la real, importada del broker). Duplica cantidad, riesgo y MKT VL. */
-  positions.filter((p) => natOf(p) === "ACC" && !p.closed && p.assignedFrom).forEach((dup) => {
-    const key = (dup.tkr || "").toUpperCase().trim();
-    const real = positions.find((s2) => s2.id !== dup.id && natOf(s2) === "ACC" && !s2.closed
-      && (s2.tkr || "").toUpperCase().trim() === key && !s2.assignedFrom);
-    if (!real) return;
-    avisos.push({
-      sev: "red", id: dup.id + "-dup",
-      titulo: (dup.tkr || "?") + " · acciones duplicadas",
-      detalle: "Se crearon " + n(dup.qty) + " acc además de las " + n(real.qty) + " que ya tenías en cartera. Están inflando cantidad, riesgo y MKT VL. Bórralas: la put se reengancha sola a la posición real.",
-      accion: onDropDuplicate ? { label: "Borrar las " + n(dup.qty) + " duplicadas", fn: () => onDropDuplicate(dup.id) } : null,
-    });
-  });
-
-  /* CORRECTIVO · call ejercida pero las acciones siguen en cartera */
-  opts.filter((p) => p.closed && p.exercised && p.right === "C").forEach((cc) => {
-    const linked = cc.onStock ? positions.find((s2) => s2.id === cc.onStock) : null;
-    const cands = positions.filter((s2) => natOf(s2) === "ACC" && !s2.closed && (s2.tkr || "").toUpperCase().trim() === (cc.tkr || "").toUpperCase().trim());
-    const stock = linked && !linked.closed ? linked : (!linked && cands.length === 1 ? cands[0] : null);
-    if (!stock && !(cands.length > 1)) return;
-    avisos.push({
-      sev: "red", id: cc.id + "-ca",
-      titulo: (cc.tkr || "?") + " · te llamaron las acciones y siguen en cartera",
-      detalle: "La call $" + strikeStr(cc.strike) + " se cerró como ejercida el " + ibkrDate(cc.closeDate) + ", pero " + (stock ? n(stock.qty) + " acc siguen abiertas" : "hay varias posiciones de " + cc.tkr + ", elige cuál") + ". El P&L de esa acción es fantasma.",
-      accion: stock ? { label: "Vender " + n(cc.qty) + " acc a $" + strikeStr(cc.strike), fn: () => onFixCalledAway(cc.id) } : null,
-    });
-  });
-
-  /* CORRECTIVO · opción abierta cuyo vencimiento ya pasó */
-  opts.filter((p) => !p.closed && p.expiry && p.expiry < hoy).forEach((p) => {
-    const d = daysBetween(p.expiry, hoy);
-    avisos.push({
-      sev: "red", id: p.id + "-exp",
-      titulo: (p.tkr || "?") + " · venció hace " + d + (d === 1 ? " día" : " días") + " y sigue abierta",
-      detalle: (p.right === "C" ? "Call" : "Put") + " $" + strikeStr(p.strike) + " venc. " + ibkrDate(p.expiry) + ". Ciérrala (expirada, recomprada o asignada) o seguirá contando riesgo y prima que ya no existen.",
-      accion: onOpenChain ? { label: "Abrir la posición", fn: () => onOpenChain(p.id) } : null,
-    });
-  });
-
-  /* v1.33+ · CORRECTIVO · put asignada SIN COTIZACIÓN del subyacente. Desde v1.33 el ciclo se calcula
-     como (precio actual − BEP de la put) × acciones: no hace falta enlazar ninguna acción, solo el precio.
-     El antiguo aviso "asignada sin enlazar" ya no tiene sentido y se ha eliminado (se quedaba clavado:
-     el enlace pasó a vivir en la put, así que el chequeo por assignedFrom nunca se satisfacía). */
-  const spotLocal = (tkr) => {
-    const k = (tkr || "").toUpperCase().trim();
-    if (!k) return 0;
-    const hit = positions.find((q) => (q.tkr || "").toUpperCase().trim() === k && n(q.last));
-    return hit ? n(hit.last) : 0;
-  };
-  opts.filter((p) => p.closed && p.exercised && p.right === "P" && !isPMCC(p)).forEach((p) => {
-    if (spotLocal(p.tkr)) return;
-    avisos.push({
-      sev: "amber", id: p.id + "-px",
-      titulo: (p.tkr || "?") + " · asignada sin precio del subyacente",
-      detalle: "BEP $" + money2(effBep(p)) + " × " + n(p.qty) + " acc. Sin cotización de " + (p.tkr || "?") + " no se puede medir el ciclo, y la app prefiere no inventarse una cifra. Carga el último precio de " + (p.tkr || "?") + " en su posición.",
-      accion: onOpenChain ? { label: "Abrir la posición", fn: () => onOpenChain(p.id) } : null,
-    });
-  });
-
-  /* PREVENTIVO · covered call ITM — te van a llamar las acciones */
-  opts.filter((p) => !p.closed && p.right === "C" && p.expiry && p.expiry >= hoy).forEach((p) => {
-    const last = n(p.last), strike = n(p.strike);
-    if (!last || !strike || last <= strike) return;
-    const dte = daysBetween(hoy, p.expiry);
-    avisos.push({
-      sev: "amber", id: p.id + "-itm",
-      titulo: (p.tkr || "?") + " · call ITM a " + dte + (dte === 1 ? " día" : " días") + " del vencimiento",
-      detalle: "Últ. $" + money2(last) + " sobre el strike $" + strikeStr(p.strike) + ". Si sigue así te llaman las acciones a $" + strikeStr(p.strike) + ". Rola, recompra o acepta la venta.",
-      accion: null,
-    });
-  });
-
-  if (!avisos.length) return null;
-  const order = { red: 0, amber: 1 };
-  avisos.sort((a, b) => order[a.sev] - order[b.sev]);
-  const nRed = avisos.filter((a) => a.sev === "red").length;
-
-  return (
-    <div style={{ background: T.card, borderRadius: 24, padding: 16, boxShadow: T.shadow, marginBottom: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Avisos</div>
-        <span style={{ fontSize: 10.5, fontWeight: 800, color: nRed ? T.red : T.gold, background: nRed ? T.tileRed : T.tileAmber, borderRadius: 8, padding: "3px 8px" }}>
-          {avisos.length} {avisos.length === 1 ? "pendiente" : "pendientes"}{nRed ? " · " + nRed + " urgente" + (nRed === 1 ? "" : "s") : ""}
-        </span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {avisos.map((a) => (
-          <div key={a.id} style={{ background: a.sev === "red" ? T.tileRed : T.tileAmber, borderRadius: 14, padding: "11px 12px" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: a.sev === "red" ? T.red : T.gold, lineHeight: 1.3 }}>{a.titulo}</div>
-            <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 4, lineHeight: 1.4 }}>{a.detalle}</div>
-            {a.accion && (
-              <button type="button" onClick={a.accion.fn} style={{ marginTop: 9, background: T.card, border: "none", borderRadius: 10, padding: "8px 12px", fontSize: 11.5, fontWeight: 800, color: T.ink, cursor: "pointer" }}>{a.accion.label}</button>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ---------- vencimientos agregados por fecha ---------- */
 function VencimientosCard({ rows, onOpen }) {
   const [expanded, setExpanded] = useState(() => new Set());
@@ -2372,7 +2236,7 @@ function RollChainEditor({ p, onSave, onClose }) {
               <div style={{ marginBottom: 10 }}>
                 <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Cómo se cerró?</span>
                 <Pill options={["Recompra", "Ejercida / asignada"]} value={cExercised ? "Ejercida / asignada" : "Recompra"} onChange={(v) => setCExercised(v === "Ejercida / asignada")} size="sm" />
-                {cExercised && <div style={{ fontSize: 11, color: T.gold, fontWeight: 700, marginTop: 5 }}>Se juzgará por el ciclo: (precio actual − BEP ${money2(effBep(p))}) × acciones. La prima ya está dentro del BEP; solo hace falta la cotización del subyacente.</div>}
+                {cExercised && <div style={{ fontSize: 11, color: T.gold, fontWeight: 700, marginTop: 5 }}>Cuenta como pérdida para el win rate. (No recrea la acción en B1: eso solo pasa al asignar desde el cierre.)</div>}
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -3444,7 +3308,7 @@ function SettingsRow({ icon, tint, iconColor, title, sub, right, onClick, danger
   );
 }
 
-function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, snapshots, flows, saveSnapshot, deleteSnapshot, linkAssigned, linkCoveredCall, assignFromPut }) {
+function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, snapshots, flows, saveSnapshot, deleteSnapshot }) {
   const [sub, setSub] = useState("primas");
   const [stratCat, setStratCat] = useState("Acciones");
   const [stratStatus, setStratStatus] = useState("Abiertas");
@@ -3697,97 +3561,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
      primero, el comportamiento histórico), ticker (alfabético, empate por fecha) o profit (mayor primero;
      cerradas usan el realizado y abiertas la prima acumulada hasta ahora). */
   const stratDateOf = (p) => p.closeDate || p.entryDate || "";
-  /* ---------- v1.29: CICLO COMPLETO DE UNA PUT ASIGNADA ----------
-     Al asignar, closePos crea la acción con assignedFrom = id de la put y coste base = BEP
-     (strike − prima acumulada). Por tanto el P&L de esa acción YA lleva la prima dentro:
-
-         (último − BEP) × qty  =  prima − (strike − último) × qty
-
-     Sumar la prima otra vez sería contarla DOS VECES. El resultado económico real de la operación
-     es, sin más, el P&L de la acción resultante: realizado (ventas por lote, dividendos, cierre)
-     más el no realizado del resto que siga en cartera.
-
-     Ojo: la prima sí es cash cobrado y sigue contando en Primas/MTM — eso no cambia. Lo que cambia
-     es cómo se JUZGA la operación en el histórico de estrategias. */
-  /* v1.33 REDISEÑO. La versión anterior calculaba el ciclo a partir de una posición de acciones
-     creada por la app. Dos errores:
-       · Duplicaba acciones que YA existían en cartera (la migración del Excel ya las tenía).
-       · Esa acción nacía sin `last`, y el P&L salía −BEP×qty (pérdida total fantasma).
-     El ciclo NO necesita ninguna acción nueva. La put asignada tiene todo lo que hace falta:
-
-         ciclo = (precio actual − BEP de la put) × acciones asignadas
-
-     donde BEP = strike − prima neta acumulada (rolls incluidos). Es exactamente el resultado
-     económico: cobraste la prima, te quedaste las acciones al strike, y valen lo que valen.
-     Así, además, varias puts pueden desembocar en una misma posición de acciones sin conflicto. */
-  const tkrKeyOf = (p) => (p.tkr || "").toUpperCase().trim();
-  const spotOf = (tkr) => {
-    const k = (tkr || "").toUpperCase().trim();
-    if (!k) return 0;
-    const acc = positions.find((p) => tkrKeyOf(p) === k && natOf(p) === "ACC" && n(p.last));
-    if (acc) return n(acc.last);
-    const any = positions.find((p) => tkrKeyOf(p) === k && n(p.last));
-    return any ? n(any.last) : 0;
-  };
-  /* acción enlazada (opcional, solo para la rueda y para saber si el ciclo ya se cerró) */
-  const assignedStockOf = (p) => {
-    if (!p.exercised) return null;
-    if (p.assignedTo) return positions.find((s) => s.id === p.assignedTo) || null;
-    return positions.find((s) => s.assignedFrom === p.id) || null;
-  };
-  const cicloOf = (p) => {
-    if (!p.exercised || natOf(p) !== "CRED" || p.right !== "P" || isPMCC(p)) return null;
-    const qty = n(p.qty), bep = effBep(p);
-    if (!qty || !bep) return null;
-    const stock = assignedStockOf(p);
-    const resuelto = !!(stock && stock.closed && n(stock.closePrice));
-    const px = resuelto ? n(stock.closePrice) : spotOf(p.tkr);
-    if (!px) return { stock, bep, qty, px: 0, total: 0, resuelto: false, sinPrecio: true };
-    return { stock, bep, qty, px, total: (px - bep) * qty, resuelto, sinPrecio: false };
-  };
-  const judgedResultOf = (p) => { const c = cicloOf(p); return (c && !c.sinPrecio) ? c.total : closedResultOf(p); };
-  /* ---------- v1.30: LA RUEDA ENTERA (put asignada → acción → covered calls) ----------
-     Diferencia clave con la put: la prima de una covered call NO se incorpora al coste base de la acción
-     (la acción ya existe cuando la vendes). Es cash adicional y limpio → aquí SÍ se suma.
-
-         rueda = ciclo (P&L de la acción, prima de la put ya dentro) + Σ primas de las CC escritas sobre ella
-
-     Se mantienen como dos números distintos a propósito: el CICLO juzga la put (win rate), la RUEDA mide
-     cuánto ha dado el subyacente en total. Sumar la rueda al total de la pestaña de Covered Calls sería
-     contar esas primas dos veces — son dos vistas del mismo dinero, no dos ingresos. */
-  const isCoveredCall = (p) => natOf(p) === "CRED" && p.right === "C" && !isPMCC(p);
-  const stockOfCC = (cc) => (cc.onStock ? positions.find((s) => s.id === cc.onStock) || null : null);
-  const ccsOnStock = (stock) => (stock ? positions.filter((c) => c.onStock === stock.id && isCoveredCall(c)) : []);
-  /* v1.33: si varias puts desembocan en la MISMA acción, las primas de las CC escritas sobre ella se
-     reparten proporcionalmente a las acciones que aportó cada put. Así la suma de las ruedas cuenta
-     cada prima UNA vez, no una por put. */
-  const ruedaOf = (p) => {
-    const c = cicloOf(p);
-    if (!c || c.sinPrecio || !c.stock) return null;
-    const ccs = ccsOnStock(c.stock);
-    if (!ccs.length) return { ...c, ccs: [], ccTotal: 0, rueda: c.total };
-    const hermanas = positions.filter((q) => q.exercised && (q.assignedTo === c.stock.id || (!q.assignedTo && q.id === c.stock.assignedFrom)));
-    const totalQty = hermanas.reduce((a, q) => a + n(q.qty), 0) || c.qty;
-    const share = c.qty / totalQty;
-    const ccTotal = ccs.reduce((a, cc) => a + stratResultOf(cc), 0) * share;
-    return { ...c, ccs, ccTotal, rueda: c.total + ccTotal };
-  };
-  /* v1.29: TRES estados, no dos. Una asignada cuya acción sigue en cartera no es ganadora ni
-     perdedora — todavía no ha terminado. Sacarla del win rate evita el sesgo en las dos direcciones
-     (ni "gané porque me quedé la prima" ni "perdí porque me asignaron"). */
-  const outcomeOf = (p) => {
-    if (!p.closed) return openResultOf(p) > 0 ? "win" : openResultOf(p) < 0 ? "loss" : "flat";
-    if (p.exercised) {
-      const c = cicloOf(p);
-      if (!c || c.sinPrecio) return "loss";   // sin datos para juzgar → criterio antiguo (conservador)
-      if (!c.resuelto) return "curso";        // acciones todavía en cartera → sin desenlace
-      return c.total > 0 ? "win" : c.total < 0 ? "loss" : "flat";
-    }
-    return closedResultOf(p) > 0 ? "win" : closedResultOf(p) < 0 ? "loss" : "flat";
-  };
-  const isWinner = (p) => outcomeOf(p) === "win";
-  const isLoser = (p) => outcomeOf(p) === "loss";
-  const isEnCurso = (p) => outcomeOf(p) === "curso";
+  /* v1.07: ganadora/perdedora con el mismo criterio del resumen — cerradas: ejercida cuenta como perdedora
+     aunque quede prima; abiertas: signo del acumulado hasta ahora. Combinable con el filtro de ticker. */
+  const isWinner = (p) => (p.closed ? !p.exercised && closedResultOf(p) > 0 : openResultOf(p) > 0);
+  const isLoser = (p) => (p.closed ? p.exercised || closedResultOf(p) < 0 : openResultOf(p) < 0);
   const stratBase = positions.filter((p) => categoryOf(p) === stratCat && !!p.closed === (stratStatus === "Cerradas"));
   const stratTkrs = Array.from(new Set(stratBase.map((p) => (p.tkr || "").toUpperCase().trim()).filter(Boolean))).sort();
   const stratItems = stratBase
@@ -3817,24 +3594,6 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
         resultado: Math.round(closedResultOf(p) * 100) / 100,
         ejercida: !!p.exercised,
       };
-      /* v1.29: en las asignadas, el resultado que importa es el del ciclo (P&L de la acción, que ya
-         incorpora la prima vía coste base = BEP). Se exporta junto al de prima para poder comparar. */
-      const cic = cicloOf(p);
-      if (p.exercised) {
-        o.desenlace = !cic ? "sin datos" : cic.sinPrecio ? "sin precio" : cic.resuelto ? "resuelta" : "en curso";
-        const ru = ruedaOf(p);
-        if (ru && ru.ccs.length) {
-          o.coveredCalls = ru.ccs.length;
-          o.primasCC = Math.round(ru.ccTotal * 100) / 100;
-          o.pnlRueda = Math.round(ru.rueda * 100) / 100;
-        }
-        if (cic && !cic.sinPrecio) {
-          o.pnlCiclo = Math.round(cic.total * 100) / 100;
-          o.accionesAsignadas = cic.qty;
-          o.bepPut = Math.round(cic.bep * 100) / 100;
-          o.precioSubyacente = Math.round(cic.px * 100) / 100;
-        }
-      }
       if (isOpt) {
         o.contratos = Number.isInteger(n(p.qty) / 100) ? n(p.qty) / 100 : n(p.qty) + " opc";
         o.right = p.right || null;
@@ -3853,30 +3612,12 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       if (p.closeNote) o.nota = p.closeNote;
       return o;
     });
-    const wins = stratItems.filter(isWinner).length;
-    const losses = stratItems.filter(isLoser).length;
-    const curso = stratItems.filter(isEnCurso).length;
-    const decided = wins + losses;
+    const wins = stratItems.filter((pp) => !pp.exercised && closedResultOf(pp) > 0).length;
     const total = stratItems.reduce((s, pp) => s + closedResultOf(pp), 0);
-    const totalCiclo = stratItems.reduce((s, pp) => s + judgedResultOf(pp), 0);
-    const ruedasX = stratItems.map(ruedaOf).filter(Boolean);
-    const ccTotalX = ruedasX.reduce((a, r) => a + r.ccTotal, 0);
-    const nCCX = ruedasX.reduce((a, r) => a + r.ccs.length, 0);
     const payload = {
       app: "Bloques v" + APP_VERSION, exportado: todayIso, estrategia: stratCat,
       filtro: { ticker: stratTkr, resultado: stratWin },
-      resumen: {
-        operaciones: ops.length, ganadoras: wins, perdedoras: losses, enCurso: curso,
-        winRate: decided ? Math.round((wins / decided) * 100) + "%" : null,
-        profitPrimas: Math.round(total * 100) / 100,
-        profitCiclo: Math.round(totalCiclo * 100) / 100,
-        mediaPorOp: ops.length ? Math.round((totalCiclo / ops.length) * 100) / 100 : null,
-        sinPrecio: stratItems.filter((pp) => { const c = cicloOf(pp); return pp.exercised && (!c || c.sinPrecio); }).length,
-        coveredCallsEnlazadas: nCCX,
-        primasCC: Math.round(ccTotalX * 100) / 100,
-        profitRueda: Math.round((totalCiclo + ccTotalX) * 100) / 100,
-      },
-      nota: "profitPrimas = cash de primas cobrado. profitCiclo = resultado económico real: en las asignadas, el P&L de la acción resultante (cuyo coste base es el BEP, ya con la prima de la put descontada). profitRueda = profitCiclo + primas de las covered calls escritas sobre esas acciones (la prima de una CC NO entra en el coste base, por eso aquí sí se suma); esas primas ya cuentan además en la pestaña de Covered Calls, así que profitRueda es una vista, no un ingreso adicional. El win rate juzga la PUT por su ciclo y excluye las asignadas 'en curso'.",
+      resumen: { operaciones: ops.length, ganadoras: wins, perdedoras: stratItems.filter((pp) => pp.exercised || closedResultOf(pp) < 0).length, winRate: ops.length ? Math.round((wins / ops.length) * 100) + "%" : null, profitTotal: Math.round(total * 100) / 100, mediaPorOp: ops.length ? Math.round((total / ops.length) * 100) / 100 : null },
       operaciones: ops,
     };
     const text = JSON.stringify(payload, null, 1);
@@ -4280,24 +4021,13 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                nº operaciones, ganadoras/perdedoras, win rate, profit total y media por operación. */
             const results = stratItems.map(closedResultOf);
             const nAll = results.length;
-            /* v1.29: ganadoras/perdedoras por outcomeOf — una asignada se juzga por el CICLO (P&L de la
-               acción resultante), y si la acción sigue viva queda "en curso", fuera del win rate. */
-            const wins = stratItems.filter(isWinner).length;
-            const losses = stratItems.filter(isLoser).length;
-            const curso = stratItems.filter(isEnCurso).length;
+            /* v5.15: una posición ejercida/asignada cuenta como PERDEDORA aunque te quedaras la prima —
+               la asignación es el desenlace adverso. El profit total y la media sí usan el resultado real. */
+            const wins = stratItems.filter((pp) => !pp.exercised && closedResultOf(pp) > 0).length;
+            const losses = stratItems.filter((pp) => pp.exercised || closedResultOf(pp) < 0).length;
             const total = results.reduce((a, b) => a + b, 0);
             const avg = nAll ? total / nAll : 0;
-            const decided = wins + losses;
-            const winRate = decided ? wins / decided : NaN;
-            /* v1.29: profit del ciclo — prima en las que no se asignaron, P&L de la acción en las asignadas */
-            const totalCiclo = stratItems.reduce((a, pp) => a + judgedResultOf(pp), 0);
-            const nAsig = stratItems.filter((pp) => { const c = cicloOf(pp); return !!c && !c.sinPrecio; }).length;
-            /* v1.30: rueda = ciclo + primas de las CC enlazadas a esas acciones */
-            const ruedas = stratItems.map(ruedaOf).filter(Boolean);
-            const nCC = ruedas.reduce((a, r) => a + r.ccs.length, 0);
-            const ccTotal = ruedas.reduce((a, r) => a + r.ccTotal, 0);
-            const nSinEnlazar = stratItems.filter((pp) => { const c = cicloOf(pp); return pp.exercised && (!c || c.sinPrecio); }).length;
-            const difCiclo = totalCiclo - total;
+            const winRate = nAll ? wins / nAll : NaN;
             return (
               <div style={{ background: T.dark, borderRadius: 18, padding: "14px 16px", marginBottom: 14, color: "#fff", boxShadow: T.shadow }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
@@ -4314,7 +4044,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                   {/* v1.08: con filtro Ganadoras/Perdedoras, los tiles de win rate y G/P no aportan
                      (saldría 100%/0% por definición) — se muestran solo Operaciones y Media/op */}
                   {(stratWin === "Todas"
-                    ? [["Ganadoras", String(wins), T.green], ["Perdedoras", String(losses), T.red], [curso > 0 ? "En curso" : "Win rate", curso > 0 ? String(curso) : (isFinite(winRate) ? (winRate * 100).toFixed(0) + "%" : "—"), curso > 0 ? T.gold : "#fff"], ["Media/op", signMoney(avg), avg >= 0 ? T.green : T.red]]
+                    ? [["Ganadoras", String(wins), T.green], ["Perdedoras", String(losses), T.red], ["Win rate", isFinite(winRate) ? (winRate * 100).toFixed(0) + "%" : "—", "#fff"], ["Media/op", signMoney(avg), avg >= 0 ? T.green : T.red]]
                     : [["Operaciones", String(nAll), "#fff"], ["Media/op", signMoney(avg), avg >= 0 ? T.green : T.red]]
                   ).map(([lbl, val, col]) => (
                     <div key={lbl} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "9px 6px", textAlign: "center" }}>
@@ -4323,36 +4053,6 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                     </div>
                   ))}
                 </div>
-                {/* v1.29: franja de ciclo completo — solo aparece si hay asignaciones enlazadas, porque solo
-                    entonces "profit total" (prima cobrada) y "resultado real" divergen. */}
-                {nAsig > 0 && (
-                  <div style={{ marginTop: 10, background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 5 }}><ActIcon name="assign" size={12} />Resultado del ciclo</div>
-                      <div style={{ fontSize: 9.5, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>{nAsig} {nAsig === 1 ? "asignada enlazada" : "asignadas enlazadas"} · se juzga por el P&amp;L de la acción, no por la prima</div>
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div style={{ fontSize: 19, fontWeight: 800, color: totalCiclo >= 0 ? T.green : T.red, letterSpacing: -0.4 }}>{signMoney(totalCiclo)}</div>
-                      <div style={{ fontSize: 9.5, color: difCiclo >= 0 ? T.green : T.red, fontWeight: 700 }}>{signMoney(difCiclo)} vs prima</div>
-                    </div>
-                  </div>
-                )}
-                {/* v1.30: rueda — el ciclo más las primas de las covered calls escritas sobre esas acciones.
-                    Es una VISTA, no un ingreso extra: esas primas ya cuentan en la pestaña de Covered Calls. */}
-                {nCC > 0 && (
-                  <div style={{ marginTop: 8, background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 5 }}><ActIcon name="called" size={12} />Rueda completa</div>
-                      <div style={{ fontSize: 9.5, color: "#B9C2CC", fontWeight: 600, marginTop: 2 }}>+ {nCC} covered {nCC === 1 ? "call" : "calls"} · {signMoney(ccTotal)} · ya contadas en su propia pestaña</div>
-                    </div>
-                    <div style={{ fontSize: 19, fontWeight: 800, color: (totalCiclo + ccTotal) >= 0 ? T.green : T.red, letterSpacing: -0.4, flexShrink: 0 }}>{signMoney(totalCiclo + ccTotal)}</div>
-                  </div>
-                )}
-                {nSinEnlazar > 0 && (
-                  <div style={{ marginTop: 8, fontSize: 10.5, color: T.gold, fontWeight: 700, lineHeight: 1.35 }}>
-                    ⚠️ {nSinEnlazar} {nSinEnlazar === 1 ? "asignada sin precio del subyacente" : "asignadas sin precio del subyacente"} — sin cotización no se puede medir su ciclo. Carga el último precio de esos tickers.
-                  </div>
-                )}
               </div>
             );
           })()}
@@ -4532,10 +4232,6 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const contratos = n(p.qty) / 100;
             const qtyLabel = isOpt ? (Number.isInteger(contratos) ? contratos + " contr." : n(p.qty) + " opc") : n(p.qty) + " acc";
             const chain = p.rollChain || [];
-            const cyc = cicloOf(p);                       // v1.29: null si no está asignada/enlazada
-            const rue = ruedaOf(p);                       // v1.30: ciclo + primas de las CC sobre la acción
-            const ccStock = isCoveredCall(p) ? stockOfCC(p) : null;   // v1.30: acción sobre la que se escribió
-            const outc = outcomeOf(p);
             const open = expanded.has("strat-" + p.id);
             return (
               <div key={p.id} onClick={() => toggleExpand("strat-" + p.id)} style={{ borderTop: `1px solid ${T.line}`, padding: "10px 0", cursor: "pointer" }}>
@@ -4547,8 +4243,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                       {isOpt && optionDetail(p) && <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{optionDetail(p)}</span>}
                       {blk && <span style={{ fontSize: 9.5, fontWeight: 800, color: blk.color, background: blk.bg, borderRadius: 6, padding: "2px 5px" }}>{blk.name.replace("Bloque ", "B")}</span>}
                       {chain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{chain.length}</span>}
-                      {p.exercised && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 6, padding: "2px 5px" }}>{outc === "curso" ? "Asignada · en curso" : (cyc && !cyc.sinPrecio) ? "Asignada · resuelta" : "Asignada · sin precio"}</span>}
-                      {cyc && !cyc.sinPrecio && <span style={{ fontSize: 9.5, fontWeight: 800, color: cyc.total >= 0 ? T.green : T.red, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>ciclo {signMoney(cyc.total)}</span>}
+                      {p.exercised && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 6, padding: "2px 5px" }}>Asignada</span>}
                     </div>
                     <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, marginTop: 3 }}>× {qtyLabel} · {ibkrDate(p.entryDate)}{p.closed ? " → " + ibkrDate(p.closeDate) : " · abierta"}</div>
                   </div>
@@ -4564,110 +4259,6 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                   <div onClick={(ev) => ev.stopPropagation()} style={{ marginTop: 8, background: T.tile, borderRadius: 16, padding: "12px 12px" }}>
                     {isOpt ? (
                       <>
-                        {/* v1.29: panel de CICLO — solo en asignadas. Para una put asignada, el resultado que
-                            cuenta no es la prima (esa ya está dentro del coste base de la acción) sino el P&L
-                            de la acción resultante. Si no hay acción enlazada, se ofrece enlazarla a mano. */}
-                        {(p.exercised || (p.closed && natOf(p) === "CRED" && p.right === "P" && !isPMCC(p))) && (() => {
-                          const cands = positions.filter((s2) => natOf(s2) === "ACC"
-                            && (s2.tkr || "").toUpperCase().trim() === (p.tkr || "").toUpperCase().trim());
-                          /* v1.32: una put CERRADA que no se marcó como asignada — se puede asignar a posteriori
-                             desde aquí, sin tener que reabrirla y volver a cerrarla. */
-                          if (!p.exercised) {
-                            if (!assignFromPut) return null;
-                            return (
-                              <div style={{ background: T.tile, borderRadius: 14, padding: "11px 12px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: 11.5, fontWeight: 800, color: T.ink }}>¿Te asignaron esta put?</div>
-                                  <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600, marginTop: 3, lineHeight: 1.35 }}>Crea {n(p.qty)} acc de {p.tkr} en B1 al BEP ${money2(effBep(p))} y pone la recompra a $0 — en una asignación no recompras nada.</div>
-                                </div>
-                                <button type="button" onClick={() => assignFromPut(p.id)} style={{ flexShrink: 0, background: T.card, border: "none", borderRadius: 10, padding: "9px 12px", fontSize: 11.5, fontWeight: 800, color: T.gold, cursor: "pointer", whiteSpace: "nowrap" }}>Asignar</button>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div style={{ background: cyc ? (cyc.total >= 0 ? T.tileGreen || T.card : T.tileRed || T.card) : T.tileAmber, borderRadius: 14, padding: "11px 12px", marginBottom: 12 }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: 11.5, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 5 }}><ActIcon name="assign" size={13} />Ciclo completo{cyc && !cyc.stock ? <span style={{ fontSize: 9.5, fontWeight: 700, color: T.sub }}>· enlace opcional</span> : null}</div>
-                                  <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600, marginTop: 3, lineHeight: 1.35 }}>
-                                    {!cyc
-                                      ? "No se puede calcular el ciclo de esta operación."
-                                      : cyc.sinPrecio
-                                        ? "Falta el precio de " + (p.tkr || "?") + " — sin cotización no se puede medir el ciclo."
-                                        : n(cyc.qty) + " acc · BEP $" + money2(cyc.bep) + " vs $" + money2(cyc.px) + (cyc.resuelto ? " (vendidas)" : " (actual)") + " · la prima ya está dentro del BEP"}
-                                  </div>
-                                </div>
-                                {cyc && !cyc.sinPrecio && (
-                                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                                    <div style={{ fontSize: 20, fontWeight: 800, color: cyc.total >= 0 ? T.green : T.red, letterSpacing: -0.4 }}>{signMoney(cyc.total)}</div>
-                                    <div style={{ fontSize: 9.5, color: T.sub, fontWeight: 600 }}>{cyc.resuelto ? "realizado" : "no realizado"}</div>
-                                  </div>
-                                )}
-                              </div>
-                              {/* v1.30: la rueda entera — ciclo + primas de las covered calls escritas sobre esa acción */}
-                              {rue && rue.ccs.length > 0 && (
-                                <div style={{ marginTop: 9, paddingTop: 9, borderTop: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                                  <div style={{ minWidth: 0 }}>
-                                    <div style={{ fontSize: 11, fontWeight: 800, color: T.ink }}>Rueda completa</div>
-                                    <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 2 }}>+ {rue.ccs.length} covered {rue.ccs.length === 1 ? "call" : "calls"} · {signMoney(rue.ccTotal)} de primas</div>
-                                  </div>
-                                  <div style={{ fontSize: 18, fontWeight: 800, color: rue.rueda >= 0 ? T.green : T.red, letterSpacing: -0.4, flexShrink: 0 }}>{signMoney(rue.rueda)}</div>
-                                </div>
-                              )}
-                              {!!linkAssigned && (
-                                <div style={{ marginTop: 9, display: "flex", gap: 8, alignItems: "center" }}>
-                                  <select
-                                    value={cyc && cyc.stock ? cyc.stock.id : ""}
-                                    onChange={(ev) => linkAssigned(p.id, ev.target.value)}
-                                    style={{ flex: 1, minWidth: 0, WebkitAppearance: "none", appearance: "none", background: T.card, border: "none", borderRadius: 10, padding: "9px 10px", fontSize: 12, fontWeight: 700, color: T.ink, fontFamily: "inherit" }}>
-                                    <option value="">— sin enlazar —</option>
-                                    {cands.map((s2) => (
-                                      <option key={s2.id} value={s2.id}>
-                                        {(s2.tkr || "?") + " · " + n(s2.qty) + " acc · $" + money2(effBep(s2)) + (s2.closed ? " · cerrada" : "") + (s2.entryDate ? " · " + ibkrDate(s2.entryDate) : "")}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {/* v1.33: crear la acción SOLO si no existe ninguna de ese ticker. Si ya la tienes
-                                      (lo normal: la asignación ocurrió en el broker), enlazas con el selector y punto. */}
-                                  {!cands.length && !!assignFromPut && (
-                                    <button type="button" onClick={() => assignFromPut(p.id)} style={{ flexShrink: 0, background: T.card, border: "none", borderRadius: 10, padding: "9px 12px", fontSize: 11.5, fontWeight: 800, color: T.gold, cursor: "pointer", whiteSpace: "nowrap" }}>Crear acción</button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {/* v1.30: panel de la COVERED CALL — sobre qué acción está escrita. Su prima es cash
-                            adicional (no entra en el coste base de la acción), así que suma limpia a la rueda. */}
-                        {isCoveredCall(p) && !!linkCoveredCall && (() => {
-                          const cands = positions.filter((s2) => natOf(s2) === "ACC"
-                            && (s2.tkr || "").toUpperCase().trim() === (p.tkr || "").toUpperCase().trim());
-                          const origen = ccStock ? positions.find((o) => o.id === ccStock.assignedFrom) : null;
-                          return (
-                            <div style={{ background: ccStock ? T.tilePurple : T.tile, borderRadius: 14, padding: "11px 12px", marginBottom: 12 }}>
-                              <div style={{ fontSize: 11.5, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 5 }}><ActIcon name="called" size={13} />Escrita sobre</div>
-                              <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600, marginTop: 3, lineHeight: 1.35 }}>
-                                {ccStock
-                                  ? n(ccStock.qty) + " acc de " + (ccStock.tkr || "?") + " · coste base $" + money2(effBep(ccStock)) + (origen ? " · asignadas desde la put de " + ibkrDate(origen.entryDate) : "")
-                                  : "Sin enlazar. Enlázala a la acción para que su prima cuente en la rueda de ese subyacente."}
-                              </div>
-                              <div style={{ marginTop: 9, display: "flex", gap: 8, alignItems: "center" }}>
-                                <select
-                                  value={ccStock ? ccStock.id : ""}
-                                  onChange={(ev) => linkCoveredCall(p.id, ev.target.value)}
-                                  style={{ flex: 1, minWidth: 0, WebkitAppearance: "none", appearance: "none", background: T.card, border: "none", borderRadius: 10, padding: "9px 10px", fontSize: 12, fontWeight: 700, color: T.ink, fontFamily: "inherit" }}>
-                                  <option value="">— sin enlazar —</option>
-                                  {cands.map((s2) => (
-                                    <option key={s2.id} value={s2.id}>
-                                      {(s2.tkr || "?") + " · " + n(s2.qty) + " acc · $" + money2(effBep(s2)) + (s2.closed ? " · cerrada" : "") + (s2.entryDate ? " · " + ibkrDate(s2.entryDate) : "")}
-                                    </option>
-                                  ))}
-                                </select>
-                                {!cands.length && <span style={{ fontSize: 10.5, color: T.sub, fontWeight: 600 }}>No hay acción de {p.tkr} en cartera</span>}
-                              </div>
-                            </div>
-                          );
-                        })()}
                         {/* cabecera al estilo Comparador: prima grande a la izquierda, Annualized ROI grande a la derecha */}
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
                           <div>
@@ -6431,108 +6022,10 @@ function App() {
           }];
         }
       }
-      /* v1.31: covered call EJERCIDA (called away) → las acciones se van AL STRIKE de la call, no a mercado.
-         Antes había que acordarse de cerrarlas a mano; si se olvidaba, la acción seguía viva en cartera con
-         P&L fantasma y la rueda mentía. Usa la acción enlazada (onStock); sin enlace, busca una ÚNICA acción
-         abierta del mismo ticker y broker — si hay varias no adivina, y salta el aviso correspondiente. */
-      if (exercised && tgt && natOf(tgt) === "CRED" && tgt.right === "C" && !isPMCC(tgt)) {
-        const shares = n(tgt.qty);
-        const strike = n(tgt.strike);
-        let stock = tgt.onStock ? next.find((s2) => s2.id === tgt.onStock && !s2.closed) : null;
-        if (!stock) {
-          const cands = next.filter((s2) => natOf(s2) === "ACC" && !s2.closed
-            && (s2.tkr || "").toUpperCase().trim() === (tgt.tkr || "").toUpperCase().trim()
-            && (!tgt.broker || !s2.broker || s2.broker === tgt.broker));
-          if (cands.length === 1) stock = cands[0];
-        }
-        if (stock && shares > 0 && strike > 0) next = sellSharesFrom(next, stock.id, shares, strike, closeDate);
-      }
       return next;
     });
   };
   const reopenPos = (id) => setPositions((ps) => ps.map((p) => (p.id === id ? { ...p, closed: false } : p)));
-  /* v1.29: enlazar a mano una put asignada con su posición de acciones (para las asignaciones
-     antiguas o importadas, anteriores al automatismo de closePos). stockId vacío = desenlazar.
-     Solo puede haber UNA acción enlazada por opción: al enlazar una nueva se limpia la anterior. */
-  /* v1.32: ASIGNAR DESDE EL HISTÓRICO. Hasta ahora la acción de B1 solo nacía al cerrar la put marcándola
-     como asignada (closePos). Para las históricas —cerradas antes de existir el automatismo, o importadas—
-     no había forma de crearla: el selector "Enlazar acción" solo sirve si la acción YA existe en la app.
-     Esto hace lo mismo que closePos pero a posteriori: crea la Long Stock en B1 con coste base = BEP vigente
-     (strike − prima acumulada, rolls incluidos), la enlaza (assignedFrom) y marca la put como asignada.
-     Si la put no estaba marcada como asignada, además pone el precio de recompra a 0 — en una asignación no
-     recompras nada, te quedas la prima entera y te llevas las acciones. */
-  const assignFromPut = (putId) => setPositions((ps) => {
-    const tgt = ps.find((p) => p.id === putId);
-    if (!tgt || natOf(tgt) !== "CRED" || tgt.right !== "P" || isPMCC(tgt)) return ps;
-    const shares = n(tgt.qty);
-    if (shares <= 0) return ps;
-    const fecha = tgt.closeDate || tgt.expiry || new Date().toISOString().slice(0, 10);
-    const marcada = ps.map((p) => (p.id === putId
-      ? { ...p, closed: true, closeDate: fecha, closePrice: "0", exercised: true }
-      : p));
-    /* v1.33: si YA existe una acción de ese ticker en cartera (normalmente sí: la asignación real
-       ocurrió en el broker y la posición está importada), NO se crea otra — se ENLAZA. Crear una
-       segunda duplicaba las acciones, inflaba riesgo/MKT VL y ensuciaba el P&L. Solo se crea si no
-       hay ninguna. El enlace vive en la PUT (assignedTo), así varias puts pueden apuntar a la misma
-       posición de acciones (dos puts de 100 que acabaron en un único paquete de 200, por ejemplo). */
-    const key = (tgt.tkr || "").toUpperCase().trim();
-    const yaEnlazada = marcada.find((s2) => s2.id === tgt.assignedTo) || marcada.find((s2) => s2.assignedFrom === putId);
-    if (yaEnlazada) return marcada;
-    const existente = marcada.find((s2) => natOf(s2) === "ACC" && !s2.closed
-      && (s2.tkr || "").toUpperCase().trim() === key
-      && (!tgt.broker || !s2.broker || s2.broker === tgt.broker));
-    if (existente) return marcada.map((p) => (p.id === putId ? { ...p, assignedTo: existente.id } : p));
-    const id2 = newId();
-    return [...marcada.map((p) => (p.id === putId ? { ...p, assignedTo: id2 } : p)), {
-      id: id2, block: 1, broker: tgt.broker, tkr: tgt.tkr, tipo: "Long Stock", nat: "ACC",
-      strike: "", right: "P", expiry: "", qty: String(shares), bep: String(effBep(tgt)), prima: "",
-      comision: "", ivr: "", last: "", mktValue: "", riesgo: "", factor: "1", margen: "",
-      margenPct: "100", margenModo: "PCT", mktModo: "AUTO", pnlModo: "AUTO", pnl: "",
-      entryDate: fecha, rollChain: [], closed: false, closeDate: "", closePrice: "",
-      closeComision: "", closeNote: "", assignedFrom: putId,
-      entryNote: "Asignada desde put " + (tgt.tkr || "") + " · coste base = BEP $" + money2(effBep(tgt)),
-    }];
-  });
-  /* v1.33: borrar una acción duplicada creada por el botón «Asignar» de v1.32 cuando la posición real
-     ya existía en cartera. Reengancha la put a la acción buena antes de borrar la duplicada. */
-  const dropDuplicateStock = (stockId) => setPositions((ps) => {
-    const dup = ps.find((p) => p.id === stockId);
-    if (!dup || natOf(dup) !== "ACC") return ps;
-    const key = (dup.tkr || "").toUpperCase().trim();
-    const buena = ps.find((s2) => s2.id !== stockId && natOf(s2) === "ACC" && !s2.closed
-      && (s2.tkr || "").toUpperCase().trim() === key && !s2.assignedFrom);
-    return ps.filter((p) => p.id !== stockId).map((p) => {
-      const apunta = p.assignedTo === stockId || (!!dup.assignedFrom && p.id === dup.assignedFrom);
-      if (!apunta) return p;
-      if (buena) return { ...p, assignedTo: buena.id };
-      const { assignedTo, ...rest } = p;
-      return rest;
-    });
-  });
-  /* v1.31: reparar una covered call ya marcada como ejercida cuya acción sigue abierta (histórico anterior
-     al automatismo). Vende las acciones al strike de la call, con su fecha de cierre. */
-  const fixCalledAway = (ccId) => setPositions((ps) => {
-    const cc = ps.find((p) => p.id === ccId);
-    if (!cc) return ps;
-    const linked = cc.onStock ? ps.find((s2) => s2.id === cc.onStock && !s2.closed) : null;
-    const cands = ps.filter((s2) => natOf(s2) === "ACC" && !s2.closed && (s2.tkr || "").toUpperCase().trim() === (cc.tkr || "").toUpperCase().trim());
-    const target = linked || (cands.length === 1 ? cands[0] : null);
-    if (!target || n(cc.strike) <= 0) return ps;
-    return sellSharesFrom(ps, target.id, n(cc.qty), n(cc.strike), cc.closeDate || new Date().toISOString().slice(0, 10));
-  });
-  /* v1.30: enlazar una covered call con la acción sobre la que está escrita (onStock). A diferencia de
-     la put asignada, la prima de la CC NO entra en el coste base de la acción, así que aquí sí SE SUMA.
-     stockId vacío = desenlazar. */
-  const linkCoveredCall = (ccId, stockId) => setPositions((ps) => ps.map((p) => {
-    if (p.id !== ccId) return p;
-    if (!stockId) { const { onStock, ...rest } = p; return rest; }
-    return { ...p, onStock: stockId };
-  }));
-  const linkAssigned = (optId, stockId) => setPositions((ps) => ps.map((p) => {
-    if (p.id !== optId) return p;
-    if (!stockId) { const { assignedTo, ...rest } = p; return rest; }
-    return { ...p, assignedTo: stockId };
-  }));
   const clearAll = () => {
     if (!confirmClear) { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); return; }
     setPositions([]); setEditSet(new Set()); setConfirmClear(false);
@@ -6772,25 +6265,6 @@ function App() {
     return m;
   }, [positions]);
 
-  /* v1.31: nº de avisos pendientes → chapa roja en el icono de Vencimientos del menú.
-     Mismo criterio que AvisosCard, en versión contador (no hace falta el detalle para pintar la chapa). */
-  const avisosCount = useMemo(() => {
-    const hoy = new Date().toISOString().slice(0, 10);
-    const opts = filtered.filter((p) => natOf(p) === "CRED" && !isPMCC(p));
-    let k = 0;
-    filtered.filter((p) => natOf(p) === "ACC" && !p.closed && p.assignedFrom).forEach((dup) => {
-      const key = (dup.tkr || "").toUpperCase().trim();
-      if (filtered.some((s2) => s2.id !== dup.id && natOf(s2) === "ACC" && !s2.closed && (s2.tkr || "").toUpperCase().trim() === key && !s2.assignedFrom)) k++;
-    });
-    opts.forEach((p) => {
-      if (!p.closed && p.expiry && p.expiry < hoy) k++;                                   // vencida sin cerrar
-      else if (!p.closed && p.right === "C" && n(p.last) && n(p.strike) && n(p.last) > n(p.strike)) k++;  // CC ITM
-      else if (p.closed && p.exercised && p.right === "C"
-        && filtered.some((s2) => natOf(s2) === "ACC" && !s2.closed && (s2.tkr || "").toUpperCase().trim() === (p.tkr || "").toUpperCase().trim())) k++; // called away sin registrar
-      else if (p.closed && p.exercised && p.right === "P" && !filtered.some((s2) => (s2.tkr || "").toUpperCase().trim() === (p.tkr || "").toUpperCase().trim() && n(s2.last))) k++; // asignada sin cotización
-    });
-    return k;
-  }, [filtered]);
   const vencimientosRows = useMemo(() => {
     const map = {};
     active.forEach((p) => {
@@ -7188,10 +6662,9 @@ function App() {
 
         </>)}
 
-        {view === "vencimientos" && <AvisosCard positions={filtered} onFixCalledAway={fixCalledAway} onOpenChain={setEditChainId} onAssignFromPut={assignFromPut} onDropDuplicate={dropDuplicateStock} />}
         {view === "vencimientos" && <VencimientosCard rows={vencimientosRows} onOpen={setInfo} />}
 
-        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} linkAssigned={linkAssigned} linkCoveredCall={linkCoveredCall} assignFromPut={assignFromPut} />}
+        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
         {view === "ajustes" && (
           /* v1.15: ajustes rediseñados — 4 tarjetas de lista agrupada estilo iOS (icono tintado,
@@ -8134,12 +7607,7 @@ function App() {
                 background: "transparent", borderRadius: 19, padding: "7px 0 6px",
                 color: on ? NAV_BLUE : "rgba(255,255,255,0.92)", transition: "color 0.15s",
               }}>
-                <span style={{ position: "relative", display: "inline-flex" }}>
-                  <NavIcon name={icon} />
-                  {id === "vencimientos" && avisosCount > 0 && (
-                    <span style={{ position: "absolute", top: -4, right: -7, minWidth: 15, height: 15, padding: "0 3px", borderRadius: 8, background: T.red, color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "0 0 0 2px rgba(20,22,26,0.9)" }}>{avisosCount > 9 ? "9+" : avisosCount}</span>
-                  )}
-                </span>
+                <NavIcon name={icon} />
                 <span style={{ fontSize: 9.5, fontWeight: on ? 800 : 600, letterSpacing: 0.1, whiteSpace: "nowrap", color: on ? NAV_BLUE : "rgba(255,255,255,0.92)" }}>{label}</span>
               </button>
             );
