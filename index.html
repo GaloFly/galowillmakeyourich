@@ -127,7 +127,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.34"; /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
+const APP_VERSION = "1.35"; /* v1.35 UX: carrusel deslizable con snap (SnapCarousel: scroll horizontal nativo + scroll-snap, momentum de iOS, dots que siguen la posición, sangrado a los bordes de la tarjeta; con una sola tarjeta no hay scroll ni dots) para las ideas guardadas y el histórico de tablas; tarjetas rediseñadas — idea: TKR grande + chapa GO/CAUTION/NO-GO (o A MEDIAS), estructura y EM, barra de POP open del color del veredicto y mini-tiles Crédito/EV/Contratos; histórico: TKR + N + próximo ±, barra de POP open y mini-tiles IV crush / Peor gap / |open|/EM. Los botones Abrir y ✕ viven en el pie de cada tarjeta. No choca con el swipe entre bloques (ignora gestos nacidos en scroll horizontal). */ /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4500,6 +4500,42 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
       alcista consistente → short put / bull put spread · bajista → bear call · dentro del EM → iron condor ·
       rompe el EM a menudo → skip o comprar la estructura.
    4) Crédito + riesgo objetivo → contratos sugeridos, win rate mínimo, EV y GO/CAUTION/NO-GO. */
+/* ---------- v1.35: carrusel con snap ----------
+   Tarjetas deslizables a lo iOS: scroll horizontal nativo con scroll-snap (momentum del sistema,
+   nada de reimplementar el drag) + dots que siguen la posición. Se usa para las ideas guardadas y
+   el histórico de tablas. No choca con el swipe entre bloques: ese gesto ya ignora los toques que
+   empiezan dentro de un contenedor con scroll horizontal (hasHScrollAncestor), y en Herramientas
+   ni siquiera aplica. Con una sola tarjeta no hay scroll ni dots. */
+function SnapCarousel({ children, bleed = 18 }) {
+  const [idx, setIdx] = useState(0);
+  const scRef = useRef(null);
+  const kids = React.Children.toArray(children);
+  if (!kids.length) return null;
+  const onScroll = () => {
+    const el = scRef.current;
+    if (!el || !el.firstChild) return;
+    const w = el.firstChild.offsetWidth + 10;
+    setIdx(Math.max(0, Math.min(kids.length - 1, Math.round(el.scrollLeft / w))));
+  };
+  return (
+    <div>
+      <div ref={scRef} onScroll={onScroll} className="no-scrollbar"
+        style={{ display: "flex", gap: 10, overflowX: kids.length > 1 ? "auto" : "hidden", scrollSnapType: "x mandatory",
+          margin: "0 -" + bleed + "px", padding: "0 " + bleed + "px", scrollPaddingLeft: bleed }}>
+        {kids.map((k, i) => (
+          <div key={i} style={{ flex: "0 0 " + (kids.length > 1 ? "86%" : "100%"), scrollSnapAlign: "start", display: "flex" }}>{k}</div>
+        ))}
+      </div>
+      {kids.length > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", gap: 5, marginTop: 9 }}>
+          {kids.map((_, i) => (
+            <div key={i} style={{ width: i === idx ? 16 : 6, height: 6, borderRadius: 3, background: i === idx ? T.ink : T.line, transition: "all 0.25s" }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   /* v1.29: histórico persistente por ticker (tabla Historical Earnings Data) */
   const [hist, setHist] = useState(loadErHist);
@@ -4694,51 +4730,66 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         {ideas.length > 0 && (
           <>
             <WizSection>▸ Ideas guardadas</WizSection>
-            <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
-              Preparadas el día de antes. Toca una para cargarla en la calculadora, ajusta el crédito con lo que cotice y abre.
-            </div>
-            {ideas.map((rec) => {
-              const f = rec && rec.form ? rec.form : {};
-              const d = erIdeaDerive(f);
-              const vCol = d.verdict === "GO" ? T.green : d.verdict === "CAUTION" ? T.gold : d.verdict === "NO-GO" ? T.red : T.sub;
-              const vBg = d.verdict === "GO" ? T.tileGreen : d.verdict === "CAUTION" ? T.tileAmber : d.verdict === "NO-GO" ? T.tileRed : T.tile;
-              const active = String(st.tkr || "").trim().toUpperCase() === rec.tkr;
-              return (
-                <div key={rec.id} onClick={() => loadIdea(rec)}
-                  style={{ background: active ? T.tileGreen : T.tile, borderRadius: 15, padding: "11px 13px", cursor: "pointer" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, letterSpacing: -0.2 }}>{rec.tkr}</span>
-                    <span style={{ background: vBg, color: vCol, borderRadius: 9, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>{d.verdict || "SIN VEREDICTO"}</span>
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 12px", marginTop: 5, fontSize: 11, fontWeight: 700, color: T.sub }}>
-                    {f.put && <span>P {f.put}</span>}
-                    {f.call && <span>C {f.call}</span>}
-                    {f.credit && <span>cr {f.credit}</span>}
-                    {isFinite(d.pop) && <span>POP open {(d.pop * 100).toFixed(0)}%</span>}
-                    {isFinite(d.ev) && <span style={{ color: d.ev >= 0 ? T.green : T.red }}>{(d.ev >= 0 ? "+" : "−") + "$" + Math.abs(Math.round(d.ev))} EV</span>}
-                    {d.sug != null && <span>{d.sug} contr.</span>}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>{rec.saved ? "Guardada " + new Date(rec.saved).toLocaleDateString("es-ES", { day: "numeric", month: "short" }) : ""}</span>
-                    <span style={{ display: "inline-flex", gap: 6 }}>
-                      {onOpenPosition && d.sug > 0 && (
-                        <button type="button" onClick={(e) => { e.stopPropagation(); onOpenPosition({
-                          block: 3, strat: "Earnings",
-                          form: { tkr: rec.tkr, putSpread: f.put, callSpread: f.call, prima: f.credit, contratos: String(d.sug), margen: String(Math.round(d.maxLossPC * d.sug)) },
-                        }); }}
-                          style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "4px 12px", fontSize: 10.5, fontWeight: 800, background: T.dark, color: "#fff" }}>
-                          Abrir
+            <SnapCarousel>
+              {ideas.map((rec) => {
+                const f = rec && rec.form ? rec.form : {};
+                const d = erIdeaDerive(f);
+                const vCol = d.verdict === "GO" ? T.green : d.verdict === "CAUTION" ? T.gold : d.verdict === "NO-GO" ? T.red : T.sub;
+                const vBg = d.verdict === "GO" ? T.tileGreen : d.verdict === "CAUTION" ? T.tileAmber : d.verdict === "NO-GO" ? T.tileRed : T.tile;
+                return (
+                  <div key={rec.id} onClick={() => loadIdea(rec)}
+                    style={{ background: vBg, borderRadius: 18, padding: "13px 14px", cursor: "pointer", width: "100%", display: "grid", gap: 9, alignContent: "start" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 18, fontWeight: 800, color: T.ink, letterSpacing: -0.4 }}>{rec.tkr}</span>
+                      <span style={{ background: T.card, color: vCol, borderRadius: 10, padding: "4px 11px", fontSize: 11.5, fontWeight: 800, letterSpacing: 0.2 }}>{d.verdict || "A MEDIAS"}</span>
+                    </div>
+                    {(f.put || f.call || f.em) && (
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>
+                        {f.put ? "P " + f.put : ""}{f.put && f.call ? "  ·  " : ""}{f.call ? "C " + f.call : ""}{(f.put || f.call) && f.em ? "  ·  " : ""}{f.em ? "EM ±" + f.em + "%" : ""}
+                      </div>
+                    )}
+                    {isFinite(d.pop) && (
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                          <span>POP open</span><span style={{ color: vCol }}>{(d.pop * 100).toFixed(0)}%</span>
+                        </div>
+                        <div style={{ height: 8, background: T.line, borderRadius: 4, overflow: "hidden", marginTop: 4 }}>
+                          <div style={{ width: (d.pop * 100).toFixed(0) + "%", height: "100%", background: vCol, borderRadius: 4, transition: "width 0.3s" }} />
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                      {[["Crédito", f.credit ? "$" + f.credit : "—", T.ink],
+                        ["EV/contr.", isFinite(d.ev) ? (d.ev >= 0 ? "+" : "−") + "$" + Math.abs(Math.round(d.ev)) : "—", isFinite(d.ev) ? (d.ev >= 0 ? T.green : T.red) : T.sub],
+                        ["Contratos", d.sug != null ? String(d.sug) : "—", T.ink]].map(([l, v, c]) => (
+                        <div key={l} style={{ background: T.card, borderRadius: 12, padding: "8px 4px", textAlign: "center" }}>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: c, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                          <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 2 }}>{l}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>{rec.saved ? new Date(rec.saved).toLocaleDateString("es-ES", { day: "numeric", month: "short" }) + " · toca para cargar" : "Toca para cargar"}</span>
+                      <span style={{ display: "inline-flex", gap: 6 }}>
+                        {onOpenPosition && d.sug > 0 && (
+                          <button type="button" onClick={(e) => { e.stopPropagation(); onOpenPosition({
+                            block: 3, strat: "Earnings",
+                            form: { tkr: rec.tkr, putSpread: f.put, callSpread: f.call, prima: f.credit, contratos: String(d.sug), margen: String(Math.round(d.maxLossPC * d.sug)) },
+                          }); }}
+                            style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "5px 13px", fontSize: 10.5, fontWeight: 800, background: T.dark, color: "#fff" }}>
+                            Abrir
+                          </button>
+                        )}
+                        <button type="button" onClick={(e) => { e.stopPropagation(); dropIdea(rec.id); }}
+                          style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "5px 10px", fontSize: 10.5, fontWeight: 800, background: ideaArm === rec.id ? T.red : T.card, color: ideaArm === rec.id ? "#fff" : T.sub }}>
+                          {ideaArm === rec.id ? "¿Borrar?" : "✕"}
                         </button>
-                      )}
-                      <button type="button" onClick={(e) => { e.stopPropagation(); dropIdea(rec.id); }}
-                        style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "4px 10px", fontSize: 10.5, fontWeight: 800, background: ideaArm === rec.id ? T.red : "transparent", color: ideaArm === rec.id ? "#fff" : T.sub }}>
-                        {ideaArm === rec.id ? "¿Borrar?" : "✕"}
-                      </button>
-                    </span>
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </SnapCarousel>
           </>
         )}
         <WizSection>▸ Subyacente y expected move</WizSection>
@@ -4794,39 +4845,49 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         </div>
         {tblMsg && <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.4 }}>{tblMsg}</div>}
         {Object.keys(hist).length > 0 && (
-          <div style={{ display: "grid", gap: 8 }}>
+          <SnapCarousel>
             {Object.entries(hist).sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0)).map(([sym, rec]) => {
               const s = erStats(rec && rec.events);
               const popCol = !isFinite(s.popOpen) ? T.sub : s.popOpen >= 0.7 ? T.green : s.popOpen >= 0.5 ? T.gold : T.red;
               const active = String(st.tkr || "").trim().toUpperCase() === sym;
               return (
                 <div key={sym} onClick={() => applyHist(sym)}
-                  style={{ background: active ? T.tileGreen : T.tile, borderRadius: 15, padding: "11px 13px", cursor: "pointer" }}>
+                  style={{ background: active ? T.tileGreen : T.tile, borderRadius: 18, padding: "13px 14px", cursor: "pointer", width: "100%", display: "grid", gap: 8, alignContent: "start" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, letterSpacing: -0.2 }}>{sym}</span>
-                    <span style={{ fontSize: 16, fontWeight: 800, color: popCol, fontVariantNumeric: "tabular-nums" }}>
-                      {isFinite(s.popOpen) ? (s.popOpen * 100).toFixed(0) + "%" : "—"}
-                      <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, marginLeft: 4 }}>POP open</span>
-                    </span>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: T.ink, letterSpacing: -0.4 }}>{sym}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>N={s.M}{isFinite(s.nextEm) ? " · próximo ±" + s.nextEm + "%" : ""}</span>
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 12px", marginTop: 5, fontSize: 11, fontWeight: 700, color: T.sub }}>
-                    <span>N={s.M}</span>
-                    {isFinite(s.ivCrush) && <span>IV crush {s.ivCrush.toFixed(1)}%</span>}
-                    {isFinite(s.worst) && <span style={{ color: isFinite(s.emAvg) && Math.abs(s.worst) > s.emAvg ? T.red : T.sub }}>peor gap {(s.worst > 0 ? "+" : "") + s.worst.toFixed(1)}%</span>}
-                    {isFinite(s.absOpen) && isFinite(s.emAvg) && <span>|open| {s.absOpen.toFixed(1)}% vs EM {s.emAvg.toFixed(1)}%</span>}
-                    {isFinite(s.nextEm) && <span style={{ color: T.purple }}>próximo ±{s.nextEm}%</span>}
+                  {isFinite(s.popOpen) && (
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                        <span>POP open</span><span style={{ color: popCol }}>{(s.popOpen * 100).toFixed(0)}%</span>
+                      </div>
+                      <div style={{ height: 8, background: T.line, borderRadius: 4, overflow: "hidden", marginTop: 4 }}>
+                        <div style={{ width: (s.popOpen * 100).toFixed(0) + "%", height: "100%", background: popCol, borderRadius: 4, transition: "width 0.3s" }} />
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                    {[["IV crush", isFinite(s.ivCrush) ? s.ivCrush.toFixed(1) + "%" : "—", T.ink],
+                      ["Peor gap", isFinite(s.worst) ? (s.worst > 0 ? "+" : "") + s.worst.toFixed(1) + "%" : "—", isFinite(s.worst) && isFinite(s.emAvg) && Math.abs(s.worst) > s.emAvg ? T.red : T.ink],
+                      ["|open| / EM", isFinite(s.absOpen) && isFinite(s.emAvg) ? s.absOpen.toFixed(1) + " / " + s.emAvg.toFixed(1) : "—", T.ink]].map(([l, v, c]) => (
+                      <div key={l} style={{ background: T.card, borderRadius: 12, padding: "8px 4px", textAlign: "center" }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: c, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{v}</div>
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 2 }}>{l}</div>
+                      </div>
+                    ))}
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>Toca para volcar M · X · U a la calculadora</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>Toca para volcar M · X · U</span>
                     <button type="button" onClick={(e) => { e.stopPropagation(); dropHistTkr(sym); }}
-                      style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "4px 10px", fontSize: 10.5, fontWeight: 800, background: delArm === sym ? T.red : "transparent", color: delArm === sym ? "#fff" : T.sub }}>
+                      style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "5px 10px", fontSize: 10.5, fontWeight: 800, background: delArm === sym ? T.red : T.card, color: delArm === sym ? "#fff" : T.sub }}>
                       {delArm === sym ? "¿Borrar " + sym + "?" : "✕"}
                     </button>
                   </div>
                 </div>
               );
             })}
-          </div>
+          </SnapCarousel>
         )}
         <WizInput label="Earnings analizados (M)" value={st.nHist} onChange={set("nHist")} inputMode="numeric" placeholder="16" span={2} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
