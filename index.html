@@ -129,7 +129,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.57"; /* v1.57 FIX (Victor: "si SPX no me genera profit con su movimiento, ¿por qué me sale ahí?"): los movers comparaban el P&L AGREGADO POR TICKER contra el snapshot, así que la rotación de posiciones se colaba como movimiento de mercado — cerrar los 0DTE de SPX y abrir otros el mismo día hacía aparecer una "ganancia" que nadie ganó. Ahora buildSnapshot guarda el P&L por POSICIÓN (posPnl: id → pnl) y los movers solo suman posiciones presentes en ambos momentos (misma id): lo que se ha movido de verdad en lo que sigue abierto. Las posiciones abiertas o cerradas desde el snapshot no cuentan. Los snapshots antiguos no llevan posPnl, así que la tarjeta no se pinta hasta el siguiente 🔄 Precios. */ /* v1.56: las tarjetas de los movers tienen todas la misma altura — la chapa del % se pinta siempre, neutra con "—" cuando el subyacente no trae cotización del día (índices como SPX en el plan gratis de Finnhub), en vez de desaparecer y encoger la tarjeta; el importe se alinea arriba, a la altura del ticker. */ /* v1.55: en los movers, el % del subyacente baja DEBAJO DEL TICKER en su chapa de color (verde/roja), y el importe de tu posición queda solo a la derecha — cada bloque con su dueño: izquierda el subyacente, derecha tu posición. */ /* v1.54: cada mover pasa a ser una tarjeta con fondo — ticker a la izquierda y, a la derecha, el importe grande con el % del subyacente JUSTO DEBAJO, ambos alineados a la derecha y en el mismo color; barra al pie dentro de la tarjeta. */ /* v1.53: en los movers, las cifras se alinean a la DERECHA — el % y el importe comparten borde derecho (el ticker sigue a la izquierda), que es como mejor se leen en columna. */ /* v1.52: fila de los movers — ticker y % del subyacente en la MISMA línea (ticker a la izquierda, % alineado a la derecha, sin chapa) y el importe debajo en grande; en dos columnas estrechas los tres no caben en una fila sin truncar el ticker. */ /* v1.51: fila de los movers reordenada — el ticker se truncaba ("A…", "HI…") porque competía por el ancho con la chapa del % y el importe; ahora el importe va grande arriba y debajo, en pequeño, el TICKER con su % entre paréntesis (verde/rojo). */ /* v1.50: fuera el aviso de texto en los movers (v1.49) — el % del subyacente sigue apareciendo en cuanto se refrescan precios con la v1.48+, sin cartel que lo explique. */ /* v1.48: el % de cambio del SUBYACENTE en los movers pasa a chapa verde/roja junto al ticker, y sale del propio Finnhub (el endpoint /quote ya devuelve dp y pc: no hay que derivarlo de snapshots, así que funciona desde el primer refresco). Se guarda en KEY_DAYPCT con la fecha de la lectura y se ignora si es de otro día — nunca se enseña un % viejo como si fuera de hoy; es dato de mercado re-descargable, así que NO entra en el backup. Si por lo que sea no hay dato de Finnhub, se cae al % derivado del último snapshot. */ /* v1.47: MOVERS DEL DÍA — debajo de la distribución por bloques, dos columnas (Ganadores / Perdedores) con los 3 mayores de cada lado: Δ P&L de la posición desde el cierre del último día con snapshot, Δ% del subyacente al lado (si ese snapshot guardó cotización) y barra proporcional al mayor movimiento del día. buildSnapshot guarda ahora el último precio por ticker y el desglose de tickers por bróker, así que los movers también funcionan con un bróker filtrado. Solo entran tickers que ya existían en el snapshot previo: una posición abierta hoy es capital nuevo, no un movimiento. Sin snapshot previo la tarjeta no se pinta. */ /* v1.46: el cambio del día también funciona por bróker — buildSnapshot guarda ahora byBroker { nlv, mktvl, margin } con las mismas definiciones que el consolidado, y dayChg toma la referencia del bróker filtrado; un snapshot anterior a v1.46 no tiene ese desglose, así que no sirve de referencia para un bróker suelto (se salta en vez de compararlo contra el total) — el Δ por bróker aparece en cuanto guardes un snapshot nuevo con 🔄 Precios. */ /* v1.45: los cuatro tiles del hero se reordenan a Riesgo · MKT VL · Posiciones · Liquidez. */ /* v1.44: los ratios del hero vuelven al formato compacto del estado de cuenta anterior (EL/NLV sobre EL/MRGN apilados con filete + apalancamiento), en la misma fila que el ▼ que despliega el detalle — tocar un ratio abre su ficha, tocar el resto de la fila despliega. Sustituyen a los tres tiles grandes de salud. */ /* v1.43: la tarjeta "Valor de la cuenta" (AccountHero) sale de la pestaña Resumen y pasa a estar FIJA arriba de Portfolio, encima de la fila de pestañas — se sigue viendo mientras deslizas por B0, B1…, con su expandible de estado de cuenta intacto. La pestaña Resumen se queda con la distribución por bloques (BlockDistribution: donut + leyenda con bandas objetivo). El cambio del día pierde el texto: solo importe y % en verde/rojo, medidos desde el cierre del último día con snapshot (la medianoche anterior); sin referencia no se pinta nada. */ /* v1.42: el Resumen ejecutivo ABSORBE el estado de cuenta y la tarjeta oscura de riesgo/P&L (ambos desaparecen de Portfolio; la tarjeta de cuenta sigue en Herramientas): el hero lleva NLV (28px), cambio del día debajo en verde/rojo (importe + % + fecha de referencia), P&L abierto, tiles Pos./Riesgo/MKT VL/Liquidez, salud (EL/NLV, EL/margen, apalancamiento) y un expandible "Estado de cuenta" con los campos de cash negativo y margen por bróker, Excess Liq, avisos y las barras de zona EL/NLV y EL/MRGN. El cambio del día se calcula contra el snapshot más reciente de un día anterior (los guarda 🔄 Precios); sin snapshot previo lo dice en vez de inventar, y con un filtro de bróker activo no se muestra (los snapshots son de la cartera entera). */ /* v1.41: RESUMEN EJECUTIVO — nueva primera pestaña de Portfolio (y la que abre por defecto), de la que se sigue deslizando a B0, B1… con el gesto de siempre. Hero con NLV grande, P&L abierto y tiles de posiciones/riesgo/liquidez + salud de cuenta (EL/NLV, EL/margen, apalancamiento) coloreada por sus umbrales y tocable para abrir su ficha. Debajo, donut de DISTRIBUCIÓN POR BLOQUES (% de NLV que ocupa cada uno) con el % desplegado en el centro; tocar una porción muestra su bloque en el centro y resalta su fila. Leyenda con una fila por bloque: capital, % de NLV en el color de su estado, barra con la BANDA OBJETIVO marcada en el carril y el desvío en texto ("en banda" / "por debajo X" / "por encima X"); tocar el nombre salta a la pestaña de ese bloque. */ /* v1.40 FIX maquetación de la tarjeta combinada (se solapaban/pisaban datos en iOS): items del carrusel con width explícito en vez de flex-basis % (Safari lo resuelve mal contra el padding del scroller); la tarjeta pasa de grid a columna flex con gap y overflow:hidden; TKR y chapa con elipsis/flex:none; cada mini-tile con minWidth:0 + overflow:hidden y valor/etiqueta con elipsis (fuentes 14/13) para que nunca derramen sobre el vecino; el pie gana flexWrap para que los 3 botones bajen de línea en pantallas estrechas en vez de aplastar el texto. */ /* v1.39: (1) el comparador de anchos SUBE junto al selector del ala — al elegir el ancho aparece el crédito mínimo a pedir (⅓) y, con el crédito apuntado, la misma fórmula que vivía abajo: ratio, pérdida/contrato, WR mínimo (break-even), contratos contra el riesgo objetivo y EV con la POP open del histórico; desaparecen la sección "Comparar anchos de ala" y los campos cr2/cr25/cr3/cr5/cr10. (2) UN solo carrusel con tarjeta COMBINADA por ticker (unión de ideas + histórico, orden alfabético): TKR + chapa (GO/CAUTION/NO-GO, A MEDIAS si la idea está incompleta, SOLO TABLA si no hay idea), estructura+EM, barra POP open, fila de mini-tiles de la idea (Crédito/EV/Contratos) y fila del histórico (IV crush/Peor gap/|open|/EM); pie con N, próximo ± y fecha + botones Abrir, ✕ idea y ✕ tabla (dos toques cada uno); tocar carga la idea o, si no hay, vuelca el histórico. El carrusel de abajo desaparece; la sección del histórico queda con el lector de tablas y los campos M/X/U. */ /* v1.38: los dos carruseles comparten ORDEN — alfabético por ticker (ideasSorted / histSyms), así la posición N de arriba y la de abajo son el mismo ticker cuando existe en ambos; el histórico deja de ordenarse por última actualización. */ /* v1.37: sincronía entre los dos carruseles — deslizar el de ideas lleva el del histórico al mismo ticker y viceversa (SnapCarousel gana keys/activeKey/onActiveKey; scroll suave programático con guarda anti-bucle progRef; solo mueve el scroll, no carga nada), y tocar/cargar una tarjeta también alinea el otro carrusel. Además las tarjetas de ideas pasan a stats VIVAS: si el ticker tiene histórico de tablas, M/X/U (y por tanto POP/EV/veredicto) salen del histórico actual en vez de los valores congelados al guardar — releer la tabla tras un earnings actualiza la idea sola; cargar la idea también carga los vivos. */ /* v1.36 FIX: los carruseles se salían del ancho del móvil — SnapCarousel es hijo directo de un grid y los items de grid tienen min-width:auto por defecto, así que el track crecía al max-content de todas las tarjetas en fila; minWidth:0/maxWidth:100% en el carrusel y minWidth:0 en los wrappers y tarjetas, y fuera el nowrap del mini-tile |open|/EM. */ /* v1.35 UX: carrusel deslizable con snap (SnapCarousel: scroll horizontal nativo + scroll-snap, momentum de iOS, dots que siguen la posición, sangrado a los bordes de la tarjeta; con una sola tarjeta no hay scroll ni dots) para las ideas guardadas y el histórico de tablas; tarjetas rediseñadas — idea: TKR grande + chapa GO/CAUTION/NO-GO (o A MEDIAS), estructura y EM, barra de POP open del color del veredicto y mini-tiles Crédito/EV/Contratos; histórico: TKR + N + próximo ±, barra de POP open y mini-tiles IV crush / Peor gap / |open|/EM. Los botones Abrir y ✕ viven en el pie de cada tarjeta. No choca con el swipe entre bloques (ignora gestos nacidos en scroll horizontal). */ /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
+const APP_VERSION = "1.60"; /* v1.60: ScanOverlay — overlay a pantalla completa mientras se lee una captura (wizard, comparador de puts y tabla de earnings): anillo girando con el icono de cámara dentro, título, y la lista de pasos (Preparando la imagen · Enviando al lector · Leyendo los datos · Volcando al formulario) marcando en verde los ya hechos y pulsando el vivo; en los lotes el subtítulo lleva la cuenta ("Captura 2 de 6", "3 de 6 capturas"). Los pasos los marca el propio lector conforme ocurren: no hay progreso inventado. Antes solo cambiaba el texto de un botón y con varias capturas parecía colgado. */ /* v1.59: la tarjeta de movers ya no desaparece cuando aún no hay datos del día (hace falta un 🔄 Precios para traer el cierre anterior de cada subyacente): se pinta igual, con un botón "Actualizar precios" dentro — una acción, no un cartel. */ /* v1.58 (la 1.57 dejó a Victor sin tarjeta: exigía un snapshot del día ANTERIOR con el nuevo formato): los movers ya no dependen de snapshots. Para las posiciones con P&L automático (acciones) el movimiento del día es exacto y directo — se reevalúa el MISMO effPnl con el cierre anterior de Finnhub como spot y se resta (vale igual para acciones, lineales, que para opciones cortas, no lineales), disponible desde el primer 🔄 Precios. Para las estructuras con P&L manual (condors, spreads, 0DTE) la app no tiene mark intradía, así que su Δ sale del snapshot por posición (posPnl) si lo hay y si no es 0 — nunca inventado. Se mantiene la regla clave: solo posiciones que siguen abiertas, para que la rotación no se cuele como movimiento (el fantasma de SPX). */ /* v1.57 FIX (Victor: "si SPX no me genera profit con su movimiento, ¿por qué me sale ahí?"): los movers comparaban el P&L AGREGADO POR TICKER contra el snapshot, así que la rotación de posiciones se colaba como movimiento de mercado — cerrar los 0DTE de SPX y abrir otros el mismo día hacía aparecer una "ganancia" que nadie ganó. Ahora buildSnapshot guarda el P&L por POSICIÓN (posPnl: id → pnl) y los movers solo suman posiciones presentes en ambos momentos (misma id): lo que se ha movido de verdad en lo que sigue abierto. Las posiciones abiertas o cerradas desde el snapshot no cuentan. Los snapshots antiguos no llevan posPnl, así que la tarjeta no se pinta hasta el siguiente 🔄 Precios. */ /* v1.56: las tarjetas de los movers tienen todas la misma altura — la chapa del % se pinta siempre, neutra con "—" cuando el subyacente no trae cotización del día (índices como SPX en el plan gratis de Finnhub), en vez de desaparecer y encoger la tarjeta; el importe se alinea arriba, a la altura del ticker. */ /* v1.55: en los movers, el % del subyacente baja DEBAJO DEL TICKER en su chapa de color (verde/roja), y el importe de tu posición queda solo a la derecha — cada bloque con su dueño: izquierda el subyacente, derecha tu posición. */ /* v1.54: cada mover pasa a ser una tarjeta con fondo — ticker a la izquierda y, a la derecha, el importe grande con el % del subyacente JUSTO DEBAJO, ambos alineados a la derecha y en el mismo color; barra al pie dentro de la tarjeta. */ /* v1.53: en los movers, las cifras se alinean a la DERECHA — el % y el importe comparten borde derecho (el ticker sigue a la izquierda), que es como mejor se leen en columna. */ /* v1.52: fila de los movers — ticker y % del subyacente en la MISMA línea (ticker a la izquierda, % alineado a la derecha, sin chapa) y el importe debajo en grande; en dos columnas estrechas los tres no caben en una fila sin truncar el ticker. */ /* v1.51: fila de los movers reordenada — el ticker se truncaba ("A…", "HI…") porque competía por el ancho con la chapa del % y el importe; ahora el importe va grande arriba y debajo, en pequeño, el TICKER con su % entre paréntesis (verde/rojo). */ /* v1.50: fuera el aviso de texto en los movers (v1.49) — el % del subyacente sigue apareciendo en cuanto se refrescan precios con la v1.48+, sin cartel que lo explique. */ /* v1.48: el % de cambio del SUBYACENTE en los movers pasa a chapa verde/roja junto al ticker, y sale del propio Finnhub (el endpoint /quote ya devuelve dp y pc: no hay que derivarlo de snapshots, así que funciona desde el primer refresco). Se guarda en KEY_DAYPCT con la fecha de la lectura y se ignora si es de otro día — nunca se enseña un % viejo como si fuera de hoy; es dato de mercado re-descargable, así que NO entra en el backup. Si por lo que sea no hay dato de Finnhub, se cae al % derivado del último snapshot. */ /* v1.47: MOVERS DEL DÍA — debajo de la distribución por bloques, dos columnas (Ganadores / Perdedores) con los 3 mayores de cada lado: Δ P&L de la posición desde el cierre del último día con snapshot, Δ% del subyacente al lado (si ese snapshot guardó cotización) y barra proporcional al mayor movimiento del día. buildSnapshot guarda ahora el último precio por ticker y el desglose de tickers por bróker, así que los movers también funcionan con un bróker filtrado. Solo entran tickers que ya existían en el snapshot previo: una posición abierta hoy es capital nuevo, no un movimiento. Sin snapshot previo la tarjeta no se pinta. */ /* v1.46: el cambio del día también funciona por bróker — buildSnapshot guarda ahora byBroker { nlv, mktvl, margin } con las mismas definiciones que el consolidado, y dayChg toma la referencia del bróker filtrado; un snapshot anterior a v1.46 no tiene ese desglose, así que no sirve de referencia para un bróker suelto (se salta en vez de compararlo contra el total) — el Δ por bróker aparece en cuanto guardes un snapshot nuevo con 🔄 Precios. */ /* v1.45: los cuatro tiles del hero se reordenan a Riesgo · MKT VL · Posiciones · Liquidez. */ /* v1.44: los ratios del hero vuelven al formato compacto del estado de cuenta anterior (EL/NLV sobre EL/MRGN apilados con filete + apalancamiento), en la misma fila que el ▼ que despliega el detalle — tocar un ratio abre su ficha, tocar el resto de la fila despliega. Sustituyen a los tres tiles grandes de salud. */ /* v1.43: la tarjeta "Valor de la cuenta" (AccountHero) sale de la pestaña Resumen y pasa a estar FIJA arriba de Portfolio, encima de la fila de pestañas — se sigue viendo mientras deslizas por B0, B1…, con su expandible de estado de cuenta intacto. La pestaña Resumen se queda con la distribución por bloques (BlockDistribution: donut + leyenda con bandas objetivo). El cambio del día pierde el texto: solo importe y % en verde/rojo, medidos desde el cierre del último día con snapshot (la medianoche anterior); sin referencia no se pinta nada. */ /* v1.42: el Resumen ejecutivo ABSORBE el estado de cuenta y la tarjeta oscura de riesgo/P&L (ambos desaparecen de Portfolio; la tarjeta de cuenta sigue en Herramientas): el hero lleva NLV (28px), cambio del día debajo en verde/rojo (importe + % + fecha de referencia), P&L abierto, tiles Pos./Riesgo/MKT VL/Liquidez, salud (EL/NLV, EL/margen, apalancamiento) y un expandible "Estado de cuenta" con los campos de cash negativo y margen por bróker, Excess Liq, avisos y las barras de zona EL/NLV y EL/MRGN. El cambio del día se calcula contra el snapshot más reciente de un día anterior (los guarda 🔄 Precios); sin snapshot previo lo dice en vez de inventar, y con un filtro de bróker activo no se muestra (los snapshots son de la cartera entera). */ /* v1.41: RESUMEN EJECUTIVO — nueva primera pestaña de Portfolio (y la que abre por defecto), de la que se sigue deslizando a B0, B1… con el gesto de siempre. Hero con NLV grande, P&L abierto y tiles de posiciones/riesgo/liquidez + salud de cuenta (EL/NLV, EL/margen, apalancamiento) coloreada por sus umbrales y tocable para abrir su ficha. Debajo, donut de DISTRIBUCIÓN POR BLOQUES (% de NLV que ocupa cada uno) con el % desplegado en el centro; tocar una porción muestra su bloque en el centro y resalta su fila. Leyenda con una fila por bloque: capital, % de NLV en el color de su estado, barra con la BANDA OBJETIVO marcada en el carril y el desvío en texto ("en banda" / "por debajo X" / "por encima X"); tocar el nombre salta a la pestaña de ese bloque. */ /* v1.40 FIX maquetación de la tarjeta combinada (se solapaban/pisaban datos en iOS): items del carrusel con width explícito en vez de flex-basis % (Safari lo resuelve mal contra el padding del scroller); la tarjeta pasa de grid a columna flex con gap y overflow:hidden; TKR y chapa con elipsis/flex:none; cada mini-tile con minWidth:0 + overflow:hidden y valor/etiqueta con elipsis (fuentes 14/13) para que nunca derramen sobre el vecino; el pie gana flexWrap para que los 3 botones bajen de línea en pantallas estrechas en vez de aplastar el texto. */ /* v1.39: (1) el comparador de anchos SUBE junto al selector del ala — al elegir el ancho aparece el crédito mínimo a pedir (⅓) y, con el crédito apuntado, la misma fórmula que vivía abajo: ratio, pérdida/contrato, WR mínimo (break-even), contratos contra el riesgo objetivo y EV con la POP open del histórico; desaparecen la sección "Comparar anchos de ala" y los campos cr2/cr25/cr3/cr5/cr10. (2) UN solo carrusel con tarjeta COMBINADA por ticker (unión de ideas + histórico, orden alfabético): TKR + chapa (GO/CAUTION/NO-GO, A MEDIAS si la idea está incompleta, SOLO TABLA si no hay idea), estructura+EM, barra POP open, fila de mini-tiles de la idea (Crédito/EV/Contratos) y fila del histórico (IV crush/Peor gap/|open|/EM); pie con N, próximo ± y fecha + botones Abrir, ✕ idea y ✕ tabla (dos toques cada uno); tocar carga la idea o, si no hay, vuelca el histórico. El carrusel de abajo desaparece; la sección del histórico queda con el lector de tablas y los campos M/X/U. */ /* v1.38: los dos carruseles comparten ORDEN — alfabético por ticker (ideasSorted / histSyms), así la posición N de arriba y la de abajo son el mismo ticker cuando existe en ambos; el histórico deja de ordenarse por última actualización. */ /* v1.37: sincronía entre los dos carruseles — deslizar el de ideas lleva el del histórico al mismo ticker y viceversa (SnapCarousel gana keys/activeKey/onActiveKey; scroll suave programático con guarda anti-bucle progRef; solo mueve el scroll, no carga nada), y tocar/cargar una tarjeta también alinea el otro carrusel. Además las tarjetas de ideas pasan a stats VIVAS: si el ticker tiene histórico de tablas, M/X/U (y por tanto POP/EV/veredicto) salen del histórico actual en vez de los valores congelados al guardar — releer la tabla tras un earnings actualiza la idea sola; cargar la idea también carga los vivos. */ /* v1.36 FIX: los carruseles se salían del ancho del móvil — SnapCarousel es hijo directo de un grid y los items de grid tienen min-width:auto por defecto, así que el track crecía al max-content de todas las tarjetas en fila; minWidth:0/maxWidth:100% en el carrusel y minWidth:0 en los wrappers y tarjetas, y fuera el nowrap del mini-tile |open|/EM. */ /* v1.35 UX: carrusel deslizable con snap (SnapCarousel: scroll horizontal nativo + scroll-snap, momentum de iOS, dots que siguen la posición, sangrado a los bordes de la tarjeta; con una sola tarjeta no hay scroll ni dots) para las ideas guardadas y el histórico de tablas; tarjetas rediseñadas — idea: TKR grande + chapa GO/CAUTION/NO-GO (o A MEDIAS), estructura y EM, barra de POP open del color del veredicto y mini-tiles Crédito/EV/Contratos; histórico: TKR + N + próximo ±, barra de POP open y mini-tiles IV crush / Peor gap / |open|/EM. Los botones Abrir y ✕ viven en el pie de cada tarjeta. No choca con el swipe entre bloques (ignora gestos nacidos en scroll horizontal). */ /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -984,7 +984,7 @@ async function fetchQuote(symbol, key) {
     const j = await r.json();
     /* v1.48: Finnhub ya devuelve el cambio del día del subyacente (dp = % y pc = cierre anterior);
        lo aprovechamos para los movers en vez de derivarlo de snapshots. */
-    if (j && typeof j.c === "number" && j.c > 0) return { price: j.c, dp: typeof j.dp === "number" ? j.dp : (typeof j.pc === "number" && j.pc > 0 ? (j.c / j.pc - 1) * 100 : null) };
+    if (j && typeof j.c === "number" && j.c > 0) return { price: j.c, pc: typeof j.pc === "number" && j.pc > 0 ? j.pc : null, dp: typeof j.dp === "number" ? j.dp : (typeof j.pc === "number" && j.pc > 0 ? (j.c / j.pc - 1) * 100 : null) };
     return { error: "símbolo no cubierto" };
   } catch (e) {
     return { error: "red/CORS: " + (e && e.message ? e.message : "fetch falló") };
@@ -1448,12 +1448,67 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
     </div>
   );
 }
+/* ---------- v1.60: ScanOverlay ----------
+   Los lectores de capturas tardan varios segundos (redimensionar → subir → que el modelo lea → volcar),
+   y hasta ahora solo cambiaba el texto de un botón: parecía colgado, sobre todo con varias capturas.
+   Este overlay muestra el paso vivo con un anillo girando, marca en verde los pasos ya hechos y, en
+   los lotes, el progreso "captura N de M". No inventa progreso: los pasos los va marcando el propio
+   lector conforme ocurren. ---------- */
+const SCAN_STEPS = ["Preparando la imagen", "Enviando al lector", "Leyendo los datos", "Volcando al formulario"];
+function ScanOverlay({ open, step, sub, steps }) {
+  if (!open) return null;
+  const list = steps || SCAN_STEPS;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 120, background: DARK ? "rgba(0,0,0,0.62)" : "rgba(24,22,26,0.42)",
+      backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ background: T.card, borderRadius: 26, padding: "26px 22px", width: "100%", maxWidth: 320, boxShadow: T.shadow,
+        display: "grid", gap: 18, justifyItems: "center", animation: "scanIn .22s ease-out" }}>
+        <div style={{ position: "relative", width: 62, height: 62 }}>
+          <svg width="62" height="62" viewBox="0 0 62 62" style={{ animation: "scanSpin 1s linear infinite" }}>
+            <circle cx="31" cy="31" r="26" fill="none" stroke={T.line} strokeWidth="5" />
+            <circle cx="31" cy="31" r="26" fill="none" stroke={T.purple} strokeWidth="5" strokeLinecap="round"
+              strokeDasharray="41 122" />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ActIcon name="camera" size={20} color={T.purple} />
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: 3, justifyItems: "center", textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Leyendo la captura</div>
+          {sub && <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>{sub}</div>}
+        </div>
+        <div style={{ display: "grid", gap: 9, width: "100%" }}>
+          {list.map((s, i) => {
+            const done = i < step, now = i === step;
+            return (
+              <div key={s} style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+                <span style={{ flex: "none", width: 17, height: 17, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: done ? T.green : now ? T.tilePurple : T.tile, animation: now ? "scanPulse 1.1s ease-in-out infinite" : "none" }}>
+                  {done ? (
+                    <svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 6.4 4.6 9 10 3.2" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  ) : (
+                    <span style={{ width: 5, height: 5, borderRadius: 3, background: now ? T.purple : T.line }} />
+                  )}
+                </span>
+                <span style={{ fontSize: 12.5, fontWeight: now ? 800 : 700, color: done ? T.sub : now ? T.ink : T.sub, minWidth: 0,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 /* ---------- v1.47: mayores movers del día ----------
    Debajo de la distribución, en la pestaña Resumen. Δ P&L de la posición desde el cierre del último
    día con snapshot, y Δ% del subyacente al lado cuando ese snapshot guardó la cotización. Barras
    proporcionales al mayor movimiento del día, para leer la magnitud sin comparar números. */
-function MoversCard({ movers }) {
-  if (!movers) return null;
+function MoversCard({ movers, onRefresh, refreshing }) {
+  /* v1.59: la tarjeta nunca desaparece. Si todavía no hay datos del día (hace falta un 🔄 Precios
+     para traer el cierre anterior de cada subyacente), enseña el botón para traerlos — una acción,
+     no un cartel explicativo. */
+  const maxD = movers ? movers.max : 1;
 
   const Row = ({ r, col }) => (
     /* v1.56: tarjeta de altura constante — la chapa del % se pinta SIEMPRE; si el subyacente no trae
@@ -1473,7 +1528,7 @@ function MoversCard({ movers }) {
         <span style={{ flex: "none", fontSize: 16, fontWeight: 800, color: col, letterSpacing: -0.4, lineHeight: 1.2, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{signMoney(r.d)}</span>
       </div>
       <div style={{ height: 6, background: T.card, borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ width: Math.max(3, (Math.abs(r.d) / movers.max) * 100) + "%", height: "100%", background: col, borderRadius: 3 }} />
+        <div style={{ width: Math.max(3, (Math.abs(r.d) / maxD) * 100) + "%", height: "100%", background: col, borderRadius: 3 }} />
       </div>
     </div>
   );
@@ -1490,11 +1545,18 @@ function MoversCard({ movers }) {
         <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Movers del día</span>
         <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub }}>$ de tu posición · % del subyacente</span>
       </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, minWidth: 0 }}>
-        <Col title="Ganadores" rows={movers.up} col={T.green} />
-        <Col title="Perdedores" rows={movers.dn} col={T.red} />
-      </div>
+      {movers ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, minWidth: 0 }}>
+          <Col title="Ganadores" rows={movers.up} col={T.green} />
+          <Col title="Perdedores" rows={movers.dn} col={T.red} />
+        </div>
+      ) : (
+        <button type="button" onClick={onRefresh} disabled={refreshing}
+          style={{ border: "none", cursor: refreshing ? "default" : "pointer", borderRadius: 14, padding: "12px 0", fontSize: 13.5, fontWeight: 800, background: T.tile, color: T.ink,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <SetIcon name="refresh" size={15} color={T.ink} />{refreshing ? "Actualizando…" : "Actualizar precios"}
+        </button>
+      )}
     </div>
   );
 }
@@ -4809,6 +4871,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   /* v1.29: histórico persistente por ticker (tabla Historical Earnings Data) */
   const [hist, setHist] = useState(loadErHist);
   const [tblBusy, setTblBusy] = useState(false);
+  const [scan, setScan] = useState(null); // v1.60: { step, sub } del overlay de lectura
   const [tblMsg, setTblMsg] = useState("");
   const [delArm, setDelArm] = useState(null); // ticker armado para borrar (dos toques)
   const tblLockRef = useRef(false);
@@ -4880,14 +4943,23 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     const typed = String(st.tkr || "").trim().toUpperCase();
     const notes = []; const savedSyms = [];
     const store = { ...loadErHist() };
-    for (const f of list) {
+    const many = list.length > 1;
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      const sub = many ? "Captura " + (i + 1) + " de " + list.length : null;
+      /* los pasos se marcan según ocurren de verdad: preparar (resize) → enviar → leer → volcar */
+      setScan({ step: 0, sub });
+      await new Promise((r) => setTimeout(r, 60)); // deja pintar el overlay antes de bloquear con el resize
+      setScan({ step: 1, sub });
       let data = null, lastErr = null;
       for (const model of GEMINI_MODELS) {
         try { data = await extractEarningsTableFromImage(f, geminiKey, model); break; }
         catch (err) { lastErr = err; if (err.status !== 429) break; }
       }
+      setScan({ step: 2, sub });
       const clean = data && Array.isArray(data.eventos) ? data.eventos.map(normalizeErEvent).filter(Boolean) : [];
       if (!clean.length) { notes.push("✕ " + (lastErr && lastErr.message ? lastErr.message : "una captura sin filas legibles")); continue; }
+      setScan({ step: 3, sub });
       const seen = String((data && data.ticker) || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8);
       const sym = seen || (list.length === 1 ? typed : "");
       if (!sym) { notes.push("✕ una captura sin ticker visible — amplíala para que salga la cabecera"); continue; }
@@ -4897,6 +4969,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
       const s = erStats(store[sym].events);
       notes.push((seen && typed && list.length === 1 && seen !== typed ? "⚠ la captura es de " + seen + ", no de " + typed + " — guardado bajo " + seen + " · " : "") + sym + ": " + clean.length + " filas · " + s.M + " completos" + (isFinite(s.nextEm) ? " · próximo ±" + s.nextEm + "%" : ""));
     }
+    setScan(null);
     setTblBusy(false); tblLockRef.current = false;
     if (savedSyms.length) {
       saveErHist(store); setHist(store);
@@ -5017,6 +5090,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
       <div style={{ fontSize: 16, fontWeight: 800, color: T.ink, letterSpacing: -0.3, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="calc" size={18} />Análisis de earnings</div>
       <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2, marginBottom: 14 }}>Estrategia · estructura · probabilidad · sizing — todo antes de abrir</div>
       <div style={{ display: "grid", gap: 10 }}>
+        <ScanOverlay open={!!scan} step={scan ? scan.step : 0} sub={scan ? scan.sub : null} />
         {unionSyms.length > 0 && (
           <>
             <WizSection>▸ Earnings por ticker</WizSection>
@@ -5333,6 +5407,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
     else setSpotMsg((m) => ({ ...m, [tr.id]: "No pude leer el precio: " + (q.error || "error") }));
   };
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [scan, setScan] = useState(null); // v1.60: overlay de lectura
   /* algunos iOS disparan el evento "change" del <input type=file> DOS veces para la misma selección
      (sobre todo saliendo de la cámara/galería) — sin esto, "una foto" podía convertirse en 2 llamadas
      a Gemini de golpe. setOcrBusy(true) es async (no se ve hasta el siguiente render), así que un ref
@@ -5493,6 +5568,9 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
     const results = new Array(list.length);
     const trades = new Array(list.length);
     let doneCount = 0;
+    /* v1.60: el overlay refleja el progreso real del lote; como las capturas van en paralelo, el paso
+       vivo es "leyendo" y el subtítulo lleva la cuenta de las terminadas. */
+    setScan({ step: 1, sub: multi ? "0 de " + list.length + " capturas" : null });
     setOcrMsg(multi ? `Leyendo ${list.length} capturas… (0/${list.length})` : (gkey ? "Leyendo captura con Gemini…" : "Leyendo captura…"));
     let nextIndex = 0;
     const worker = async () => {
@@ -5503,6 +5581,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
         trades[i] = trade;
         results[i] = multi ? `#${i + 1}: ${message}` : message;
         doneCount++;
+        setScan({ step: doneCount >= list.length ? 3 : 2, sub: multi ? doneCount + " de " + list.length + " capturas" : null });
         if (multi) setOcrMsg(`Leyendo ${list.length} capturas… (${doneCount}/${list.length})`);
       }
     };
@@ -5518,6 +5597,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
       }
     }
     if (newRows.length) setTrades((ts) => [...newRows, ...ts]);
+    setScan(null);
     setOcrBusy(false);
     ocrLockRef.current = false;
     setOcrMsg(results.join("  ·  ") + ". Revisa los campos antes de usarlos.");
@@ -5530,6 +5610,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
 
   return (
     <>
+      <ScanOverlay open={!!scan} step={scan ? scan.step : 0} sub={scan ? scan.sub : null} />
       {baseEmpty && (
         <div style={{ background: T.card, borderRadius: 24, padding: 18, marginBottom: 16, boxShadow: T.shadow, fontSize: 13.5, color: T.sub, fontWeight: 600, lineHeight: 1.5 }}>
           El estado base (NLV, Margin, Excess Liq) sale de la tarjeta Cuenta de arriba — la misma de Portfolio. Añade posiciones y cash/margin en Portfolio y el Comparador evalúa contra esos números.
@@ -5743,6 +5824,11 @@ function App() {
      con la fecha: si es de otro día ya no vale y se ignora (no se enseña un % viejo como si fuera de hoy). */
   const [dayPct, setDayPct] = useState(() => {
     try { const j = JSON.parse(localStorage.getItem(KEY_DAYPCT) || "null"); return j && j.date === new Date().toISOString().slice(0, 10) && j.pct ? j.pct : {}; } catch (e) { return {}; }
+  });
+  /* v1.58: cierre anterior por ticker (pc de Finnhub). Con él, el movimiento del día de una posición
+     en acciones se calcula solo: (último − cierre anterior) × qty. Sin snapshots, sin esperar a mañana. */
+  const [dayPrev, setDayPrev] = useState(() => {
+    try { const j = JSON.parse(localStorage.getItem(KEY_DAYPCT) || "null"); return j && j.date === new Date().toISOString().slice(0, 10) && j.pc ? j.pc : {}; } catch (e) { return {}; }
   });
   const navBarRef = useRef(null);
   const [navHover, setNavHover] = useState(null); // índice de pestaña bajo el dedo al deslizar por el menú inferior
@@ -6145,16 +6231,17 @@ function App() {
     const results = {};
     const errors = {};
     const chg = {};
+    const prevC = {};
     for (const t of tickers) {
       const res = await fetchQuote(t, key);
-      if (res.price != null) { results[t] = res.price; if (res.dp != null && isFinite(res.dp)) chg[t] = res.dp / 100; }
+      if (res.price != null) { results[t] = res.price; if (res.dp != null && isFinite(res.dp)) chg[t] = res.dp / 100; if (res.pc != null && isFinite(res.pc)) prevC[t] = res.pc; }
       else errors[res.error] = (errors[res.error] || 0) + 1;
       await new Promise((r) => setTimeout(r, 150));
     }
     /* v1.48: el % del día del subyacente viene del propio Finnhub — no hay que derivarlo de nada */
-    if (Object.keys(chg).length) {
-      setDayPct(chg);
-      try { localStorage.setItem(KEY_DAYPCT, JSON.stringify({ date: new Date().toISOString().slice(0, 10), pct: chg })); } catch (e) {}
+    if (Object.keys(chg).length || Object.keys(prevC).length) {
+      setDayPct(chg); setDayPrev(prevC);
+      try { localStorage.setItem(KEY_DAYPCT, JSON.stringify({ date: new Date().toISOString().slice(0, 10), pct: chg, pc: prevC })); } catch (e) {}
     }
     /* v5.31: aplica los precios sobre el estado MÁS RECIENTE (ref + updater funcional), nunca sobre la copia
        capturada al empezar. Así, si durante la descarga terminó la carga/fusión de posiciones, no se pierde
@@ -6309,37 +6396,41 @@ function App() {
   /* v1.47: mayores movers del día — Δ P&L por ticker contra el snapshot del último día cerrado, y
      Δ% del precio del subyacente si ese snapshot guardó cotización (v1.47+). Solo entran tickers que
      YA existían en el snapshot: una posición abierta hoy no es un "movimiento", es capital nuevo. */
+  /* v1.58: movers del día SIN depender de snapshots.
+     - Posiciones con P&L automático (acciones): el movimiento del día es exacto y directo —
+       (último − cierre anterior de Finnhub) × qty. No hay que comparar con nada guardado.
+     - Estructuras con P&L manual (condors, spreads, 0DTE de SPX): la app NO tiene mark intradía,
+       así que su P&L solo cambia si Victor lo edita. Su movimiento del día se toma del snapshot
+       por posición (posPnl) cuando lo haya, y si no, es 0 — nunca inventado.
+     En ambos casos solo cuentan posiciones que siguen ABIERTAS: abrir o cerrar no es un movimiento
+     de mercado, es rotación de capital (era el fantasma de SPX en la v1.56). */
   const movers = useMemo(() => {
     const hoy = new Date().toISOString().slice(0, 10);
-    /* v1.57: solo posiciones presentes en AMBOS momentos (misma id) — una posición abierta o cerrada
-       desde el snapshot no es un movimiento del mercado, es rotación de capital, y colarla aquí
-       producía movers falsos (el caso de SPX: 0DTE cerrados y reabiertos el mismo día).
-       `active` ya viene filtrado por bróker, así que el filtro de bróker sale gratis. */
     const prev = (snapshots || []).filter((s) => s && s.date < hoy && s.posPnl)
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
-    if (!prev) return null;
-    const base = prev.posPnl;
+    const base = prev ? prev.posPnl : null;
     const agg = {};
     active.forEach((p) => {
-      if (!p.tkr || p.id == null || base[p.id] == null) return;
-      if (!agg[p.tkr]) agg[p.tkr] = { d: 0, last: NaN };
-      agg[p.tkr].d += effPnl(p) - n(base[p.id]);
-      const lp = n(p.last);
-      if (lp > 0) agg[p.tkr].last = lp;
+      if (!p.tkr) return;
+      let d = null;
+      const pc = n(dayPrev[p.tkr]), last = n(p.last);
+      /* el P&L de ayer se obtiene evaluando la MISMA fórmula de la app con el cierre anterior como
+         spot: vale igual para acciones (lineal) que para opciones cortas (simulación a vencimiento,
+         no lineal), sin duplicar la matemática ni aproximarla. */
+      if (isAutoPnl(p) && pc > 0 && last > 0) d = effPnl(p) - effPnl({ ...p, last: String(pc) });
+      else if (base && p.id != null && base[p.id] != null) d = effPnl(p) - n(base[p.id]);
+      if (d == null || !isFinite(d)) return;
+      if (!agg[p.tkr]) agg[p.tkr] = 0;
+      agg[p.tkr] += d;
     });
-    const snapTk = prev.tickers || {};
-    const rows = Object.keys(agg).map((t) => {
-      const pxPrev = n(snapTk[t] && snapTk[t].last), pxNow = agg[t].last;
-      const live = dayPct[t];
-      const fromSnap = pxPrev > 0 && isFinite(pxNow) && pxNow > 0 ? pxNow / pxPrev - 1 : NaN;
-      return { tkr: t, d: agg[t].d, pxPct: isFinite(live) ? live : fromSnap };
-    }).filter((r) => isFinite(r.d) && Math.round(r.d) !== 0);
+    const rows = Object.keys(agg).map((t) => ({ tkr: t, d: agg[t], pxPct: isFinite(dayPct[t]) ? dayPct[t] : NaN }))
+      .filter((r) => isFinite(r.d) && Math.round(r.d) !== 0);
     if (!rows.length) return null;
     const up = rows.filter((r) => r.d > 0).sort((a, b) => b.d - a.d).slice(0, 3);
     const dn = rows.filter((r) => r.d < 0).sort((a, b) => a.d - b.d).slice(0, 3);
     const max = Math.max(...rows.map((r) => Math.abs(r.d)), 1);
     return { up, dn, max };
-  }, [snapshots, active, broker, dayPct]);
+  }, [snapshots, active, broker, dayPct, dayPrev]);
 
   const dayChg = useMemo(() => {
     const hoy = new Date().toISOString().slice(0, 10);
@@ -6396,6 +6487,7 @@ function App() {
   const [wizForm, setWizForm] = useState({});
   const [wizOcrBusy, setWizOcrBusy] = useState(false);
   const [wizOcrMsg, setWizOcrMsg] = useState("");
+  const [scan, setScan] = useState(null); // v1.60: overlay de lectura de capturas (wizard)
   const wizPhotoRef = useRef(null);
   const openWizard = () => {
     setWizBlock(null); setWizNat(null); setWizStrat(""); setWizStep(1); setWizSub(1);
@@ -6441,17 +6533,22 @@ function App() {
     const gkey = (geminiKey || (() => { try { return localStorage.getItem(KEY_GEMINI) || ""; } catch (e) { return ""; } })() || "").trim();
     if (!gkey) { setWizOcrMsg("Añade tu API key de Gemini en Ajustes para leer capturas."); return; }
     setWizOcrBusy(true); setWizOcrMsg("Leyendo captura…");
+    setScan({ step: 0, sub: null });
+    await new Promise((r) => setTimeout(r, 60));
+    setScan({ step: 1, sub: null });
     try {
       const { result, message } = await readLegsFallback(file, gkey, (ms) => setWizOcrMsg("Límite de Gemini alcanzado, esperando " + Math.ceil(ms / 1000) + "s…"));
       if (!result) { setWizOcrMsg(message || "No pude leer la captura."); return; }
+      setScan({ step: 2, sub: null });
       const patch = mapLegsToWizForm(result, wizStrat);
       const keys = Object.keys(patch).filter((k) => patch[k] !== "" && patch[k] != null);
       if (!keys.length) { setWizOcrMsg("No reconocí datos aplicables a esta estrategia en la captura."); return; }
+      setScan({ step: 3, sub: null });
       setWizForm((f) => ({ ...f, ...patch }));
       setWizOcrMsg("✓ " + keys.length + " campos rellenados — revísalos antes de guardar.");
     } catch (e) {
       setWizOcrMsg("Error: " + String((e && e.message) || e));
-    } finally { setWizOcrBusy(false); }
+    } finally { setWizOcrBusy(false); setScan(null); }
   };
   const wizSave = () => {
     const f = wizForm;
@@ -7124,6 +7221,9 @@ function App() {
         button{-webkit-appearance:none;appearance:none;}
         *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
         @keyframes pullSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes scanSpin { to { transform: rotate(360deg); } }
+        @keyframes scanPulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+        @keyframes scanIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
       `}</style>
       {/* indicador global de descarga de precios (v5.07): píldora pequeña fija en la esquina superior
          derecha — antes iba centrada y tapaba el título "Portfolio". Ahora vive en el hueco vacío a la
@@ -7141,6 +7241,7 @@ function App() {
           </div>
         </div>
       )}
+      <ScanOverlay open={!!scan} step={scan ? scan.step : 0} sub={scan ? scan.sub : null} />
       {(view === "bloques" || view === "vencimientos") && pullDist > 0 && !refreshing && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: pullDist, overflow: "hidden", marginBottom: 4 }}>
           <span style={{ fontSize: 20, display: "inline-block", animation: pullDist >= PULL_THRESHOLD ? "pullSpin 0.8s linear infinite" : "none", opacity: Math.min(pullDist / PULL_THRESHOLD, 1) }}>🔄</span>
@@ -7303,7 +7404,7 @@ function App() {
         {activeTab === "resumen" ? (
           <>
             <BlockDistribution nlv={nlv} blockTotals={blockTotals} onGoBlock={selectTab} />
-            <MoversCard movers={movers} />
+            <MoversCard movers={movers} onRefresh={pullRefreshNow} refreshing={refreshing} />
           </>
         ) : isBlockTab ? (
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
