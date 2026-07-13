@@ -127,7 +127,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.32"; /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
+const APP_VERSION = "1.34"; /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4512,7 +4512,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   const [ideaArm, setIdeaArm] = useState(null); // id de idea armada para borrar (dos toques)
   const [ideaMsg, setIdeaMsg] = useState("");
   const [st, setSt] = useState(() => {
-    const base = { tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", obj: String(getRiesgoObj()), nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", cr25: "", cr5: "", cr10: "" };
+    const base = { tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", obj: String(getRiesgoObj()), nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", cr2: "", cr25: "", cr3: "", cr5: "", cr10: "" };
     try { const raw = localStorage.getItem(KEY_EARNCALC); if (raw) return { ...base, ...JSON.parse(raw), obj: String(getRiesgoObj()) }; } catch (e) {}
     return base;
   });
@@ -4538,46 +4538,49 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     if (isFinite(s.nextEm)) patch.em = String(s.nextEm);
     setMany(patch);
   };
-  /* v1.29: lee UNA captura de la tabla "Historical Earnings Data" y la guarda por ticker.
-     v1.30: el ticker sale de la propia captura si incluye la cabecera (amplía la foto para que salga);
-     si no se ve, se usa el del campo Ticker. Si ambos existen y no coinciden, manda la captura
-     (es la fuente de los datos) y se avisa — así una tabla de JPM nunca se guarda bajo NVDA. */
+  /* v1.29: lector de la tabla "Historical Earnings Data". v1.30: el ticker sale de la propia
+     captura si incluye la cabecera; si campo y captura no coinciden manda la captura y se avisa.
+     v1.34: MULTI-captura — hasta 6 de golpe, una tabla por ticker, y cada una se guarda bajo el
+     ticker leído de SU cabecera (en lote, una captura sin cabecera se salta con aviso: usar el
+     campo Ticker solo es fiable cuando hay una única foto). La calculadora se rellena con el
+     ticker del campo si está entre los leídos, o con el primero del lote.
+     Cada captura reintenta la cadena de modelos si hay 429, igual que el resto de lectores. */
   const runTableOcr = async (files) => {
-    const f = Array.from(files || [])[0];
-    if (!f) return;
+    const list = Array.from(files || []).slice(0, 6);
+    if (!list.length) return;
     if (tblLockRef.current) return;
     if (!geminiKey) { setTblMsg("Sin key de Gemini — actívala en Ajustes → Lector de capturas."); setTimeout(() => setTblMsg(""), 8000); return; }
     tblLockRef.current = true; setTblBusy(true); setTblMsg("");
-    let data = null, lastErr = null;
-    for (const model of GEMINI_MODELS) {
-      try { data = await extractEarningsTableFromImage(f, geminiKey, model); break; }
-      catch (err) { lastErr = err; if (err.status !== 429) break; }
+    const typed = String(st.tkr || "").trim().toUpperCase();
+    const notes = []; const savedSyms = [];
+    const store = { ...loadErHist() };
+    for (const f of list) {
+      let data = null, lastErr = null;
+      for (const model of GEMINI_MODELS) {
+        try { data = await extractEarningsTableFromImage(f, geminiKey, model); break; }
+        catch (err) { lastErr = err; if (err.status !== 429) break; }
+      }
+      const clean = data && Array.isArray(data.eventos) ? data.eventos.map(normalizeErEvent).filter(Boolean) : [];
+      if (!clean.length) { notes.push("✕ " + (lastErr && lastErr.message ? lastErr.message : "una captura sin filas legibles")); continue; }
+      const seen = String((data && data.ticker) || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8);
+      const sym = seen || (list.length === 1 ? typed : "");
+      if (!sym) { notes.push("✕ una captura sin ticker visible — amplíala para que salga la cabecera"); continue; }
+      const prev = store[sym] && Array.isArray(store[sym].events) ? store[sym].events : [];
+      store[sym] = { events: mergeErEvents(prev, clean), updated: Date.now() };
+      if (savedSyms.indexOf(sym) < 0) savedSyms.push(sym);
+      const s = erStats(store[sym].events);
+      notes.push((seen && typed && list.length === 1 && seen !== typed ? "⚠ la captura es de " + seen + ", no de " + typed + " — guardado bajo " + seen + " · " : "") + sym + ": " + clean.length + " filas · " + s.M + " completos" + (isFinite(s.nextEm) ? " · próximo ±" + s.nextEm + "%" : ""));
     }
     setTblBusy(false); tblLockRef.current = false;
-    const clean = data && Array.isArray(data.eventos) ? data.eventos.map(normalizeErEvent).filter(Boolean) : [];
-    if (!clean.length) {
-      setTblMsg("✕ " + (lastErr && lastErr.message ? lastErr.message : "la captura no tenía filas legibles"));
-      setTimeout(() => setTblMsg(""), 20000);
-      return;
+    if (savedSyms.length) {
+      saveErHist(store); setHist(store);
+      const target = savedSyms.indexOf(typed) >= 0 ? typed : savedSyms[0];
+      const s = erStats(store[target].events);
+      const patch = { tkr: target, nHist: String(s.M), xOpen: String(s.xOpen), xClose: String(s.xClose), xHigh: String(s.xHigh), xLow: String(s.xLow), nUp: String(s.nUp) };
+      if (isFinite(s.nextEm)) patch.em = String(s.nextEm);
+      setMany(patch);
     }
-    const seen = String((data && data.ticker) || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8);
-    const typed = String(st.tkr || "").trim().toUpperCase();
-    const sym = seen || typed;
-    if (!sym) {
-      setTblMsg("No veo el ticker en la captura y el campo Ticker está vacío — amplía la captura para que salga la cabecera (arriba a la izquierda) o escríbelo antes de leer.");
-      setTimeout(() => setTblMsg(""), 20000);
-      return;
-    }
-    const next = { ...loadErHist() };
-    const prev = next[sym] && Array.isArray(next[sym].events) ? next[sym].events : [];
-    next[sym] = { events: mergeErEvents(prev, clean), updated: Date.now() };
-    saveErHist(next); setHist(next);
-    const s = erStats(next[sym].events);
-    const patch = { tkr: sym, nHist: String(s.M), xOpen: String(s.xOpen), xClose: String(s.xClose), xHigh: String(s.xHigh), xLow: String(s.xLow), nUp: String(s.nUp) };
-    if (isFinite(s.nextEm)) patch.em = String(s.nextEm);
-    setMany(patch);
-    const warn = seen && typed && seen !== typed ? "⚠ La captura es de " + seen + ", no de " + typed + " — guardado bajo " + seen + ". " : "";
-    setTblMsg(warn + sym + ": " + clean.length + " filas leídas · " + s.M + " trimestres completos guardados" + (isFinite(s.nextEm) ? " · próximo ER ±" + s.nextEm + "%" : "") + ". Revisa los números antes de fiarte.");
+    setTblMsg(notes.join(" · ") + (savedSyms.length ? ". Revisa los números antes de fiarte." : ""));
     setTimeout(() => setTblMsg(""), 20000);
   };
   const dropHistTkr = (sym) => {
@@ -4601,6 +4604,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     setTimeout(() => setIdeaMsg(""), 5000);
   };
   const loadIdea = (rec) => { if (rec && rec.form) setMany({ ...rec.form, obj: String(getRiesgoObj()) }); };
+  /* v1.34: vaciar el formulario para el siguiente análisis — el riesgo objetivo (global) se conserva
+     y ni las ideas guardadas ni el histórico de tablas se tocan (cada uno tiene su ✕ propia). */
+  const clearCalc = () => setMany({ tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", cr2: "", cr25: "", cr3: "", cr5: "", cr10: "" });
   const dropIdea = (id) => {
     if (ideaArm !== id) { setIdeaArm(id); setTimeout(() => setIdeaArm((d) => (d === id ? null : d)), 3000); return; }
     const list = loadErIdeas().filter((x) => x && x.id !== id);
@@ -4758,7 +4764,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" }}>
             <label style={{ display: "block" }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 5 }}>Ancho del ala</div>
-              <Pill options={["2.5", "5", "10"]} value={st.wing} onChange={set("wing")} size="sm" />
+              <Pill options={["2", "2.5", "3", "5", "10"]} value={st.wing} onChange={set("wing")} size="sm" />
             </label>
             <button type="button" onClick={genSpreads}
               style={{ border: "none", cursor: "pointer", borderRadius: 12, height: 40, fontSize: 13, fontWeight: 800, background: T.tile, color: T.ink }}>
@@ -4780,11 +4786,11 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           <div style={{ background: tblBusy ? T.tile : T.tilePurple, borderRadius: 14, padding: "12px 14px", textAlign: "center", fontSize: 13.5, fontWeight: 800, color: tblBusy ? T.sub : T.purple }}>
             {tblBusy ? "Leyendo tabla…" : <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ActIcon name="camera" size={15} />Leer tabla de earnings</span>}
           </div>
-          <input type="file" accept="image/*" disabled={tblBusy} style={{ display: "none" }}
+          <input type="file" accept="image/*" multiple disabled={tblBusy} style={{ display: "none" }}
             onChange={(e) => { runTableOcr(e.target.files); e.target.value = ""; }} />
         </label>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
-          Una captura de la tabla <b>Historical Earnings Data</b> trae todo el histórico de golpe: expected move, IV crush y los movimientos antes, durante y después de cada earnings. Amplía la foto para que salga la cabecera con el ticker y se guarda solo (si no sale, usa el campo Ticker). La fila superior sin resultados es el próximo earnings: su ± se vuelca a Expected move.
+          Cada captura de la tabla <b>Historical Earnings Data</b> trae el histórico entero de un ticker: sube hasta 6 de golpe (una tabla por ticker) y cada una se guarda bajo el ticker de su cabecera — amplía las fotos para que salga. Trae expected move, IV crush y los movimientos antes, durante y después de cada earnings; la fila superior sin resultados es el próximo, y su ± se vuelca a Expected move.
         </div>
         {tblMsg && <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.4 }}>{tblMsg}</div>}
         {Object.keys(hist).length > 0 && (
@@ -4894,7 +4900,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
             <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
               Apunta el crédito que cotiza cada ancho en tu bróker. El ancho bueno es el más estrecho que aún paga ≥ ⅓ — como cierras en el open casi nunca tocas el ala, así que pagarla cara es riesgo que no usas.
             </div>
-            {[["2.5", "cr25"], ["5", "cr5"], ["10", "cr10"]].map(([w, ck]) => {
+            {[["2", "cr2"], ["2.5", "cr25"], ["3", "cr3"], ["5", "cr5"], ["10", "cr10"]].map(([w, ck]) => {
               const wN = parseFloat(w);
               const cN = pf(st[ck]);
               const okC = isFinite(cN) && cN > 0;
@@ -4948,12 +4954,21 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
             </div>
           </>
         )}
-        {String(st.tkr || "").trim() !== "" && (
-          <button type="button" onClick={saveIdea}
-            style={{ border: "none", cursor: "pointer", borderRadius: 14, padding: "12px 0", fontSize: 13.5, fontWeight: 800, background: T.tile, color: T.ink }}>
-            Guardar idea · {String(st.tkr).trim().toUpperCase()}
+        <div style={{ display: "grid", gridTemplateColumns: String(st.tkr || "").trim() !== "" ? "1fr 1fr" : "1fr", gap: 10 }}>
+          <button type="button" onClick={clearCalc}
+            style={{ border: "none", cursor: "pointer", borderRadius: 14, padding: "12px 0", fontSize: 13.5, fontWeight: 800, background: T.tile, color: T.sub }}>
+            Limpiar
           </button>
-        )}
+          {String(st.tkr || "").trim() !== "" && (
+            <button type="button" onClick={saveIdea}
+              style={{ border: "none", cursor: "pointer", borderRadius: 14, padding: "12px 0", fontSize: 13.5, fontWeight: 800, background: T.dark, color: "#fff" }}>
+              Guardar idea · {String(st.tkr).trim().toUpperCase()}
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.4, padding: "0 2px" }}>
+          Limpiar vacía solo el formulario (el riesgo objetivo se conserva) — las ideas guardadas y el histórico de tablas no se tocan.
+        </div>
         {ideaMsg && <div style={{ background: T.tileGreen, borderRadius: 12, padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: T.green, lineHeight: 1.4 }}>{ideaMsg}</div>}
       </div>
     </div>
