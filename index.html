@@ -129,7 +129,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "1.61"; /* v1.61 FIX (Victor: "esto no ajusta según el tamaño de ala que marque"): el sizing (pérdida máx/contrato, contratos, WR mínimo, EV, veredicto) lee el ancho de los STRIKES escritos, no del selector, así que cambiar el ala no movía ningún número hasta volver a pulsar "Generar spreads". Ahora el selector regenera los spreads al vuelo (setWing) siempre que haya spot y EM, y el panel del ala muestra el ancho REAL de los strikes (r.width), cayendo al selector solo mientras no haya spreads — el selector y el cálculo ya no pueden discrepar. */ /* v1.60: ScanOverlay — overlay a pantalla completa mientras se lee una captura (wizard, comparador de puts y tabla de earnings): anillo girando con el icono de cámara dentro, título, y la lista de pasos (Preparando la imagen · Enviando al lector · Leyendo los datos · Volcando al formulario) marcando en verde los ya hechos y pulsando el vivo; en los lotes el subtítulo lleva la cuenta ("Captura 2 de 6", "3 de 6 capturas"). Los pasos los marca el propio lector conforme ocurren: no hay progreso inventado. Antes solo cambiaba el texto de un botón y con varias capturas parecía colgado. */ /* v1.59: la tarjeta de movers ya no desaparece cuando aún no hay datos del día (hace falta un 🔄 Precios para traer el cierre anterior de cada subyacente): se pinta igual, con un botón "Actualizar precios" dentro — una acción, no un cartel. */ /* v1.58 (la 1.57 dejó a Victor sin tarjeta: exigía un snapshot del día ANTERIOR con el nuevo formato): los movers ya no dependen de snapshots. Para las posiciones con P&L automático (acciones) el movimiento del día es exacto y directo — se reevalúa el MISMO effPnl con el cierre anterior de Finnhub como spot y se resta (vale igual para acciones, lineales, que para opciones cortas, no lineales), disponible desde el primer 🔄 Precios. Para las estructuras con P&L manual (condors, spreads, 0DTE) la app no tiene mark intradía, así que su Δ sale del snapshot por posición (posPnl) si lo hay y si no es 0 — nunca inventado. Se mantiene la regla clave: solo posiciones que siguen abiertas, para que la rotación no se cuele como movimiento (el fantasma de SPX). */ /* v1.57 FIX (Victor: "si SPX no me genera profit con su movimiento, ¿por qué me sale ahí?"): los movers comparaban el P&L AGREGADO POR TICKER contra el snapshot, así que la rotación de posiciones se colaba como movimiento de mercado — cerrar los 0DTE de SPX y abrir otros el mismo día hacía aparecer una "ganancia" que nadie ganó. Ahora buildSnapshot guarda el P&L por POSICIÓN (posPnl: id → pnl) y los movers solo suman posiciones presentes en ambos momentos (misma id): lo que se ha movido de verdad en lo que sigue abierto. Las posiciones abiertas o cerradas desde el snapshot no cuentan. Los snapshots antiguos no llevan posPnl, así que la tarjeta no se pinta hasta el siguiente 🔄 Precios. */ /* v1.56: las tarjetas de los movers tienen todas la misma altura — la chapa del % se pinta siempre, neutra con "—" cuando el subyacente no trae cotización del día (índices como SPX en el plan gratis de Finnhub), en vez de desaparecer y encoger la tarjeta; el importe se alinea arriba, a la altura del ticker. */ /* v1.55: en los movers, el % del subyacente baja DEBAJO DEL TICKER en su chapa de color (verde/roja), y el importe de tu posición queda solo a la derecha — cada bloque con su dueño: izquierda el subyacente, derecha tu posición. */ /* v1.54: cada mover pasa a ser una tarjeta con fondo — ticker a la izquierda y, a la derecha, el importe grande con el % del subyacente JUSTO DEBAJO, ambos alineados a la derecha y en el mismo color; barra al pie dentro de la tarjeta. */ /* v1.53: en los movers, las cifras se alinean a la DERECHA — el % y el importe comparten borde derecho (el ticker sigue a la izquierda), que es como mejor se leen en columna. */ /* v1.52: fila de los movers — ticker y % del subyacente en la MISMA línea (ticker a la izquierda, % alineado a la derecha, sin chapa) y el importe debajo en grande; en dos columnas estrechas los tres no caben en una fila sin truncar el ticker. */ /* v1.51: fila de los movers reordenada — el ticker se truncaba ("A…", "HI…") porque competía por el ancho con la chapa del % y el importe; ahora el importe va grande arriba y debajo, en pequeño, el TICKER con su % entre paréntesis (verde/rojo). */ /* v1.50: fuera el aviso de texto en los movers (v1.49) — el % del subyacente sigue apareciendo en cuanto se refrescan precios con la v1.48+, sin cartel que lo explique. */ /* v1.48: el % de cambio del SUBYACENTE en los movers pasa a chapa verde/roja junto al ticker, y sale del propio Finnhub (el endpoint /quote ya devuelve dp y pc: no hay que derivarlo de snapshots, así que funciona desde el primer refresco). Se guarda en KEY_DAYPCT con la fecha de la lectura y se ignora si es de otro día — nunca se enseña un % viejo como si fuera de hoy; es dato de mercado re-descargable, así que NO entra en el backup. Si por lo que sea no hay dato de Finnhub, se cae al % derivado del último snapshot. */ /* v1.47: MOVERS DEL DÍA — debajo de la distribución por bloques, dos columnas (Ganadores / Perdedores) con los 3 mayores de cada lado: Δ P&L de la posición desde el cierre del último día con snapshot, Δ% del subyacente al lado (si ese snapshot guardó cotización) y barra proporcional al mayor movimiento del día. buildSnapshot guarda ahora el último precio por ticker y el desglose de tickers por bróker, así que los movers también funcionan con un bróker filtrado. Solo entran tickers que ya existían en el snapshot previo: una posición abierta hoy es capital nuevo, no un movimiento. Sin snapshot previo la tarjeta no se pinta. */ /* v1.46: el cambio del día también funciona por bróker — buildSnapshot guarda ahora byBroker { nlv, mktvl, margin } con las mismas definiciones que el consolidado, y dayChg toma la referencia del bróker filtrado; un snapshot anterior a v1.46 no tiene ese desglose, así que no sirve de referencia para un bróker suelto (se salta en vez de compararlo contra el total) — el Δ por bróker aparece en cuanto guardes un snapshot nuevo con 🔄 Precios. */ /* v1.45: los cuatro tiles del hero se reordenan a Riesgo · MKT VL · Posiciones · Liquidez. */ /* v1.44: los ratios del hero vuelven al formato compacto del estado de cuenta anterior (EL/NLV sobre EL/MRGN apilados con filete + apalancamiento), en la misma fila que el ▼ que despliega el detalle — tocar un ratio abre su ficha, tocar el resto de la fila despliega. Sustituyen a los tres tiles grandes de salud. */ /* v1.43: la tarjeta "Valor de la cuenta" (AccountHero) sale de la pestaña Resumen y pasa a estar FIJA arriba de Portfolio, encima de la fila de pestañas — se sigue viendo mientras deslizas por B0, B1…, con su expandible de estado de cuenta intacto. La pestaña Resumen se queda con la distribución por bloques (BlockDistribution: donut + leyenda con bandas objetivo). El cambio del día pierde el texto: solo importe y % en verde/rojo, medidos desde el cierre del último día con snapshot (la medianoche anterior); sin referencia no se pinta nada. */ /* v1.42: el Resumen ejecutivo ABSORBE el estado de cuenta y la tarjeta oscura de riesgo/P&L (ambos desaparecen de Portfolio; la tarjeta de cuenta sigue en Herramientas): el hero lleva NLV (28px), cambio del día debajo en verde/rojo (importe + % + fecha de referencia), P&L abierto, tiles Pos./Riesgo/MKT VL/Liquidez, salud (EL/NLV, EL/margen, apalancamiento) y un expandible "Estado de cuenta" con los campos de cash negativo y margen por bróker, Excess Liq, avisos y las barras de zona EL/NLV y EL/MRGN. El cambio del día se calcula contra el snapshot más reciente de un día anterior (los guarda 🔄 Precios); sin snapshot previo lo dice en vez de inventar, y con un filtro de bróker activo no se muestra (los snapshots son de la cartera entera). */ /* v1.41: RESUMEN EJECUTIVO — nueva primera pestaña de Portfolio (y la que abre por defecto), de la que se sigue deslizando a B0, B1… con el gesto de siempre. Hero con NLV grande, P&L abierto y tiles de posiciones/riesgo/liquidez + salud de cuenta (EL/NLV, EL/margen, apalancamiento) coloreada por sus umbrales y tocable para abrir su ficha. Debajo, donut de DISTRIBUCIÓN POR BLOQUES (% de NLV que ocupa cada uno) con el % desplegado en el centro; tocar una porción muestra su bloque en el centro y resalta su fila. Leyenda con una fila por bloque: capital, % de NLV en el color de su estado, barra con la BANDA OBJETIVO marcada en el carril y el desvío en texto ("en banda" / "por debajo X" / "por encima X"); tocar el nombre salta a la pestaña de ese bloque. */ /* v1.40 FIX maquetación de la tarjeta combinada (se solapaban/pisaban datos en iOS): items del carrusel con width explícito en vez de flex-basis % (Safari lo resuelve mal contra el padding del scroller); la tarjeta pasa de grid a columna flex con gap y overflow:hidden; TKR y chapa con elipsis/flex:none; cada mini-tile con minWidth:0 + overflow:hidden y valor/etiqueta con elipsis (fuentes 14/13) para que nunca derramen sobre el vecino; el pie gana flexWrap para que los 3 botones bajen de línea en pantallas estrechas en vez de aplastar el texto. */ /* v1.39: (1) el comparador de anchos SUBE junto al selector del ala — al elegir el ancho aparece el crédito mínimo a pedir (⅓) y, con el crédito apuntado, la misma fórmula que vivía abajo: ratio, pérdida/contrato, WR mínimo (break-even), contratos contra el riesgo objetivo y EV con la POP open del histórico; desaparecen la sección "Comparar anchos de ala" y los campos cr2/cr25/cr3/cr5/cr10. (2) UN solo carrusel con tarjeta COMBINADA por ticker (unión de ideas + histórico, orden alfabético): TKR + chapa (GO/CAUTION/NO-GO, A MEDIAS si la idea está incompleta, SOLO TABLA si no hay idea), estructura+EM, barra POP open, fila de mini-tiles de la idea (Crédito/EV/Contratos) y fila del histórico (IV crush/Peor gap/|open|/EM); pie con N, próximo ± y fecha + botones Abrir, ✕ idea y ✕ tabla (dos toques cada uno); tocar carga la idea o, si no hay, vuelca el histórico. El carrusel de abajo desaparece; la sección del histórico queda con el lector de tablas y los campos M/X/U. */ /* v1.38: los dos carruseles comparten ORDEN — alfabético por ticker (ideasSorted / histSyms), así la posición N de arriba y la de abajo son el mismo ticker cuando existe en ambos; el histórico deja de ordenarse por última actualización. */ /* v1.37: sincronía entre los dos carruseles — deslizar el de ideas lleva el del histórico al mismo ticker y viceversa (SnapCarousel gana keys/activeKey/onActiveKey; scroll suave programático con guarda anti-bucle progRef; solo mueve el scroll, no carga nada), y tocar/cargar una tarjeta también alinea el otro carrusel. Además las tarjetas de ideas pasan a stats VIVAS: si el ticker tiene histórico de tablas, M/X/U (y por tanto POP/EV/veredicto) salen del histórico actual en vez de los valores congelados al guardar — releer la tabla tras un earnings actualiza la idea sola; cargar la idea también carga los vivos. */ /* v1.36 FIX: los carruseles se salían del ancho del móvil — SnapCarousel es hijo directo de un grid y los items de grid tienen min-width:auto por defecto, así que el track crecía al max-content de todas las tarjetas en fila; minWidth:0/maxWidth:100% en el carrusel y minWidth:0 en los wrappers y tarjetas, y fuera el nowrap del mini-tile |open|/EM. */ /* v1.35 UX: carrusel deslizable con snap (SnapCarousel: scroll horizontal nativo + scroll-snap, momentum de iOS, dots que siguen la posición, sangrado a los bordes de la tarjeta; con una sola tarjeta no hay scroll ni dots) para las ideas guardadas y el histórico de tablas; tarjetas rediseñadas — idea: TKR grande + chapa GO/CAUTION/NO-GO (o A MEDIAS), estructura y EM, barra de POP open del color del veredicto y mini-tiles Crédito/EV/Contratos; histórico: TKR + N + próximo ±, barra de POP open y mini-tiles IV crush / Peor gap / |open|/EM. Los botones Abrir y ✕ viven en el pie de cada tarjeta. No choca con el swipe entre bloques (ignora gestos nacidos en scroll horizontal). */ /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
+const APP_VERSION = "1.62"; /* v1.62: (1) COMPARADOR DE ANCHOS — el panel del ala gana su propio campo de crédito y un botón "+" que congela ese ancho en un comparador: eliges ala, apuntas lo que paga el bróker, "+", cambias de ala y repites; abajo se ordenan solos con un veredicto "Ancho recomendado" razonado desde los datos. Cada ancho se juzga con DOS modelos y se queda con el PEOR (prudencia): RÉPLICA (pasa cada movimiento de open real del histórico por el payoff exacto del cóndor — condorValueAt — así una rotura suave cuesta lo que cuesta y no la pérdida máxima entera: es el modelo que VE el colchón del ala ancha) y BINARIO (POP suavizada × crédito − (1−POP) × pérdida máx: pesimista con el ala ancha, pero es el único que deja hueco a la cola que el histórico aún no ha visto). El EV se compara a IGUAL RIESGO OBJETIVO (contratos = riesgo/pérdida máx), que es como se decide de verdad — el % del ancho por sí solo no vale: un ala estrecha SIEMPRE saca mejor ratio porque la curva de precios es convexa, eso es geometría, no edge. Cada fila enseña además dónde toca pérdida máxima en % y cuántos earnings del histórico cayeron limpios / parciales / al máximo. (2) POP SUAVIZADA (Laplace, (M−X+1)/(M+2)): con M=12 y 0 roturas el crudo daba 100% e inflaba el EV y el veredicto justo donde menos datos hay; las 4 tarjetas de POP siguen enseñando el dato crudo (es el hecho) pero EV, veredicto, reco de estrategia y tarjetas del carrusel van sobre la suavizada. (3) STRIKES CON SU % REAL: cada strike enseña el movimiento que implica DESPUÉS del redondeo al incremento del bróker (no el EM nominal), en verde si el redondeo lo dejó fuera del EM y ámbar si lo metió dentro, más un aviso de cóndor asimétrico que dice por qué flanco te van a romper primero. */ /* v1.61 FIX (Victor: "esto no ajusta según el tamaño de ala que marque"): el sizing (pérdida máx/contrato, contratos, WR mínimo, EV, veredicto) lee el ancho de los STRIKES escritos, no del selector, así que cambiar el ala no movía ningún número hasta volver a pulsar "Generar spreads". Ahora el selector regenera los spreads al vuelo (setWing) siempre que haya spot y EM, y el panel del ala muestra el ancho REAL de los strikes (r.width), cayendo al selector solo mientras no haya spreads — el selector y el cálculo ya no pueden discrepar. */ /* v1.60: ScanOverlay — overlay a pantalla completa mientras se lee una captura (wizard, comparador de puts y tabla de earnings): anillo girando con el icono de cámara dentro, título, y la lista de pasos (Preparando la imagen · Enviando al lector · Leyendo los datos · Volcando al formulario) marcando en verde los ya hechos y pulsando el vivo; en los lotes el subtítulo lleva la cuenta ("Captura 2 de 6", "3 de 6 capturas"). Los pasos los marca el propio lector conforme ocurren: no hay progreso inventado. Antes solo cambiaba el texto de un botón y con varias capturas parecía colgado. */ /* v1.59: la tarjeta de movers ya no desaparece cuando aún no hay datos del día (hace falta un 🔄 Precios para traer el cierre anterior de cada subyacente): se pinta igual, con un botón "Actualizar precios" dentro — una acción, no un cartel. */ /* v1.58 (la 1.57 dejó a Victor sin tarjeta: exigía un snapshot del día ANTERIOR con el nuevo formato): los movers ya no dependen de snapshots. Para las posiciones con P&L automático (acciones) el movimiento del día es exacto y directo — se reevalúa el MISMO effPnl con el cierre anterior de Finnhub como spot y se resta (vale igual para acciones, lineales, que para opciones cortas, no lineales), disponible desde el primer 🔄 Precios. Para las estructuras con P&L manual (condors, spreads, 0DTE) la app no tiene mark intradía, así que su Δ sale del snapshot por posición (posPnl) si lo hay y si no es 0 — nunca inventado. Se mantiene la regla clave: solo posiciones que siguen abiertas, para que la rotación no se cuele como movimiento (el fantasma de SPX). */ /* v1.57 FIX (Victor: "si SPX no me genera profit con su movimiento, ¿por qué me sale ahí?"): los movers comparaban el P&L AGREGADO POR TICKER contra el snapshot, así que la rotación de posiciones se colaba como movimiento de mercado — cerrar los 0DTE de SPX y abrir otros el mismo día hacía aparecer una "ganancia" que nadie ganó. Ahora buildSnapshot guarda el P&L por POSICIÓN (posPnl: id → pnl) y los movers solo suman posiciones presentes en ambos momentos (misma id): lo que se ha movido de verdad en lo que sigue abierto. Las posiciones abiertas o cerradas desde el snapshot no cuentan. Los snapshots antiguos no llevan posPnl, así que la tarjeta no se pinta hasta el siguiente 🔄 Precios. */ /* v1.56: las tarjetas de los movers tienen todas la misma altura — la chapa del % se pinta siempre, neutra con "—" cuando el subyacente no trae cotización del día (índices como SPX en el plan gratis de Finnhub), en vez de desaparecer y encoger la tarjeta; el importe se alinea arriba, a la altura del ticker. */ /* v1.55: en los movers, el % del subyacente baja DEBAJO DEL TICKER en su chapa de color (verde/roja), y el importe de tu posición queda solo a la derecha — cada bloque con su dueño: izquierda el subyacente, derecha tu posición. */ /* v1.54: cada mover pasa a ser una tarjeta con fondo — ticker a la izquierda y, a la derecha, el importe grande con el % del subyacente JUSTO DEBAJO, ambos alineados a la derecha y en el mismo color; barra al pie dentro de la tarjeta. */ /* v1.53: en los movers, las cifras se alinean a la DERECHA — el % y el importe comparten borde derecho (el ticker sigue a la izquierda), que es como mejor se leen en columna. */ /* v1.52: fila de los movers — ticker y % del subyacente en la MISMA línea (ticker a la izquierda, % alineado a la derecha, sin chapa) y el importe debajo en grande; en dos columnas estrechas los tres no caben en una fila sin truncar el ticker. */ /* v1.51: fila de los movers reordenada — el ticker se truncaba ("A…", "HI…") porque competía por el ancho con la chapa del % y el importe; ahora el importe va grande arriba y debajo, en pequeño, el TICKER con su % entre paréntesis (verde/rojo). */ /* v1.50: fuera el aviso de texto en los movers (v1.49) — el % del subyacente sigue apareciendo en cuanto se refrescan precios con la v1.48+, sin cartel que lo explique. */ /* v1.48: el % de cambio del SUBYACENTE en los movers pasa a chapa verde/roja junto al ticker, y sale del propio Finnhub (el endpoint /quote ya devuelve dp y pc: no hay que derivarlo de snapshots, así que funciona desde el primer refresco). Se guarda en KEY_DAYPCT con la fecha de la lectura y se ignora si es de otro día — nunca se enseña un % viejo como si fuera de hoy; es dato de mercado re-descargable, así que NO entra en el backup. Si por lo que sea no hay dato de Finnhub, se cae al % derivado del último snapshot. */ /* v1.47: MOVERS DEL DÍA — debajo de la distribución por bloques, dos columnas (Ganadores / Perdedores) con los 3 mayores de cada lado: Δ P&L de la posición desde el cierre del último día con snapshot, Δ% del subyacente al lado (si ese snapshot guardó cotización) y barra proporcional al mayor movimiento del día. buildSnapshot guarda ahora el último precio por ticker y el desglose de tickers por bróker, así que los movers también funcionan con un bróker filtrado. Solo entran tickers que ya existían en el snapshot previo: una posición abierta hoy es capital nuevo, no un movimiento. Sin snapshot previo la tarjeta no se pinta. */ /* v1.46: el cambio del día también funciona por bróker — buildSnapshot guarda ahora byBroker { nlv, mktvl, margin } con las mismas definiciones que el consolidado, y dayChg toma la referencia del bróker filtrado; un snapshot anterior a v1.46 no tiene ese desglose, así que no sirve de referencia para un bróker suelto (se salta en vez de compararlo contra el total) — el Δ por bróker aparece en cuanto guardes un snapshot nuevo con 🔄 Precios. */ /* v1.45: los cuatro tiles del hero se reordenan a Riesgo · MKT VL · Posiciones · Liquidez. */ /* v1.44: los ratios del hero vuelven al formato compacto del estado de cuenta anterior (EL/NLV sobre EL/MRGN apilados con filete + apalancamiento), en la misma fila que el ▼ que despliega el detalle — tocar un ratio abre su ficha, tocar el resto de la fila despliega. Sustituyen a los tres tiles grandes de salud. */ /* v1.43: la tarjeta "Valor de la cuenta" (AccountHero) sale de la pestaña Resumen y pasa a estar FIJA arriba de Portfolio, encima de la fila de pestañas — se sigue viendo mientras deslizas por B0, B1…, con su expandible de estado de cuenta intacto. La pestaña Resumen se queda con la distribución por bloques (BlockDistribution: donut + leyenda con bandas objetivo). El cambio del día pierde el texto: solo importe y % en verde/rojo, medidos desde el cierre del último día con snapshot (la medianoche anterior); sin referencia no se pinta nada. */ /* v1.42: el Resumen ejecutivo ABSORBE el estado de cuenta y la tarjeta oscura de riesgo/P&L (ambos desaparecen de Portfolio; la tarjeta de cuenta sigue en Herramientas): el hero lleva NLV (28px), cambio del día debajo en verde/rojo (importe + % + fecha de referencia), P&L abierto, tiles Pos./Riesgo/MKT VL/Liquidez, salud (EL/NLV, EL/margen, apalancamiento) y un expandible "Estado de cuenta" con los campos de cash negativo y margen por bróker, Excess Liq, avisos y las barras de zona EL/NLV y EL/MRGN. El cambio del día se calcula contra el snapshot más reciente de un día anterior (los guarda 🔄 Precios); sin snapshot previo lo dice en vez de inventar, y con un filtro de bróker activo no se muestra (los snapshots son de la cartera entera). */ /* v1.41: RESUMEN EJECUTIVO — nueva primera pestaña de Portfolio (y la que abre por defecto), de la que se sigue deslizando a B0, B1… con el gesto de siempre. Hero con NLV grande, P&L abierto y tiles de posiciones/riesgo/liquidez + salud de cuenta (EL/NLV, EL/margen, apalancamiento) coloreada por sus umbrales y tocable para abrir su ficha. Debajo, donut de DISTRIBUCIÓN POR BLOQUES (% de NLV que ocupa cada uno) con el % desplegado en el centro; tocar una porción muestra su bloque en el centro y resalta su fila. Leyenda con una fila por bloque: capital, % de NLV en el color de su estado, barra con la BANDA OBJETIVO marcada en el carril y el desvío en texto ("en banda" / "por debajo X" / "por encima X"); tocar el nombre salta a la pestaña de ese bloque. */ /* v1.40 FIX maquetación de la tarjeta combinada (se solapaban/pisaban datos en iOS): items del carrusel con width explícito en vez de flex-basis % (Safari lo resuelve mal contra el padding del scroller); la tarjeta pasa de grid a columna flex con gap y overflow:hidden; TKR y chapa con elipsis/flex:none; cada mini-tile con minWidth:0 + overflow:hidden y valor/etiqueta con elipsis (fuentes 14/13) para que nunca derramen sobre el vecino; el pie gana flexWrap para que los 3 botones bajen de línea en pantallas estrechas en vez de aplastar el texto. */ /* v1.39: (1) el comparador de anchos SUBE junto al selector del ala — al elegir el ancho aparece el crédito mínimo a pedir (⅓) y, con el crédito apuntado, la misma fórmula que vivía abajo: ratio, pérdida/contrato, WR mínimo (break-even), contratos contra el riesgo objetivo y EV con la POP open del histórico; desaparecen la sección "Comparar anchos de ala" y los campos cr2/cr25/cr3/cr5/cr10. (2) UN solo carrusel con tarjeta COMBINADA por ticker (unión de ideas + histórico, orden alfabético): TKR + chapa (GO/CAUTION/NO-GO, A MEDIAS si la idea está incompleta, SOLO TABLA si no hay idea), estructura+EM, barra POP open, fila de mini-tiles de la idea (Crédito/EV/Contratos) y fila del histórico (IV crush/Peor gap/|open|/EM); pie con N, próximo ± y fecha + botones Abrir, ✕ idea y ✕ tabla (dos toques cada uno); tocar carga la idea o, si no hay, vuelca el histórico. El carrusel de abajo desaparece; la sección del histórico queda con el lector de tablas y los campos M/X/U. */ /* v1.38: los dos carruseles comparten ORDEN — alfabético por ticker (ideasSorted / histSyms), así la posición N de arriba y la de abajo son el mismo ticker cuando existe en ambos; el histórico deja de ordenarse por última actualización. */ /* v1.37: sincronía entre los dos carruseles — deslizar el de ideas lleva el del histórico al mismo ticker y viceversa (SnapCarousel gana keys/activeKey/onActiveKey; scroll suave programático con guarda anti-bucle progRef; solo mueve el scroll, no carga nada), y tocar/cargar una tarjeta también alinea el otro carrusel. Además las tarjetas de ideas pasan a stats VIVAS: si el ticker tiene histórico de tablas, M/X/U (y por tanto POP/EV/veredicto) salen del histórico actual en vez de los valores congelados al guardar — releer la tabla tras un earnings actualiza la idea sola; cargar la idea también carga los vivos. */ /* v1.36 FIX: los carruseles se salían del ancho del móvil — SnapCarousel es hijo directo de un grid y los items de grid tienen min-width:auto por defecto, así que el track crecía al max-content de todas las tarjetas en fila; minWidth:0/maxWidth:100% en el carrusel y minWidth:0 en los wrappers y tarjetas, y fuera el nowrap del mini-tile |open|/EM. */ /* v1.35 UX: carrusel deslizable con snap (SnapCarousel: scroll horizontal nativo + scroll-snap, momentum de iOS, dots que siguen la posición, sangrado a los bordes de la tarjeta; con una sola tarjeta no hay scroll ni dots) para las ideas guardadas y el histórico de tablas; tarjetas rediseñadas — idea: TKR grande + chapa GO/CAUTION/NO-GO (o A MEDIAS), estructura y EM, barra de POP open del color del veredicto y mini-tiles Crédito/EV/Contratos; histórico: TKR + N + próximo ±, barra de POP open y mini-tiles IV crush / Peor gap / |open|/EM. Los botones Abrir y ✕ viven en el pie de cada tarjeta. No choca con el swipe entre bloques (ignora gestos nacidos en scroll horizontal). */ /* v1.34: (1) lector de tablas MULTI-captura — hasta 6 de golpe, una tabla por ticker, cada una guardada bajo el ticker de SU cabecera (en lote, sin cabecera se salta con aviso; el campo Ticker solo hace de respaldo con una única foto); la calculadora se rellena con el ticker del campo si está en el lote, o con el primero. (2) Botón Limpiar junto a Guardar idea: vacía solo el formulario (riesgo objetivo se conserva; ideas e histórico intactos, tienen su ✕ propia). */ /* v1.33: anchos de ala de 2 y 3 puntos (Victor: a veces el strike no cuadra con patas de 2.5) — se añaden al selector "Ancho del ala" del generador de spreads y como filas propias del comparador de anchos (campos cr2/cr3, persistidos en el formulario e ideas como el resto). */ /* v1.32: ideas de earnings guardadas (KEY_ERIDEAS, entra en el backup) — como las tarjetas del Comparador: "Guardar idea · TKR" congela la foto completa del formulario (una por ticker, reguardar actualiza); lista de tarjetas arriba de la calculadora con veredicto GO/CAUTION/NO-GO, estructura, crédito, POP open, EV y contratos (erIdeaDerive, misma matemática que la calculadora); tocar la tarjeta la carga (con el riesgo objetivo global vigente, no el congelado), botón Abrir salta al wizard prefijado y borrar con dos toques. El flujo: preparar las ideas el día de antes y el día del trade cargar, refrescar el crédito y abrir. */ /* v1.31: wording — se retiran las referencias a moomoo (botón, textos y comentarios); el lector es de la tabla Historical Earnings Data, venga del bróker que venga. */ /* v1.30: el lector de la tabla extrae el TICKER de la propia captura si incluye la cabecera (arriba a la izquierda) — ya no hace falta teclearlo antes; si el campo y la captura no coinciden, manda la captura (es la fuente de los datos) y se avisa. Se elimina el lector de gráficas de 4 capturas (extractEarningsChartFromImage, tallyEarningsChart, runChartOcr y su UI): la tabla da lo mismo y más con una sola foto. */ /* v1.29: histórico persistente de earnings por ticker (KEY_ERHIST, entra en el backup) alimentado por un lector de la tabla "Historical Earnings Data" de moomoo — UNA captura trae EM, IV crush y movimientos antes/durante/después por trimestre (la gráfica de 4 capturas queda como plan B). Requiere el ticker escrito antes de leer (la tabla no lo muestra); merge por periodo al releer (el próximo ER pasa de solo-EM a fila completa cuando salen resultados); tarjetas por ticker en la herramienta Earnings (POP open, N, IV crush medio, peor gap = el open de mayor magnitud, |open| medio vs EM medio, próximo ±) — tocar la tarjeta vuelca M/X/U a la calculadora y el EM pendiente al campo Expected move; borrar con dos toques. */ /* v1.28 FIX: el cierre de un Long Call registraba en Primas la venta bruta entera (closePrice×qty) en vez del neto (venta − coste), inflando Primas con un débito que nunca se restó; y un Long Call expirado sin valor no registraba la pérdida. Ahora el Long Call materializa el NETO al cierre, igual que los débitos genéricos — coherente con su apertura, que (correctamente) no registra nada. MTM ya era correcto. */ /* v1.27: se limpian los dos últimos emojis (botón de leer capturas del Comparador y texto de Ajustes) */ /* v1.26: Comparador de puts — icono propio en el selector, ticker forzado a mayúsculas y botón de spot (Finnhub) junto al precio del subyacente, igual que en la herramienta de earnings */ /* v1.25: "Abrir posición" desde las Herramientas (Earnings → B3/Earnings, Comparador de puts → B1/B2 Short Put) que salta al wizard con todo relleno; selector de Herramientas con iconos igual que Movimientos; etiquetas del histórico acortadas; iconos de línea (ActIcon) en vez de emojis en editar/rolar/lotes/dividendos */ /* v1.24: wording — se quitan las referencias al PDF en la UI; nota de High/Low aclarada (extremos del recorrido intradía medidos contra el cierre previo) */ /* v1.23: panel "Aguanta o cierra" (plan B leído de las 4 series: reversión intradía close vs open y excursión adversa high/low) + comparador de anchos de ala (crédito por ancho → riesgo/contrato, ratio ⅓, contratos y EV lado a lado) */ /* v1.22: lector de gráficas Expected vs Actual — sube 1-4 capturas, Gemini detecta la serie por la leyenda (Open/Close/High/Low), extrae expected/actual por trimestre y rellena M, X por escenario y U (cierres en verde) */ /* v1.21: pestaña Herramientas (selector Puts | Earnings), CondorRiskInfo fuera del wizard (sigue en el editor), y herramienta Earnings completa: spot vía Finnhub, generador de spreads desde expected move, POP por escenario (open/close/high/low), sesgo direccional con recomendación de estrategia (PDF), sizing y EV */ /* v1.19: riesgo de cóndores (Earnings/IC): pérdida máx auto desde las alas, contratos sugeridos vs riesgo objetivo, badge crédito/ancho en wizard+editor, y Calculadora Earnings en el Comparador (sizing + POP histórica + EV) */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -386,6 +386,22 @@ const condorRisk = (putSpread, callSpread, primaStr) => {
   const maxLossPC = Math.max(width - (hasCr ? credit : 0), 0) * 100; // pérdida máx por contrato ($)
   return { width, credit: hasCr ? credit : null, maxLossPC, ratio: hasCr && width > 0 ? credit / width : null };
 };
+/* v1.62: valor de recompra del cóndor a un precio S (intrínseco, por acción). Es lo que convierte una
+   "rotura" en un número real en vez de un binario: ENTRE el strike corto y el largo se pierde solo la
+   parte recorrida, no la pérdida máxima entera. Ahí está toda la diferencia entre un ala ancha y una
+   estrecha — el ala de 2 llega al máximo con un pinchazo; la de 5 tiene 5 puntos de amortiguación. */
+const condorValueAt = (S, spK, lpK, scK, lcK) => {
+  let v = 0;
+  if (isFinite(spK) && isFinite(lpK) && spK > lpK) v += Math.max(0, Math.min(spK - S, spK - lpK));
+  if (isFinite(scK) && isFinite(lcK) && lcK > scK) v += Math.max(0, Math.min(S - scK, lcK - scK));
+  return v;
+};
+/* v1.62: POP suavizada (regla de sucesión de Laplace). Con M=12 y 0 roturas, el histórico dice "nunca
+   ha fallado" — que NO es lo mismo que "no puede fallar". El 1 − 0/12 = 100% infla el EV y el veredicto
+   justo en los tickers con menos datos. (M − X + 1)/(M + 2) da 93% en ese caso: sigue siendo excelente,
+   pero deja sitio a la rotura que todavía no ha ocurrido. Con M grande converge a la frecuencia observada.
+   Las 4 tarjetas de POP siguen enseñando el dato CRUDO (es el hecho); el EV usa esta. */
+const popSmooth = (M, X) => (isFinite(M) && M > 0 && isFinite(X) && X >= 0 && X <= M ? (M - X + 1) / (M + 2) : NaN);
 /* agrupación VISUAL en el asistente: los credit spreads (IC/Broken Wings) se listan bajo "Crédito"
    porque cobran prima, aunque internamente sigan siendo nat=DEF (riesgo manual, sin prima hasta cierre,
    sin rolls). Esta función solo decide bajo qué botón del paso 2 aparece cada estrategia. */
@@ -721,6 +737,8 @@ function erStats(events) {
     nUp: done.filter((e) => Number(e.close) > 0).length,
     ivCrush: avg("ivCrush", false), emAvg: avg("em", false), absOpen: avg("open", true), worst,
     popOpen: M ? 1 - xOpen / M : NaN,
+    popOpenS: popSmooth(M, xOpen), /* v1.62: la que manda en EV/veredicto — ver popSmooth */
+    opens, /* v1.62: los % de open reales, para la réplica del payoff en el comparador de anchos */
     nextEm: pending ? Number(pending.em) : NaN, nextPeriodo: pending ? pending.periodo : null };
 }
 /* ---------- v1.32: ideas de earnings guardadas ----------
@@ -735,7 +753,8 @@ function erIdeaDerive(f) {
   const pf = (v) => { const x = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(x) ? x : NaN; };
   const r = condorRisk(f.put, f.call, f.credit);
   const M = pf(f.nHist), X = pf(f.xOpen);
-  const pop = isFinite(M) && M > 0 && isFinite(X) && X >= 0 && X <= M ? 1 - X / M : NaN;
+  const popRaw = isFinite(M) && M > 0 && isFinite(X) && X >= 0 && X <= M ? 1 - X / M : NaN;
+  const pop = popSmooth(M, X); /* v1.62: EV y veredicto sobre la POP suavizada, no sobre el 100% crudo */
   const creditPC = r && r.credit != null ? r.credit * 100 : NaN;
   const obj = pf(f.obj);
   const sug = r && r.maxLossPC > 0 && isFinite(obj) && obj > 0 ? Math.floor(obj / r.maxLossPC) : null;
@@ -743,7 +762,7 @@ function erIdeaDerive(f) {
   const ev = r && isFinite(pop) && isFinite(creditPC) ? pop * creditPC - (1 - pop) * r.maxLossPC : NaN;
   const edge = isFinite(pop) && isFinite(beWr) ? pop - beWr : NaN;
   const verdict = !r || !isFinite(ev) ? null : ev > 0 && r.ratio != null && r.ratio >= 0.25 && edge >= 0.05 ? "GO" : ev > 0 ? "CAUTION" : "NO-GO";
-  return { pop, ev, sug, ratio: r ? r.ratio : null, verdict, maxLossPC: r ? r.maxLossPC : NaN };
+  return { pop, popRaw, ev, sug, ratio: r ? r.ratio : null, verdict, maxLossPC: r ? r.maxLossPC : NaN };
 }
 function buildTradeFromGemini(data, file) {
   const tkr = (data.ticker || "").toUpperCase().replace(/[^A-Z.]/g, "").slice(0, 8);
@@ -4900,7 +4919,10 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
      sobre la unión de tickers de ambas fuentes, en el mismo orden alfabético. */
   const unionSyms = Array.from(new Set([...ideasSorted.map((r) => String(r.tkr)), ...histSyms])).sort((a, b) => a.localeCompare(b));
   const [st, setSt] = useState(() => {
-    const base = { tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", obj: String(getRiesgoObj()), nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "" };
+    /* v1.62: wings = anchos añadidos al comparador, [{ w, c }] — se guardan con el resto del formulario
+       (y por tanto también dentro de una idea). Solo se guarda ancho + crédito: strikes, sizing y EV se
+       vuelven a derivar del spot/EM/histórico vigentes, así que el comparador nunca enseña datos rancios. */
+    const base = { tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", obj: String(getRiesgoObj()), nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", wings: [] };
     try { const raw = localStorage.getItem(KEY_EARNCALC); if (raw) return { ...base, ...JSON.parse(raw), obj: String(getRiesgoObj()) }; } catch (e) {}
     return base;
   });
@@ -5005,7 +5027,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   const loadIdea = (rec) => { if (rec && rec.form) { setMany({ ...liveForm(rec), obj: String(getRiesgoObj()) }); setSyncTkr(rec.tkr); } };
   /* v1.34: vaciar el formulario para el siguiente análisis — el riesgo objetivo (global) se conserva
      y ni las ideas guardadas ni el histórico de tablas se tocan (cada uno tiene su ✕ propia). */
-  const clearCalc = () => setMany({ tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "" });
+  const clearCalc = () => setMany({ tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", wings: [] });
   const dropIdea = (id) => {
     if (ideaArm !== id) { setIdeaArm(id); setTimeout(() => setIdeaArm((d) => (d === id ? null : d)), 3000); return; }
     const list = loadErIdeas().filter((x) => x && x.id !== id);
@@ -5057,10 +5079,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     const pop = isFinite(M) && M > 0 && isFinite(X) && X >= 0 && X <= M ? 1 - X / M : NaN;
     return { k, lbl, X, pop };
   });
-  const popOpen = scen[0].pop;
-  const ev = r && isFinite(popOpen) && isFinite(creditPC) ? popOpen * creditPC - (1 - popOpen) * r.maxLossPC : NaN;
+  const popOpen = scen[0].pop; /* CRUDO — el hecho histórico, es lo que enseñan las 4 tarjetas de POP */
+  /* v1.62: el EV y el veredicto van sobre la POP SUAVIZADA. Con M=12 y 0 roturas el crudo dice 100%, que
+     no es una probabilidad sino "todavía no ha pasado": inflaba el EV justo donde menos datos hay. */
+  const popOpenS = popSmooth(M, pf(st.xOpen));
+  const ev = r && isFinite(popOpenS) && isFinite(creditPC) ? popOpenS * creditPC - (1 - popOpenS) * r.maxLossPC : NaN;
   const evTot = isFinite(ev) && sug ? ev * sug : NaN;
-  const edge = isFinite(popOpen) && isFinite(beWr) ? popOpen - beWr : NaN;
+  const edge = isFinite(popOpenS) && isFinite(beWr) ? popOpenS - beWr : NaN;
 
   /* recomendación de estrategia según el sesgo direccional y la permanencia dentro del EM */
   const U = pf(st.nUp);
@@ -5068,9 +5093,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   let reco = null;
   if (isFinite(dirUp) && dirUp >= 0.7) reco = { t: "Short Put · Bull Put Spread", txt: "Sube tras earnings el " + (dirUp * 100).toFixed(0) + "% de las veces — sesgo alcista consistente. Vende la put (20-30Δ) o el bull put spread (25-50Δ) y deja el lado call en paz.", col: T.green, bg: T.tileGreen };
   else if (isFinite(dirUp) && dirUp <= 0.3) reco = { t: "Bear Call Spread", txt: "Solo cierra en verde el " + (dirUp * 100).toFixed(0) + "% de las veces — sesgo bajista consistente. Vende el bear call spread (25-50Δ).", col: T.red, bg: T.tileRed };
-  else if (isFinite(popOpen) && popOpen >= 0.7) reco = { t: "Iron Condor", txt: "Sin dirección clara pero se queda dentro del expected move el " + (popOpen * 100).toFixed(0) + "% de las veces (open). Cóndor con strikes en el EM y crédito ≥ ⅓ del ancho.", col: T.green, bg: T.tileGreen };
-  else if (isFinite(popOpen) && popOpen < 0.5) reco = { t: "Skip · o comprar la estructura", txt: "Rompe el expected move más de la mitad de las veces — vender prima aquí es la apisonadora. Pasa, o dale la vuelta: compra el IC/Fly con las alas dentro de tu EM.", col: T.gold, bg: T.tileAmber };
-  else if (isFinite(dirUp) || isFinite(popOpen)) reco = { t: "Sin edge claro", txt: "Ni sesgo direccional consistente ni permanencia fiable dentro del EM. No te sientas obligado a tradear — a la siguiente.", col: T.sub, bg: T.tile };
+  else if (isFinite(popOpenS) && popOpenS >= 0.7) reco = { t: "Iron Condor", txt: "Sin dirección clara pero se queda dentro del expected move el " + (popOpenS * 100).toFixed(0) + "% de las veces (open, suavizada). Cóndor con strikes en el EM y crédito ≥ ⅓ del ancho.", col: T.green, bg: T.tileGreen };
+  else if (isFinite(popOpenS) && popOpenS < 0.5) reco = { t: "Skip · o comprar la estructura", txt: "Rompe el expected move más de la mitad de las veces — vender prima aquí es la apisonadora. Pasa, o dale la vuelta: compra el IC/Fly con las alas dentro de tu EM.", col: T.gold, bg: T.tileAmber };
+  else if (isFinite(dirUp) || isFinite(popOpenS)) reco = { t: "Sin edge claro", txt: "Ni sesgo direccional consistente ni permanencia fiable dentro del EM. No te sientas obligado a tradear — a la siguiente.", col: T.sub, bg: T.tile };
 
   /* v1.23: Plan B. Solo se plantea si el trade ABRE en pérdida (el gap se pasó de tus strikes).
      La pregunta es si el día suele corregir ese gap o si lo profundiza:
@@ -5092,6 +5117,104 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
 
   const verdict = !r || !isFinite(ev) ? null : ev > 0 && r.ratio != null && r.ratio >= 0.25 && edge >= 0.05 ? { t: "GO", col: T.green, bg: T.tileGreen, txt: "EV positiva con colchón — entra dentro de tu marco" } : ev > 0 ? { t: "CAUTION", col: T.gold, bg: T.tileAmber, txt: "EV positiva pero fina — poco margen si el histórico no se repite" } : { t: "NO-GO", col: T.red, bg: T.tileRed, txt: "EV negativa — con tu histórico esta estructura pierde dinero a la larga" };
   const money0 = (v) => "$" + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  const money2 = (v) => "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const sgn = (v) => (v >= 0 ? "+" : "−");
+  const fmtW = (w) => w.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const pctS = (x) => sgn(x) + Math.abs(x).toFixed(1) + "%";
+
+  /* ---------- v1.62: COMPARADOR DE ANCHOS ----------
+     El % del ancho por sí solo no decide: el WR mínimo es 1 − crédito/ancho, así que un ala estrecha SIEMPRE
+     saca mejor ratio (la curva de precios es convexa) — no es edge, es geometría. Lo que de verdad separa un
+     ancho de otro es la ZONA DE PÉRDIDA PARCIAL: entre el strike corto y el largo el ala ancha pierde solo lo
+     recorrido, la estrecha ya está en pérdida máxima. Por eso cada ancho se juzga con DOS modelos y se queda
+     con el PEOR de los dos (prudencia, no optimismo):
+       · RÉPLICA — se pasa cada movimiento de open REAL del histórico por el payoff exacto del cóndor. Una
+         rotura suave cuesta lo que cuesta, no la pérdida máxima. Es el modelo que ve el colchón.
+       · BINARIO — POP suavizada (Laplace) × crédito − (1 − POP) × pérdida máxima. Es pesimista con el ala
+         ancha (toda rotura = máximo) pero es el único que deja hueco a la cola que el histórico aún no ha visto.
+     El EV se compara a IGUAL RIESGO (contratos = riesgo objetivo / pérdida máx), que es como se decide de verdad.
+     Nota honesta: la réplica valora al intrínseco del open; el extrínseco que sobrevive al IV crush juega
+     ligeramente en contra. Es una aproximación conservadora del lado bueno, no un número inventado. */
+  const histOpens = (() => {
+    const h = hist[String(st.tkr || "").trim().toUpperCase()];
+    const evs = h && Array.isArray(h.events) ? h.events : [];
+    return evs.filter((e) => e && Number(e.em) > 0 && e.open != null && isFinite(Number(e.open))).map((e) => Number(e.open));
+  })();
+  const wingEval = (w, c) => {
+    if (!emOk || !(w > 0) || !(c > 0)) return null;
+    const spK = shortPut, lpK = shortPut - w, scK = shortCall, lcK = shortCall + w;
+    const maxLossPC = Math.max(w - c, 0) * 100;
+    if (!(maxLossPC > 0)) return null;
+    const cts = isFinite(obj) && obj > 0 ? Math.floor(obj / maxLossPC) : null;
+    const ratio = c / w;
+    const beWr = maxLossPC / (maxLossPC + c * 100);
+    const dnPct = (lpK / spot - 1) * 100; // dónde toca la pérdida máxima por abajo
+    const upPct = (lcK / spot - 1) * 100; // ...y por arriba
+    let evRep = NaN, nWin = 0, nPart = 0, nMax = 0;
+    if (histOpens.length) {
+      let sum = 0;
+      histOpens.forEach((o) => {
+        const v = condorValueAt(spot * (1 + o / 100), spK, lpK, scK, lcK);
+        sum += (c - v) * 100;
+        if (v <= 1e-9) nWin++; else if (v >= w - 1e-9) nMax++; else nPart++;
+      });
+      evRep = sum / histOpens.length;
+    }
+    const evBin = isFinite(popOpenS) ? popOpenS * c * 100 - (1 - popOpenS) * maxLossPC : NaN;
+    const both = [evRep, evBin].filter(isFinite);
+    const evCons = both.length ? Math.min(...both) : NaN;
+    const evTot = isFinite(evCons) && cts > 0 ? evCons * cts : NaN;
+    return { w, c, maxLossPC, cts, ratio, beWr, dnPct, upPct, evRep, evBin, evCons, evTot, nWin, nPart, nMax };
+  };
+  const wingRows = (Array.isArray(st.wings) ? st.wings : []).map((x) => wingEval(Number(x.w), Number(x.c))).filter(Boolean).sort((a, b) => a.w - b.w);
+  const bestWing = wingRows.filter((x) => isFinite(x.evTot) && x.cts > 0).sort((a, b) => b.evTot - a.evTot)[0] || null;
+  const addWing = () => {
+    const wN = r && isFinite(r.width) && r.width > 0 ? r.width : pf(st.wing);
+    const c = pf(st.credit);
+    if (!isFinite(wN) || wN <= 0 || !isFinite(c) || c <= 0) return;
+    const list = (Array.isArray(st.wings) ? st.wings : []).slice();
+    const i = list.findIndex((x) => Math.abs(Number(x.w) - wN) < 1e-9);
+    if (i >= 0) list[i] = { w: wN, c }; else list.push({ w: wN, c });
+    setMany({ wings: list.sort((a, b) => a.w - b.w) });
+  };
+  const dropWing = (w) => setMany({ wings: (Array.isArray(st.wings) ? st.wings : []).filter((x) => Math.abs(Number(x.w) - w) > 1e-9) });
+  const useWing = (w, c) => {
+    if (!emOk) return;
+    setMany({ wing: String(w), credit: String(c), put: fmtK(shortPut) + "/" + fmtK(shortPut - w), call: fmtK(shortCall) + "/" + fmtK(shortCall + w) });
+  };
+  /* el PORQUÉ de la recomendación, escrito desde los datos — nunca una frase genérica */
+  let wingWhy = null;
+  if (bestWing && wingRows.length > 1) {
+    const bits = [];
+    if (!histOpens.length) {
+      bits.push("Sin tabla de earnings leída para este ticker solo puede hablar el modelo binario (toda rotura = pérdida máxima), que castiga de más al ala ancha. Lee la tabla y la réplica contará las roturas suaves por lo que cuestan de verdad.");
+    } else {
+      const cushioned = wingRows.filter((x) => x.nPart > 0);
+      if (!cushioned.length) bits.push("En los " + histOpens.length + " earnings guardados ningún movimiento cayó en la zona de pérdida parcial de ningún ancho: el colchón del ala ancha no se ha usado NUNCA, así que no se paga solo. Con este histórico manda el crédito por dólar arriesgado — y ahí gana el ala estrecha.");
+      else bits.push("El colchón entra en juego: " + cushioned.map((x) => "el ala de " + fmtW(x.w) + " amortiguó " + x.nPart + " de " + histOpens.length).join(" y ") + ". Ahí el ancho se paga solo, porque una rotura suave cuesta menos que la pérdida máxima.");
+      bits.push("El ala de " + fmtW(bestWing.w) + " toca pérdida máxima en " + pctS(bestWing.dnPct) + " / " + pctS(bestWing.upPct) + ".");
+    }
+    const alt = wingRows.filter((x) => x !== bestWing && isFinite(x.evTot)).sort((a, b) => b.evTot - a.evTot)[0];
+    if (alt) bits.push("Frente al ala de " + fmtW(alt.w) + ": " + sgn(bestWing.evTot - alt.evTot) + money0(bestWing.evTot - alt.evTot) + " de EV por earnings a igual riesgo objetivo.");
+    wingWhy = bits.join(" ");
+  }
+
+  /* v1.62: el % REAL de los strikes tras el redondeo al incremento del bróker — casi nunca coincide con
+     el EM, y ese desvío decide por qué flanco te van a romper primero. */
+  const putPct = emOk ? (shortPut / spot - 1) * 100 : NaN;
+  const callPct = emOk ? (shortCall / spot - 1) * 100 : NaN;
+  const asym = emOk ? Math.abs(callPct) - Math.abs(putPct) : NaN;
+  const StrikeTile = ({ side, k, pct }) => {
+    const inside = Math.abs(pct) < em; // el redondeo lo metió DENTRO del EM → más expuesto que lo pedido
+    return (
+      <div style={{ background: inside ? T.tileAmber : T.tileGreen, borderRadius: 15, padding: "10px 8px", textAlign: "center", minWidth: 0 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>{side}</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, letterSpacing: -0.3, marginTop: 1 }}>{fmtK(k)}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 1, color: inside ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>{sgn(pct) + Math.abs(pct).toFixed(2) + "%"}</div>
+        <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2, lineHeight: 1.2 }}>real tras redondeo · EM {em.toFixed(2)}%</div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ background: T.card, borderRadius: 24, padding: 18, marginBottom: 16, boxShadow: T.shadow }}>
@@ -5109,7 +5232,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 const s = h ? erStats(h.events) : null;
                 const f = rec ? liveForm(rec) : null;
                 const d = f ? erIdeaDerive(f) : null;
-                const pop = d && isFinite(d.pop) ? d.pop : s && isFinite(s.popOpen) ? s.popOpen : NaN;
+                const pop = d && isFinite(d.pop) ? d.pop : s && isFinite(s.popOpenS) ? s.popOpenS : NaN; /* v1.62: suavizada, igual que el veredicto */
                 const vCol = d && d.verdict === "GO" ? T.green : d && d.verdict === "CAUTION" ? T.gold : d && d.verdict === "NO-GO" ? T.red : T.sub;
                 const vBg = d && d.verdict === "GO" ? T.tileGreen : d && d.verdict === "CAUTION" ? T.tileAmber : d && d.verdict === "NO-GO" ? T.tileRed : T.tile;
                 const chip = d && d.verdict ? d.verdict : rec ? "A MEDIAS" : "SOLO TABLA";
@@ -5209,8 +5332,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         {spotMsg && <div style={{ background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>{spotMsg}</div>}
         {emOk && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <Tile label={"Short put · spot − " + em.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "%"} value={fmtK(shortPut)} />
-            <Tile label={"Short call · spot + " + em.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "%"} value={fmtK(shortCall)} />
+            <StrikeTile side="Short put" k={shortPut} pct={putPct} />
+            <StrikeTile side="Short call" k={shortCall} pct={callPct} />
+          </div>
+        )}
+        {emOk && Math.abs(asym) >= 0.2 && (
+          <div style={{ background: T.tileAmber, borderRadius: 12, padding: "9px 12px", fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+            <b style={{ color: T.gold }}>Cóndor asimétrico por el redondeo.</b> La put queda a {Math.abs(putPct).toFixed(2)}% y la call a {Math.abs(callPct).toFixed(2)}%: el flanco débil es el de {asym > 0 ? "ABAJO (put)" : "ARRIBA (call)"} — si rompe, romperá antes por ahí. Mueve ese strike un escalón si quieres los dos lados a la misma distancia.
           </div>
         )}
         {emOk && (
@@ -5238,32 +5366,106 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           const mlPC = okC ? Math.max(wN - c, 0) * 100 : NaN;
           const ratio = okC ? c / wN : NaN;
           const bw = okC && mlPC > 0 ? mlPC / (mlPC + c * 100) : NaN;
-          const evW = okC && isFinite(popOpen) ? popOpen * c * 100 - (1 - popOpen) * mlPC : NaN;
+          const evW = okC && isFinite(popOpenS) ? popOpenS * c * 100 - (1 - popOpenS) * mlPC : NaN;
           const cts = okC && mlPC > 0 && isFinite(obj) && obj > 0 ? Math.floor(obj / mlPC) : null;
           const col = !okC ? T.sub : ratio >= 1 / 3 ? T.green : ratio >= 0.25 ? T.gold : T.red;
           const bg = !okC ? T.tile : ratio >= 1 / 3 ? T.tileGreen : ratio >= 0.25 ? T.tileAmber : T.tileRed;
+          const added = (Array.isArray(st.wings) ? st.wings : []).some((x) => Math.abs(Number(x.w) - wN) < 1e-9 && Math.abs(Number(x.c) - c) < 1e-9);
           return (
             <div style={{ background: bg, borderRadius: 14, padding: "10px 12px", display: "grid", gap: 7 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: col }}>Ala de {wN.toLocaleString("en-US", { maximumFractionDigits: 2 })} pt</span>
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: col }}>{okC ? "crédito = " + (ratio * 100).toFixed(0) + "% del ancho" : "crédito mín ⅓ = $" + minC.toFixed(2)}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: col, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Ala de {wN.toLocaleString("en-US", { maximumFractionDigits: 2 })} pt</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: col }}>{okC ? "crédito = " + (ratio * 100).toFixed(0) + "% del ancho" : "crédito mín ⅓ = $" + minC.toFixed(2)}</span>
+                  {/* v1.62: con el crédito puesto, el "+" congela este ancho en el comparador. Cambia de ala,
+                      apunta su crédito, vuelve a pulsar "+", y abajo se deciden solos. */}
+                  {okC && (
+                    <button type="button" onClick={addWing} aria-label="Añadir al comparador"
+                      style={{ flex: "none", width: 28, height: 28, borderRadius: 9, border: "none", cursor: "pointer", background: added ? T.green : T.dark, color: "#fff", fontSize: 17, fontWeight: 800, lineHeight: 1, padding: 0 }}>
+                      {added ? "✓" : "+"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* v1.62: el crédito se apunta AQUÍ mismo (mismo campo que el de Estructura, comparten estado):
+                  eliges ala → cotizas → escribes → "+". Antes había que bajar a Estructura y volver a subir. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                  <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, fontWeight: 800, color: T.sub, pointerEvents: "none" }}>$</span>
+                  <input value={st.credit} onChange={(e) => set("credit")(e.target.value)} inputMode="decimal" placeholder={minC.toFixed(2)}
+                    style={{ width: "100%", boxSizing: "border-box", height: 38, background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 11, padding: "0 10px 0 22px", fontSize: 14.5, fontWeight: 800, color: T.ink, outline: "none", fontVariantNumeric: "tabular-nums", colorScheme: DARK ? "dark" : "light" }} />
+                </div>
+                <span style={{ flex: "none", fontSize: 11, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>crédito · mín ⅓ = ${minC.toFixed(2)}</span>
               </div>
               {okC ? (
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 6, fontSize: 11.5, fontWeight: 700, color: T.sub, flexWrap: "wrap" }}>
-                  <span>mín ${minC.toFixed(2)}</span>
                   <span>{money0(mlPC)}/contr.</span>
                   <span>WR mín {isFinite(bw) ? (bw * 100).toFixed(0) + "%" : "—"}</span>
                   <span>{cts == null ? "—" : cts + " contr."}</span>
+                  <span>máx {pctS(((shortPut - wN) / spot - 1) * 100)} / {pctS(((shortCall + wN) / spot - 1) * 100)}</span>
                   <span style={{ color: isFinite(evW) ? (evW >= 0 ? T.green : T.red) : T.sub }}>{isFinite(evW) ? (evW >= 0 ? "+" : "−") + money0(evW) + " EV" : "EV — (falta histórico)"}</span>
                 </div>
               ) : (
                 <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>
-                  Pide al bróker ≥ ${minC.toFixed(2)} de crédito para este ancho. En cuanto apuntes el crédito abajo, aquí salen riesgo/contrato, WR mínimo, contratos y EV.
+                  Pide al bróker ≥ ${minC.toFixed(2)} de crédito para este ancho. Apúntalo arriba y pulsa <b>+</b> para meter este ancho en el comparador; luego cambia de ala y repite.
                 </div>
               )}
             </div>
           );
         })()}
+        {/* ---------- v1.62: COMPARADOR DE ANCHOS ---------- */}
+        {wingRows.length > 0 && (
+          <>
+            <WizSection>▸ Comparador de anchos</WizSection>
+            {wingRows.map((x) => {
+              const win = bestWing && x.w === bestWing.w;
+              const rc = x.ratio >= 1 / 3 ? T.green : x.ratio >= 0.25 ? T.gold : T.red;
+              return (
+                <div key={x.w} style={{ background: win ? T.tileGreen : T.tile, borderRadius: 15, padding: "11px 12px", display: "grid", gap: 6, border: win ? `1.5px solid ${T.green}` : "1.5px solid transparent" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                      <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, whiteSpace: "nowrap" }}>Ala {fmtW(x.w)} pt</span>
+                      {win && <span style={{ flex: "none", background: T.green, color: "#fff", fontSize: 9.5, fontWeight: 800, borderRadius: 7, padding: "3px 6px", letterSpacing: 0.4 }}>MEJOR</span>}
+                    </div>
+                    <span style={{ flex: "none", fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: isFinite(x.evTot) ? (x.evTot >= 0 ? T.green : T.red) : T.sub }}>
+                      {isFinite(x.evTot) ? sgn(x.evTot) + money0(x.evTot) : "—"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 6, fontSize: 11, fontWeight: 700, color: T.sub, flexWrap: "wrap" }}>
+                    <span>{money2(x.c)} · <span style={{ color: rc }}>{(x.ratio * 100).toFixed(0)}% ancho</span></span>
+                    <span>{money0(x.maxLossPC)}/contr.</span>
+                    <span>{x.cts == null ? "—" : x.cts + " contr."}</span>
+                    <span>WR mín {(x.beWr * 100).toFixed(0)}%</span>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                    Pérdida máxima a <b>{pctS(x.dnPct)} / {pctS(x.upPct)}</b>
+                    {histOpens.length > 0 && <> · histórico: <b>{x.nWin}</b> limpias · <b>{x.nPart}</b> parciales · <b>{x.nMax}</b> al máximo</>}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                      EV/contr. réplica {isFinite(x.evRep) ? sgn(x.evRep) + money0(x.evRep) : "—"} · binaria {isFinite(x.evBin) ? sgn(x.evBin) + money0(x.evBin) : "—"}
+                    </span>
+                    <div style={{ display: "flex", gap: 6, flex: "none" }}>
+                      <button type="button" onClick={() => useWing(x.w, x.c)}
+                        style={{ border: "none", cursor: "pointer", borderRadius: 10, padding: "6px 12px", fontSize: 11.5, fontWeight: 800, background: T.dark, color: "#fff" }}>Usar</button>
+                      <button type="button" onClick={() => dropWing(x.w)}
+                        style={{ border: "none", cursor: "pointer", borderRadius: 10, padding: "6px 10px", fontSize: 11.5, fontWeight: 800, background: T.card, color: T.sub }}>✕</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {wingWhy && (
+              <div style={{ background: T.tileGreen, borderRadius: 15, padding: "12px 14px" }}>
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: T.green }}>Ancho recomendado: {fmtW(bestWing.w)} pt</div>
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.45 }}>{wingWhy}</div>
+              </div>
+            )}
+            <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+              El <b>% del ancho</b> no decide solo: un ala estrecha SIEMPRE saca mejor ratio (la curva de precios es convexa) — eso es geometría, no edge. Lo que separa un ancho de otro es la <b>zona de pérdida parcial</b>: entre el strike corto y el largo, el ala ancha pierde solo lo recorrido; la estrecha ya está en pérdida máxima. Cada ancho se juzga con dos modelos y se queda con el <b>peor</b>: la <b>réplica</b> pasa cada movimiento real del histórico por el payoff exacto (ve el colchón), y la <b>binaria</b> supone que toda rotura es pérdida máxima con la POP suavizada (deja hueco a la cola que aún no ha ocurrido). El EV se compara a <b>igual riesgo objetivo</b>. La réplica valora al intrínseco del open: el extrínseco que sobrevive al IV crush juega ligeramente en contra.
+            </div>
+          </>
+        )}
         <WizSection>▸ Estructura</WizSection>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <WizInput label="Put spread" value={st.put} onChange={set("put")} placeholder="195/190" />
@@ -5301,6 +5503,17 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               <Tile key={s.k} label={"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")} value={isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}
                 tone={!isFinite(s.pop) ? "muted" : s.k === "xOpen" ? (s.pop >= 0.7 ? "green" : s.pop >= 0.5 ? "amber" : "red") : "default"} />
             ))}
+          </div>
+        )}
+        {isFinite(popOpenS) && (
+          <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>POP open <b>suavizada</b> — la que usa el EV</span>
+            <span style={{ fontSize: 15, fontWeight: 800, color: popOpenS >= 0.7 ? T.green : popOpenS >= 0.5 ? T.gold : T.red, fontVariantNumeric: "tabular-nums" }}>{(popOpenS * 100).toFixed(0)}%</span>
+          </div>
+        )}
+        {isFinite(popOpenS) && (
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+            Con M={isFinite(M) ? M : "—"} y {isFinite(pf(st.xOpen)) ? pf(st.xOpen) : "—"} roturas, el crudo dice <b>{isFinite(popOpen) ? (popOpen * 100).toFixed(0) : "—"}%</b>: eso es <i>"aún no ha fallado"</i>, no <i>"no puede fallar"</i>. El EV y el veredicto usan la suavizada (Laplace: (M−X+1)/(M+2)), que deja sitio a la rotura que todavía no ha ocurrido. Con muchos earnings las dos convergen.
           </div>
         )}
         {scen.some((s) => isFinite(s.pop)) && (
