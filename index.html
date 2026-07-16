@@ -6639,7 +6639,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
             <button type="button" onClick={() => setErSumOpen(!erSumOpen)}
               style={{ border: "none", cursor: "pointer", width: "100%", background: "transparent", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, display: "inline-flex", alignItems: "center", gap: 7 }}>
-                Resumen por ticker (moomoo)
+                Resumen por ticker
                 <span style={{ fontSize: 10, fontWeight: 800, borderRadius: 8, padding: "1px 7px", background: T.card, color: T.sub }}>{Object.keys(hist).length}</span>
               </span>
               <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, transform: erSumOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
