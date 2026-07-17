@@ -4,9 +4,11 @@ Historial de versiones de `index.html`. Extraido del propio codigo el 17-jul-202
 para aligerar el archivo (estos comentarios no aportaban nada al usuario final ni al motor,
 solo pesaban en cada lectura). Orden: mas reciente primero.
 
-> Nota: las versiones v3.00 en adelante (vista unificada Screener->Earnings, historico
-> reconstruido por API, limpieza de Ajustes) se documentan en la memoria del proyecto,
-> no aqui todavia — se iran anadiendo cuando toque tocar la app de nuevo.
+> Nota: v3.00–v3.22 (vista unificada Screener->Earnings, historico reconstruido por API,
+> limpieza de Ajustes) siguen documentadas en la memoria del proyecto, no aqui todavia.
+> A partir de v3.23 se vuelven a registrar aqui — queda pendiente el backfill de v3.00–v3.22.
+
+v3.23 (Victor: "que se pueda filtrar por pop" y "quita market data api de ajustes"): DOS COSAS. (1) FILTRO POR POP en el "Resumen por ticker" de la herramienta Earnings — fila de chips Todas/≥50%/≥60%/≥70% sobre la columna "Dentro EM" (r.within = popOpen), que filtra tras ordenar, con contador "N de M" y aviso "Ningún ticker con POP ≥ X%" cuando ninguno cumple; estado erSumMinPop efímero (sin backup). La tabla ya era ordenable, ahora también filtrable. (2) RETIRADA la API de Market Data (marketdata.app): la fila de Ajustes ya no existía (sustituida por Alpha Vantage; solo quedaban el comentario y un modal huérfano al que no llegaba ningún botón). Eliminado el resto de la integración — getLiq() + estado liq/liqBusy, botón "Comprobar liquidez" y su panel de resultado (el del rótulo "Market Data (…)"), el badge de liquidez de las tarjetas de earnings, la columna "Liq" del Resumen por ticker (minWidth 540→470), el modal de la key + estado mdataKey/mdataModalOpen/mdataInput + open/saveMdataKey + la carga de localStorage, KEY_MDATA fuera de BACKUP_KEYS y del export/import/restore del backup, y los textos ya obsoletos del panel "Criterios de liquidez mínima" (referencias al chequeo Market Data/CBOE). Se dejaron como código muerto inofensivo fetchMdExpirations/fetchMdChain/fetchStockCandlesMD/reconstructHistory (sin llamadores) y liqVerdict (sin usos) + la const KEY_MDATA, para no desenredar helpers compartidos (liqStats, pickErExpiry, parseStrikeTok, emFromChain) y arriesgar un crash. El Screener no se tocó — sigue leyendo screener.json del servidor. Verificado babel.
 
 v2.15 (Victor: "en la posición de cash, que el ticker automático sea CASH y no se pueda cambiar"): al entrar al paso 3 con Cash el asistente fija wizForm.tkr="CASH"; el campo Ticker se pinta como un recuadro fijo "CASH" no editable (en vez del WizInput); y buildPos fuerza tkr="CASH" para cualquier posición de cash (a prueba de rutas alternativas). Verificado babel.
 

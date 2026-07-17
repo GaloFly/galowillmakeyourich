@@ -141,13 +141,13 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.22"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.23"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_MANUALBK = "bloques_manual_backups_v1"; // últimas copias JSON guardadas por el usuario (restaurables desde la lista)
 const KEY_FLOWS = "bloques_aportaciones_v1";
-const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_MDATA, KEY_AVANTAGE, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, KEY_ERHIST, KEY_ERIDEAS, KEY_ALERTS, "bloques_show_pnl"];
+const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_AVANTAGE, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, KEY_ERHIST, KEY_ERIDEAS, KEY_ALERTS, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
 
 /* ---------- persistencia ---------- */
@@ -6158,13 +6158,11 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   });
   const [spotMsg, setSpotMsg] = useState("");
   const [spotBusy, setSpotBusy] = useState(false);
-  /* v1.90: liquidez CBOE — resultado del último chequeo (por ticker) y estado del botón */
-  const [liq, setLiq] = useState(null);
-  const [liqBusy, setLiqBusy] = useState(false);
   const [liqInfoOpen, setLiqInfoOpen] = useState(false); /* v1.91: desplegable de criterios */
   /* v2.00: cuadro resumen (para comparar con moomoo sin cambiar de pestaña) */
   const [erSumOpen, setErSumOpen] = useState(false);
   const [erSumSort, setErSumSort] = useState({ col: "within", dir: "desc" });
+  const [erSumMinPop, setErSumMinPop] = useState(0); /* v3.23: filtro por POP (Dentro EM) mínima del Resumen por ticker */
   const set = (k) => (v) => setSt((s) => {
     const nx = { ...s, [k]: v };
     try { localStorage.setItem(KEY_EARNCALC, JSON.stringify(nx)); } catch (e) {}
@@ -6375,50 +6373,6 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         }
       }
     });
-  };
-
-  /* v1.92: chequeo de liquidez vía Market Data (2 peticiones: vencimientos + cadena del vto que cubre
-     el gap). Necesita la key de Ajustes → "Liquidez opciones"; se lee de localStorage al pulsar, así el
-     guardado en Ajustes vale sin recargar. El resto — zona ±1.5×EM, 4 patas, badge en el histórico —
-     igual que la v1.90. */
-  const getLiq = async () => {
-    const sym = String(st.tkr || "").trim().toUpperCase();
-    if (!sym) { setLiq({ tkr: "", error: "Escribe un ticker primero." }); return; }
-    let mdKey = ""; try { mdKey = (localStorage.getItem(KEY_MDATA) || "").trim(); } catch (e) {}
-    if (!mdKey) { setLiq({ tkr: sym, error: "Falta la key de Market Data — actívala en Ajustes → Liquidez opciones (gratis, 100 peticiones/día)." }); return; }
-    setLiqBusy(true);
-    const ex = await fetchMdExpirations(sym, mdKey);
-    if (ex.error) { setLiqBusy(false); setLiq({ tkr: sym, error: ex.error }); return; }
-    const h0 = hist[sym] || null;
-    const calDate = erCal && erCal.tkr === sym && erCal.date ? erCal.date : h0 && h0.calDate ? h0.calDate : null;
-    const calHour = erCal && erCal.tkr === sym && erCal.date ? erCal.hour || null : h0 ? h0.calHour || null : null;
-    const exp = pickErExpiry(ex.exps, calDate, calHour);
-    if (!exp) { setLiqBusy(false); setLiq({ tkr: sym, error: "sin vencimientos que cubran el gap" }); return; }
-    const ch = await fetchMdChain(sym, mdKey, exp);
-    setLiqBusy(false);
-    if (ch.error) { setLiq({ tkr: sym, error: ch.error }); return; }
-    const rows = ch.opts;
-    const s0 = pf(st.spot) > 0 ? pf(st.spot) : ch.spot;
-    const emv = pf(st.em);
-    const bandPct = isFinite(emv) && emv > 0 ? emv * 1.5 : 10;
-    const zoneRows = isFinite(s0) && s0 > 0 ? rows.filter((o) => o.k >= s0 * (1 - bandPct / 100) && o.k <= s0 * (1 + bandPct / 100)) : rows;
-    const zone = liqStats(zoneRows.length ? zoneRows : rows);
-    /* las 4 patas escritas en el formulario (si las hay): put "corta/larga", call "corta/larga" */
-    const two = (str) => { const m = String(str || "").split(/[^0-9.,]+/).map(parseStrikeTok).filter((x) => isFinite(x) && x > 0); return m.length >= 2 ? m : null; };
-    const pl = two(st.put), cl = two(st.call);
-    const findC = (type, k) => rows.find((o) => o.type === type && Math.abs(o.k - k) < 1e-6) || null;
-    const legs = [];
-    if (pl) { const spK = Math.max(pl[0], pl[1]), lpK = Math.min(pl[0], pl[1]); legs.push({ lbl: "Put corta", k: spK, c: findC("P", spK) }, { lbl: "Put larga", k: lpK, c: findC("P", lpK) }); }
-    if (cl) { const scK = Math.min(cl[0], cl[1]), lcK = Math.max(cl[0], cl[1]); legs.push({ lbl: "Call corta", k: scK, c: findC("C", scK) }, { lbl: "Call larga", k: lcK, c: findC("C", lcK) }); }
-    setLiq({ tkr: sym, exp, zone, bandPct, legs, spot: isFinite(s0) && s0 > 0 ? s0 : null, cached: !!ch.cached });
-    /* badge persistido en la tarjeta (si el ticker tiene histórico), como calDate en v1.87 */
-    if (isFinite(zone.sprMed)) {
-      const upd = { ...loadErHist() };
-      if (upd[sym]) {
-        upd[sym] = { ...upd[sym], liq: { date: new Date().toISOString().slice(0, 10), exp, sprMed: Math.round(zone.sprMed * 10) / 10, oiMed: Math.round(zone.oiMed) || 0, quoted: zone.quoted, n: zone.n } };
-        saveErHist(upd); setHist(upd);
-      }
-    }
   };
 
   /* redondeo al incremento de strike típico según precio */
@@ -6693,7 +6647,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 const liq = hist[sym].liq || null;
                 return { sym, n: s.M, within: s.popOpen, edge: isFinite(s.emAvg) && isFinite(s.absOpen) ? s.emAvg - s.absOpen : NaN, em: s.emAvg, worst: s.worst, liq, oi: liq && isFinite(liq.oiMed) ? liq.oiMed : NaN, spr: liq && isFinite(liq.sprMed) ? liq.sprMed : NaN, calDate: hist[sym].calDate || "", calHour: hist[sym].calHour || "" };
               });
-              const val = (r, c) => c === "sym" ? r.sym : c === "liq" ? r.oi : r[c];
+              const val = (r, c) => c === "sym" ? r.sym : r[c];
               const dir = erSumSort.dir === "asc" ? 1 : -1;
               rows.sort((a, b) => {
                 if (erSumSort.col === "sym") return a.sym < b.sym ? -dir : a.sym > b.sym ? dir : 0;
@@ -6703,9 +6657,12 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 if (!an && !bn) return 0; if (!an) return 1; if (!bn) return -1;
                 return (av - bv) * dir;
               });
+              /* v3.23: filtro por POP (Dentro EM) mínima — con umbral activo, los tickers sin POP quedan fuera */
+              const shownRows = erSumMinPop > 0 ? rows.filter((r) => isFinite(r.within) && r.within >= erSumMinPop) : rows;
+              const popChips = [[0, "Todas"], [0.5, "≥50%"], [0.6, "≥60%"], [0.7, "≥70%"]];
               /* v2.14: columna "Próx" con fecha del próximo earnings + pre/post (Victor: "en el resumen por
                  ticker de earnings, la fecha del earnings y si es pre o post") */
-              const cols = [["sym", "Símbolo"], ["date", "Próx"], ["n", "N"], ["within", "Dentro EM"], ["edge", "Ø edge"], ["em", "Ø EM"], ["worst", "Peor"], ["liq", "Liq"]];
+              const cols = [["sym", "Símbolo"], ["date", "Próx"], ["n", "N"], ["within", "Dentro EM"], ["edge", "Ø edge"], ["em", "Ø EM"], ["worst", "Peor"]];
               const colTip = { edge: "Ø EM − Ø|open| (cuánto sobra o falta del EM frente al movimiento real medio)" };
               const th = (c, lbl) => (
                 <th key={c} title={colTip[c] || undefined} onClick={() => setErSumSort((p) => ({ col: c, dir: p.col === c && p.dir === "desc" ? "asc" : "desc" }))}
@@ -6720,13 +6677,20 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               return (
                 <div style={{ padding: "0 6px 10px" }}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, padding: "0 6px 8px" }}>Ø edge = ØEM − Ø|open| (el "Avg P&L" de moomoo). Próx = fecha del próximo earnings · pre/post. Tocar fila carga el ticker abajo.</div>
+                  {/* v3.23: filtro por POP (Dentro EM) mínima */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", padding: "0 6px 10px" }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: T.sub, letterSpacing: 0.3 }}>POP ≥</span>
+                    {popChips.map(([v, l]) => (
+                      <button key={l} type="button" onClick={() => setErSumMinPop(v)}
+                        style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "5px 10px", fontSize: 11, fontWeight: 800, background: erSumMinPop === v ? T.ink : T.card, color: erSumMinPop === v ? T.card : T.sub }}>{l}</button>
+                    ))}
+                    {erSumMinPop > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, marginLeft: "auto" }}>{shownRows.length} de {rows.length}</span>}
+                  </div>
                   <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 540 }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 470 }}>
                       <thead><tr style={{ borderBottom: "1.5px solid " + T.line }}>{cols.map(([c, l]) => th(c, l))}</tr></thead>
                       <tbody>
-                        {rows.map((r) => {
-                          const vd = r.liq ? liqVerdict(r.spr, r.oi) : null;
-                          const liqCol = vd ? colMap[vd.col] : T.sub;
+                        {shownRows.map((r) => {
                           const isSel = String(st.tkr || "").trim().toUpperCase() === r.sym;
                           return (
                             <tr key={r.sym} onClick={() => { applyHist(r.sym); setSyncTkr(r.sym); }}
@@ -6738,13 +6702,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: isFinite(r.edge) ? (r.edge >= 0 ? T.green : T.red) : T.sub, fontVariantNumeric: "tabular-nums" }}>{isFinite(r.edge) ? (r.edge >= 0 ? "+" : "") + r.edge.toFixed(1) : "—"}</td>
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{p1(r.em)}</td>
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{isFinite(r.worst) ? (r.worst >= 0 ? "+" : "") + r.worst.toFixed(1) + "%" : "—"}</td>
-                              <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 800, color: liqCol, fontVariantNumeric: "tabular-nums" }}>{r.liq && isFinite(r.oi) ? r.oi : "—"}</td>
                             </tr>
                           );
                         })}
                       </tbody>
                     </table>
                   </div>
+                  {shownRows.length === 0 && <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, padding: "10px 6px 2px", textAlign: "center" }}>Ningún ticker con POP ≥ {(erSumMinPop * 100).toFixed(0)}%.</div>}
                 </div>
               );
             })()}
@@ -6801,23 +6765,6 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                         </span>
                       </div>
                     )}
-                    {/* v1.90: badge de liquidez (zona ±1.5×EM del último chequeo de liquidez); si la lectura no
-                        es de hoy lleva su fecha — nunca se enseña como fresca una lectura vieja.
-                        v1.91: wording pasa/no-pasa explícito (Victor: "si pasa el filtro en la tarjeta") */}
-                    {h && h.liq && isFinite(h.liq.sprMed) && (() => {
-                      const vd = liqVerdict(h.liq.sprMed, h.liq.oiMed);
-                      const colMap = { green: T.green, gold: T.gold, red: T.red, sub: T.sub };
-                      const passTxt = vd.col === "green" ? "✓ PASA LIQUIDEZ" : vd.col === "gold" ? "LIQUIDEZ JUSTA" : vd.col === "red" ? "✗ NO PASA" : "LIQUIDEZ S/D";
-                      const today0 = new Date().toISOString().slice(0, 10);
-                      return (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 9.5, fontWeight: 800, borderRadius: 7, padding: "2px 7px", background: T.card, color: colMap[vd.col] }}>{passTxt}</span>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
-                            spr {h.liq.sprMed.toFixed(1)}% · OI {h.liq.oiMed}{h.liq.date !== today0 ? " · " + new Date(h.liq.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" }) : ""}
-                          </span>
-                        </div>
-                      );
-                    })()}
                     {f && (f.put || f.call || f.em) && (
                       <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>
                         {f.put ? "P " + f.put : ""}{f.put && f.call ? "  ·  " : ""}{f.call ? "C " + f.call : ""}{(f.put || f.call) && f.em ? "  ·  " : ""}{f.em ? "EM ±" + f.em + "%" : ""}
@@ -6927,55 +6874,6 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               </span>
             </div>
           )
-        )}
-        {/* v1.92: liquidez de la cadena (Market Data) — zona ±1.5×EM y las 4 patas escritas */}
-        <button type="button" onClick={getLiq} disabled={liqBusy}
-          style={{ border: "none", cursor: "pointer", borderRadius: 12, height: 40, fontSize: 13, fontWeight: 800, background: T.tile, color: T.ink, opacity: liqBusy ? 0.6 : 1 }}>
-          {liqBusy ? "Leyendo cadena…" : "Comprobar liquidez"}
-        </button>
-        {liq && liq.tkr === String(st.tkr || "").trim().toUpperCase() && (
-          liq.error ? (
-            <div style={{ background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>Liquidez: {liq.error}</div>
-          ) : (() => {
-            const colMap = { green: T.green, gold: T.gold, red: T.red, sub: T.sub };
-            const bgMap = { green: T.tileGreen, gold: T.tileAmber, red: T.tileRed, sub: T.tile };
-            const vd = liqVerdict(liq.zone.sprMed, liq.zone.oiMed);
-            const legsQ = liq.legs.filter((l) => l.c && l.c.bid > 0 && l.c.ask > 0);
-            const sumSpr = legsQ.length === 4 ? legsQ.reduce((a, l) => a + (l.c.ask - l.c.bid), 0) : NaN;
-            const cr = pf(st.credit);
-            return (
-              <div style={{ background: bgMap[vd.col], borderRadius: 14, padding: "11px 13px", display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 800, color: colMap[vd.col] }}>{vd.v} · vto {new Date(liq.exp + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" })}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>spread med. {isFinite(liq.zone.sprMed) ? liq.zone.sprMed.toFixed(1) + "%" : "—"} · OI med. {isFinite(liq.zone.oiMed) ? liq.zone.oiMed : "—"} · ±{liq.bandPct.toFixed(1)}%</span>
-                </div>
-                {liq.legs.length > 0 && (
-                  <div style={{ display: "grid", gap: 4 }}>
-                    {liq.legs.map((l) => (
-                      <div key={l.lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 11, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                        <span style={{ color: T.ink }}>{l.lbl} {l.k}</span>
-                        {l.c ? (
-                          l.c.bid > 0 && l.c.ask > 0 ? (
-                            <span style={{ color: T.sub }}>{l.c.bid.toFixed(2)}×{l.c.ask.toFixed(2)} · <b style={{ color: ((l.c.ask - l.c.bid) / ((l.c.ask + l.c.bid) / 2)) * 100 > 15 ? T.red : ((l.c.ask - l.c.bid) / ((l.c.ask + l.c.bid) / 2)) * 100 > 5 ? T.gold : T.green }}>{(((l.c.ask - l.c.bid) / ((l.c.ask + l.c.bid) / 2)) * 100).toFixed(1)}%</b> · OI {l.c.oi} · vol {l.c.vol}</span>
-                          ) : (
-                            <span style={{ color: T.gold }}>sin cotización a dos lados · OI {l.c.oi}</span>
-                          )
-                        ) : (
-                          <span style={{ color: T.red }}>strike no existe en ese vto</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {isFinite(sumSpr) && (
-                  <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, lineHeight: 1.4 }}>
-                    Fricción ida+vuelta ≈ <b style={{ color: T.ink }}>${(sumSpr * 100).toFixed(0)}</b> por cóndor (media pata a pata){isFinite(cr) && cr > 0 ? <> · <b style={{ color: sumSpr / cr > 0.3 ? T.red : sumSpr / cr > 0.15 ? T.gold : T.green }}>{((sumSpr / cr) * 100).toFixed(0)}% del crédito</b></> : null}
-                  </div>
-                )}
-                <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub }}>{"Market Data (" + (liq.cached ? "caché, ~2 créditos por chequeo" : "en vivo: cada contrato consume 1 crédito") + ") · verde ≤5% y OI ≥100 · rojo >15% u OI <10 · fricción = Σ spreads de las 4 patas (entrada+salida al mid)"}</div>
-              </div>
-            );
-          })()
         )}
         {emOk && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -7285,7 +7183,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 ["Fricción vs crédito", "Σ spreads de las 4 patas: ≤15% del crédito bien · 15–30% justo · >30% NO-GO aunque la POP acompañe — regalarías un tercio de lo que cobras"],
                 ["Open interest por strike", "≥100 suelo razonable · ≥500 cómodo · <50 sospechoso: el bid×ask de pantalla suele evaporarse al mandar la orden"],
                 ["Volumen de opciones del ticker", "≥5.000–10.000 contratos/día en conjunto"],
-                ["Market cap", "≥$10B zona cómoda · $5–10B caso a caso (que decida el chequeo CBOE) · <$5B fuera — casi ninguna cadena aguanta 4 patas"],
+                ["Market cap", "≥$10B zona cómoda · $5–10B caso a caso · <$5B fuera — casi ninguna cadena aguanta 4 patas"],
                 ["Volumen de la acción", "≥1–2M acciones/día — los market makers cubren delta con el subyacente; sin volumen ahí, ensanchan el spread de las opciones"],
                 ["Vencimientos semanales", "imprescindible que exista un vto pegado al earnings; si el que cubre el gap está a semanas, el extrínseco que sobrevive al IV crush se come el edge del dit=1"],
               ].map(([t, d]) => (
@@ -7294,7 +7192,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 </div>
               ))}
               <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.4, paddingTop: 2 }}>
-                El chequeo (Market Data) mide spread y OI del vencimiento real; market cap y volúmenes son criterio de lista (la app no los descarga). En la práctica los tres convergen: S&P 500 + Nasdaq 100 + algunas mid-caps calientes.
+                Market cap y volúmenes son criterio de lista (la app no los descarga). En la práctica convergen: S&P 500 + Nasdaq 100 + algunas mid-caps calientes.
               </div>
             </div>
           )}
@@ -7776,10 +7674,6 @@ function App() {
   const [keyModalOpen, setKeyModalOpen] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
-  /* v1.92: key de Market Data (liquidez de opciones de la herramienta Earnings) */
-  const [mdataKey, setMdataKey] = useState("");
-  const [mdataModalOpen, setMdataModalOpen] = useState(false);
-  const [mdataInput, setMdataInput] = useState("");
   const [avKey, setAvKey] = useState(""); /* v2.08: Alpha Vantage — fechas de earnings pasados */
   const [avModalOpen, setAvModalOpen] = useState(false);
   const [avInput, setAvInput] = useState("");
@@ -7848,7 +7742,6 @@ function App() {
     try { const a = localStorage.getItem(KEY_ACC); if (a) { setAccounts(JSON.parse(a)); haveAcc = true; } } catch (e) {}
     try { const p = localStorage.getItem(KEY_POS); if (p) { const arr = JSON.parse(p); if (Array.isArray(arr)) { lsPos = arr; setPositions(withNat(arr)); havePos = true; } } } catch (e) {}
     try { const k = localStorage.getItem(KEY_FINNHUB); if (k) setApiKey(k); } catch (e) {}
-    try { const mk = localStorage.getItem(KEY_MDATA); if (mk) setMdataKey(mk); } catch (e) {} /* v1.92 */
     try { const ak = localStorage.getItem(KEY_AVANTAGE); if (ak) setAvKey(ak); } catch (e) {} /* v2.08 */
     /* al abrir la app (v5.05): si hay API key guardada, los precios se descargan DIRECTAMENTE, sin pasar
        por la hoja de "Actualizar precios / Cambiar key" — esa hoja solo aparece si se pulsa el botón.
@@ -8002,7 +7895,7 @@ function App() {
        el riesgo objetivo solo vivían en la copia automática de versión; exportar y restaurar en otro
        dispositivo los perdía. Ahora viajan en el propio JSON (v12; restaurar un v11 sigue funcionando). */
     const erCalcRaw = (() => { try { return localStorage.getItem(KEY_EARNCALC) || null; } catch (e) { return null; } })();
-    setBackupText(JSON.stringify({ v: 12, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, mdataKey, avKey, geminiKey, showPnl, erHist: loadErHist(), erIdeas: loadErIdeas(), erCalc: erCalcRaw, riesgoObj: getRiesgoObj(), alerts: loadAlerts() }, null, 2));
+    setBackupText(JSON.stringify({ v: 12, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, avKey, geminiKey, showPnl, erHist: loadErHist(), erIdeas: loadErIdeas(), erCalc: erCalcRaw, riesgoObj: getRiesgoObj(), alerts: loadAlerts() }, null, 2));
     setCopied(false); setRestoreMsg(""); setBackupOpen(true);
   };
   /* guarda una copia JSON en la lista de restaurables (fecha/hora). Se llama cada vez que el usuario graba un
@@ -8098,7 +7991,6 @@ function App() {
       if (Array.isArray(d.trades)) setTrades(d.trades);
       if (typeof d.compBasis === "string" && BASIS_KEYS.includes(d.compBasis)) setBasis(d.compBasis);
       if (typeof d.finnhubKey === "string" && d.finnhubKey) { setApiKey(d.finnhubKey); try { localStorage.setItem(KEY_FINNHUB, d.finnhubKey); } catch (e) {} }
-      if (typeof d.mdataKey === "string" && d.mdataKey) { setMdataKey(d.mdataKey); try { localStorage.setItem(KEY_MDATA, d.mdataKey); } catch (e) {} } /* v1.92 */
       if (typeof d.avKey === "string" && d.avKey) { setAvKey(d.avKey); try { localStorage.setItem(KEY_AVANTAGE, d.avKey); } catch (e) {} } /* v2.08 */
       if (typeof d.geminiKey === "string" && d.geminiKey) { setGeminiKey(d.geminiKey); try { localStorage.setItem(KEY_GEMINI, d.geminiKey); } catch (e) {} }
       if (typeof d.showPnl === "boolean") { setShowPnl(d.showPnl); try { localStorage.setItem("bloques_show_pnl", d.showPnl ? "1" : "0"); } catch (e) {} }
@@ -8175,7 +8067,6 @@ function App() {
         [KEY_BROKERS, Array.isArray(d.brokers) && d.brokers.length ? JSON.stringify(d.brokers) : null],
         [KEY_BASIS, typeof d.compBasis === "string" ? d.compBasis : null],
         [KEY_FINNHUB, typeof d.finnhubKey === "string" && d.finnhubKey ? d.finnhubKey : null],
-        [KEY_MDATA, typeof d.mdataKey === "string" && d.mdataKey ? d.mdataKey : null], /* v1.92 */
         [KEY_AVANTAGE, typeof d.avKey === "string" && d.avKey ? d.avKey : null], /* v2.08 */
         [KEY_GEMINI, typeof d.geminiKey === "string" && d.geminiKey ? d.geminiKey : null],
         ["bloques_show_pnl", typeof d.showPnl === "boolean" ? (d.showPnl ? "1" : "0") : null],
@@ -8320,20 +8211,12 @@ function App() {
     runRefresh(k);
   };
   const openGeminiModal = () => { setGeminiInput(geminiKey); setGeminiModalOpen(true); };
-  /* v1.92: modal de la key de Market Data (liquidez de opciones) */
-  const openMdataModal = () => { setMdataInput(mdataKey); setMdataModalOpen(true); };
   const openAvModal = () => { setAvInput(avKey); setAvModalOpen(true); };
   const saveAvKey = () => {
     const k = avInput.trim();
     setAvKey(k);
     try { if (k) localStorage.setItem(KEY_AVANTAGE, k); else localStorage.removeItem(KEY_AVANTAGE); } catch (e) {}
     setAvModalOpen(false);
-  };
-  const saveMdataKey = () => {
-    const k = mdataInput.trim();
-    setMdataKey(k);
-    try { if (k) localStorage.setItem(KEY_MDATA, k); else localStorage.removeItem(KEY_MDATA); } catch (e) {}
-    setMdataModalOpen(false);
   };
   const saveGeminiKey = () => {
     const k = geminiInput.trim();
@@ -9463,7 +9346,6 @@ function App() {
             <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>API keys</div>
               <SettingsRow icon="key" tint={apiKey ? T.tileGreen : T.tileAmber} iconColor={apiKey ? T.green : T.gold} title="Precios (Finnhub)" sub={apiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para cotizaciones"} right={apiKey ? "Cambiar" : "Activar"} onClick={openChangeKey} />
-              {/* v1.92: key de Market Data — el chequeo de liquidez de la herramienta Earnings */}
               <SettingsRow icon="key" tint={avKey ? T.tileGreen : T.tileAmber} iconColor={avKey ? T.green : T.gold} title="Fechas de earnings (Alpha Vantage)" sub={avKey ? "Key guardada en este dispositivo" : "Sin key — el Screener la necesita para reconstruir el POP"} right={avKey ? "Cambiar" : "Activar"} onClick={openAvModal} />
               <SettingsRow icon="camera" tint={geminiKey ? T.tileGreen : T.tileAmber} iconColor={geminiKey ? T.green : T.gold} title="Lector de capturas (Gemini)" sub={geminiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para leer capturas"} right={geminiKey ? "Cambiar" : "Activar"} onClick={openGeminiModal} last />
             </div>
@@ -9521,21 +9403,6 @@ function App() {
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setGeminiModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
               <button onClick={saveGeminiKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* v1.92: modal de la key de Market Data (liquidez de opciones) */}
-      {mdataModalOpen && (
-        <div onClick={() => setMdataModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-            <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{mdataKey ? "Cambiar API key de Market Data" : "API key de Market Data"}</div>
-            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en marketdata.app (regístrate y copia el token del dashboard) — 100 créditos/día. Alimenta el chequeo de liquidez de la herramienta Earnings: la app pide la cadena en modo caché (~2 créditos por chequeo); si no hay caché cae a datos en vivo, donde cada contrato consume 1 crédito. Se guarda en este dispositivo.</div>
-            <input type="text" value={mdataInput} onChange={(e) => setMdataInput(e.target.value)} placeholder="Pega aquí tu token"
-              style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 14 }} />
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setMdataModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={saveMdataKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
             </div>
           </div>
         </div>
