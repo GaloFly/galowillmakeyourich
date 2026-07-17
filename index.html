@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.23"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.25"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5682,6 +5682,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   const [open, setOpen] = useState(null); /* ticker con el detalle desplegado */
   const [minCap, setMinCap] = useState(() => { try { const v = parseFloat(localStorage.getItem(KEY_SCRMINCAP) || ""); return Number.isFinite(v) && v > 0 ? v : 10; } catch (e) { return 10; } });
   const [minVol, setMinVol] = useState(() => { try { const v = parseFloat(localStorage.getItem(KEY_SCRMINOI) || ""); return Number.isFinite(v) && v >= 0 ? v : 5000; } catch (e) { return 5000; } });
+  const [minPop, setMinPop] = useState(() => { try { const v = parseFloat(localStorage.getItem(KEY_SCRMINPOP) || ""); return Number.isFinite(v) && v >= 0 ? v : 0; } catch (e) { return 0; } }); /* v3.24: POP (open) mínima del filtro, fracción 0–1 */
   const [dayF, setDayF] = useState("all");
   const [sesF, setSesF] = useState("all");
 
@@ -5750,12 +5751,17 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
 
   const items = (data && Array.isArray(data.items)) ? data.items : [];
   const days = Array.from(new Set(items.map((it) => it.date).filter(Boolean))).sort();
-  const filtered = items.filter((it) =>
-    (Number(it.marketCapB) >= minCap) &&
-    (minVol <= 0 || (Number(it.optVolume) || 0) >= minVol) &&
-    (dayF === "all" || it.date === dayF) &&
-    (sesF === "all" || it.session === sesF)
-  );
+  /* v3.24: POP (open) por ticker desde el histórico del servidor — una sola lectura para el filtro */
+  const erHistAll = (() => { try { return loadErHist(); } catch (e) { return {}; } })();
+  const popOf = (tkr) => { try { const h = erHistAll[tkr]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
+  const filtered = items.filter((it) => {
+    if (!(Number(it.marketCapB) >= minCap)) return false;
+    if (!(minVol <= 0 || (Number(it.optVolume) || 0) >= minVol)) return false;
+    if (!(dayF === "all" || it.date === dayF)) return false;
+    if (!(sesF === "all" || it.session === sesF)) return false;
+    if (minPop > 0) { const p = popOf(it.ticker); if (!(Number.isFinite(p) && p >= minPop)) return false; }
+    return true;
+  });
   const groups = {};
   filtered.forEach((it) => { (groups[it.date] = groups[it.date] || []).push(it); });
   const groupDays = Object.keys(groups).sort();
@@ -5812,6 +5818,16 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                 <option value="AMC">después (AMC)</option>
               </select>
             </label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 5 }}>POP ≥
+              <select value={String(minPop)} onChange={(e) => { const v = parseFloat(e.target.value); setMinPop(v); try { localStorage.setItem(KEY_SCRMINPOP, String(v)); } catch (er) {} }}
+                style={{ border: "none", borderRadius: 8, padding: "5px 8px", fontSize: 12, fontWeight: 800, background: T.tile, color: T.ink }}>
+                <option value={0}>todas</option>
+                <option value={0.5}>≥50%</option>
+                <option value={0.6}>≥60%</option>
+                <option value={0.7}>≥70%</option>
+                <option value={0.75}>≥75%</option>
+              </select>
+            </label>
           </div>
           {days.length > 1 ? (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
@@ -5819,7 +5835,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               {days.map((d) => <button key={d} type="button" onClick={() => setDayF(d)} style={chip(dayF === d)}>{fmtDay(d)}</button>)}
             </div>
           ) : null}
-          <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros</div>
+          <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros{minPop > 0 ? " · POP open ≥ " + Math.round(minPop * 100) + "% (los tickers sin histórico no puntúan)" : ""}</div>
         </div>
       ) : null}
 
@@ -5892,6 +5908,9 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                             <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{pct1(s.ivCrush)}</div><div style={detLbl}>Ø IV crush</div></div>
                           </div>
                           <div style={{ fontSize: 10, color: T.sub, marginTop: 6 }}>{s.M} earnings en el histórico · Ø actual = movimiento real medio · peor gap {pct1(Math.abs(s.worst))}</div>
+                          {!Number.isFinite(s.nextEm) && (
+                            <div style={{ fontSize: 10, color: T.gold, marginTop: 3, fontWeight: 700 }}>El servidor aún no manda el EM del trimestre en curso — para montar el IC, léelo en "Earnings" con la tabla de moomoo o metiendo spot+EM a mano.</div>
+                          )}
                         </div>
                       ) : (
                         <div style={{ fontSize: 11.5, color: T.sub, background: T.tile, borderRadius: 10, padding: 10, lineHeight: 1.45 }}>
