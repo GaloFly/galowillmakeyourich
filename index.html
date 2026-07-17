@@ -141,13 +141,13 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.25"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.26"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_MANUALBK = "bloques_manual_backups_v1"; // últimas copias JSON guardadas por el usuario (restaurables desde la lista)
 const KEY_FLOWS = "bloques_aportaciones_v1";
-const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_AVANTAGE, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, KEY_ERHIST, KEY_ERIDEAS, KEY_ALERTS, "bloques_show_pnl"];
+const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, KEY_ERHIST, KEY_ERIDEAS, KEY_ALERTS, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
 
 /* ---------- persistencia ---------- */
@@ -5729,6 +5729,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   const pct1 = (x) => Number.isFinite(x) ? x.toFixed(1) + "%" : "—";
   const popPct = (p) => Number.isFinite(p) ? Math.round(p * 100) + "%" : "—";
   const popCol = (p) => !Number.isFinite(p) ? T.sub : p >= 0.75 ? T.green : p >= 0.5 ? T.gold : T.red;
+  const popBg = (p) => !Number.isFinite(p) ? T.tile : p >= 0.75 ? T.tileGreen : p >= 0.5 ? T.tileAmber : T.tileRed; /* v3.26: fondo del mini-tile POP en la tarjeta */
 
   /* stats del histórico del ticker (tabla moomoo subida o reconstrucción del screener), si existe */
   const statsOf = (tkr) => {
@@ -5846,6 +5847,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
           <div style={{ display: "grid", gap: 8 }}>
             {groups[d].slice().sort((a, b) => (Number(b.marketCapB) || 0) - (Number(a.marketCapB) || 0)).map((it) => {
               const lq = liqOf(it.optVolume);
+              const pOpen = popOf(it.ticker); /* v3.26: POP open visible en la cabecera, no solo al desplegar */
               const isOpen = open === it.ticker;
               const s = isOpen ? statsOf(it.ticker) : null;
               return (
@@ -5864,6 +5866,10 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                       <div style={{ fontSize: 11, color: T.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 190 }}>{it.name || ""}</div>
                     </div>
                     <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+                      <div style={miniTile(popBg(pOpen))}>
+                        <div style={{ ...miniVal, color: popCol(pOpen) }}>{popPct(pOpen)}</div>
+                        <div style={miniLbl}>POP</div>
+                      </div>
                       <div style={miniTile()}>
                         <div style={{ ...miniVal, color: T.ink }}>{fmtCap(it.marketCapB)}</div>
                         <div style={miniLbl}>cap</div>
@@ -7693,9 +7699,6 @@ function App() {
   const [keyModalOpen, setKeyModalOpen] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
-  const [avKey, setAvKey] = useState(""); /* v2.08: Alpha Vantage — fechas de earnings pasados */
-  const [avModalOpen, setAvModalOpen] = useState(false);
-  const [avInput, setAvInput] = useState("");
   const [geminiModalOpen, setGeminiModalOpen] = useState(false);
   const [geminiInput, setGeminiInput] = useState("");
   const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
@@ -7761,7 +7764,6 @@ function App() {
     try { const a = localStorage.getItem(KEY_ACC); if (a) { setAccounts(JSON.parse(a)); haveAcc = true; } } catch (e) {}
     try { const p = localStorage.getItem(KEY_POS); if (p) { const arr = JSON.parse(p); if (Array.isArray(arr)) { lsPos = arr; setPositions(withNat(arr)); havePos = true; } } } catch (e) {}
     try { const k = localStorage.getItem(KEY_FINNHUB); if (k) setApiKey(k); } catch (e) {}
-    try { const ak = localStorage.getItem(KEY_AVANTAGE); if (ak) setAvKey(ak); } catch (e) {} /* v2.08 */
     /* al abrir la app (v5.05): si hay API key guardada, los precios se descargan DIRECTAMENTE, sin pasar
        por la hoja de "Actualizar precios / Cambiar key" — esa hoja solo aparece si se pulsa el botón.
        Sin key no se molesta (primer uso). Se marca un flag en vez de llamar a runRefresh aquí porque en
@@ -7914,7 +7916,7 @@ function App() {
        el riesgo objetivo solo vivían en la copia automática de versión; exportar y restaurar en otro
        dispositivo los perdía. Ahora viajan en el propio JSON (v12; restaurar un v11 sigue funcionando). */
     const erCalcRaw = (() => { try { return localStorage.getItem(KEY_EARNCALC) || null; } catch (e) { return null; } })();
-    setBackupText(JSON.stringify({ v: 12, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, avKey, geminiKey, showPnl, erHist: loadErHist(), erIdeas: loadErIdeas(), erCalc: erCalcRaw, riesgoObj: getRiesgoObj(), alerts: loadAlerts() }, null, 2));
+    setBackupText(JSON.stringify({ v: 12, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, geminiKey, showPnl, erHist: loadErHist(), erIdeas: loadErIdeas(), erCalc: erCalcRaw, riesgoObj: getRiesgoObj(), alerts: loadAlerts() }, null, 2));
     setCopied(false); setRestoreMsg(""); setBackupOpen(true);
   };
   /* guarda una copia JSON en la lista de restaurables (fecha/hora). Se llama cada vez que el usuario graba un
@@ -8010,7 +8012,6 @@ function App() {
       if (Array.isArray(d.trades)) setTrades(d.trades);
       if (typeof d.compBasis === "string" && BASIS_KEYS.includes(d.compBasis)) setBasis(d.compBasis);
       if (typeof d.finnhubKey === "string" && d.finnhubKey) { setApiKey(d.finnhubKey); try { localStorage.setItem(KEY_FINNHUB, d.finnhubKey); } catch (e) {} }
-      if (typeof d.avKey === "string" && d.avKey) { setAvKey(d.avKey); try { localStorage.setItem(KEY_AVANTAGE, d.avKey); } catch (e) {} } /* v2.08 */
       if (typeof d.geminiKey === "string" && d.geminiKey) { setGeminiKey(d.geminiKey); try { localStorage.setItem(KEY_GEMINI, d.geminiKey); } catch (e) {} }
       if (typeof d.showPnl === "boolean") { setShowPnl(d.showPnl); try { localStorage.setItem("bloques_show_pnl", d.showPnl ? "1" : "0"); } catch (e) {} }
       /* v1.66: la herramienta de earnings viaja en el backup (v12). Un v11 no trae estas claves y se salta. */
@@ -8086,7 +8087,6 @@ function App() {
         [KEY_BROKERS, Array.isArray(d.brokers) && d.brokers.length ? JSON.stringify(d.brokers) : null],
         [KEY_BASIS, typeof d.compBasis === "string" ? d.compBasis : null],
         [KEY_FINNHUB, typeof d.finnhubKey === "string" && d.finnhubKey ? d.finnhubKey : null],
-        [KEY_AVANTAGE, typeof d.avKey === "string" && d.avKey ? d.avKey : null], /* v2.08 */
         [KEY_GEMINI, typeof d.geminiKey === "string" && d.geminiKey ? d.geminiKey : null],
         ["bloques_show_pnl", typeof d.showPnl === "boolean" ? (d.showPnl ? "1" : "0") : null],
       ];
@@ -8230,13 +8230,6 @@ function App() {
     runRefresh(k);
   };
   const openGeminiModal = () => { setGeminiInput(geminiKey); setGeminiModalOpen(true); };
-  const openAvModal = () => { setAvInput(avKey); setAvModalOpen(true); };
-  const saveAvKey = () => {
-    const k = avInput.trim();
-    setAvKey(k);
-    try { if (k) localStorage.setItem(KEY_AVANTAGE, k); else localStorage.removeItem(KEY_AVANTAGE); } catch (e) {}
-    setAvModalOpen(false);
-  };
   const saveGeminiKey = () => {
     const k = geminiInput.trim();
     setGeminiKey(k);
@@ -9365,7 +9358,6 @@ function App() {
             <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>API keys</div>
               <SettingsRow icon="key" tint={apiKey ? T.tileGreen : T.tileAmber} iconColor={apiKey ? T.green : T.gold} title="Precios (Finnhub)" sub={apiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para cotizaciones"} right={apiKey ? "Cambiar" : "Activar"} onClick={openChangeKey} />
-              <SettingsRow icon="key" tint={avKey ? T.tileGreen : T.tileAmber} iconColor={avKey ? T.green : T.gold} title="Fechas de earnings (Alpha Vantage)" sub={avKey ? "Key guardada en este dispositivo" : "Sin key — el Screener la necesita para reconstruir el POP"} right={avKey ? "Cambiar" : "Activar"} onClick={openAvModal} />
               <SettingsRow icon="camera" tint={geminiKey ? T.tileGreen : T.tileAmber} iconColor={geminiKey ? T.green : T.gold} title="Lector de capturas (Gemini)" sub={geminiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para leer capturas"} right={geminiKey ? "Cambiar" : "Activar"} onClick={openGeminiModal} last />
             </div>
 
@@ -9422,20 +9414,6 @@ function App() {
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setGeminiModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
               <button onClick={saveGeminiKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {avModalOpen && (
-        <div onClick={() => setAvModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-            <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{avKey ? "Cambiar API key de Alpha Vantage" : "API key de Alpha Vantage"}</div>
-            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en alphavantage.co/support/#api-key (instantánea, sin tarjeta). Da las FECHAS de earnings pasados de cada ticker — que el plan gratis de Finnhub no da — para reconstruir el histórico de POP del Screener. Una llamada trae todo el histórico de un ticker; límite de 25 llamadas/día, así que va sobrada para la sonda de un ticker pero se queda corta para barrer decenas. Se guarda en este dispositivo.</div>
-            <input type="text" value={avInput} onChange={(e) => setAvInput(e.target.value)} placeholder="Pega aquí tu API key"
-              style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 14 }} />
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setAvModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={saveAvKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
             </div>
           </div>
         </div>
