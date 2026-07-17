@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.26"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.28"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5743,7 +5743,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   };
 
   const chip = (active) => ({ border: "none", borderRadius: 999, padding: "6px 11px", fontSize: 11.5, fontWeight: 800, background: active ? T.dark : T.tile, color: active ? "#fff" : T.sub });
-  const miniTile = (bg) => ({ background: bg || T.tile, borderRadius: 9, padding: "5px 8px", textAlign: "center", minWidth: 44 });
+  const miniTile = (bg) => ({ background: bg || T.tile, borderRadius: 9, padding: "5px 6px", textAlign: "center", width: 50, flex: "none" });
   const miniLbl = { fontSize: 8.5, fontWeight: 700, color: T.sub, letterSpacing: 0.2, lineHeight: 1.1 };
   const miniVal = { fontSize: 13, fontWeight: 800, lineHeight: 1.15, fontVariantNumeric: "tabular-nums" };
   const detTile = (bg) => ({ background: bg || T.tile, borderRadius: 10, padding: "7px 6px", textAlign: "center", minWidth: 0 });
@@ -5797,10 +5797,12 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
         <div style={{ background: T.card, borderRadius: 14, padding: 12, marginBottom: 12, boxShadow: T.shadow }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 5 }}>Cap ≥
-              <select value={String(minCap)} onChange={(e) => { const v = parseFloat(e.target.value); setMinCap(v); try { localStorage.setItem(KEY_SCRMINCAP, String(v)); } catch (er) {} }}
-                style={{ border: "none", borderRadius: 8, padding: "5px 8px", fontSize: 12, fontWeight: 800, background: T.tile, color: T.ink }}>
-                {[2, 5, 10, 20, 50, 100, 200].map((v) => <option key={v} value={v}>${v}B</option>)}
-              </select>
+              <span style={{ display: "inline-flex", alignItems: "center", background: T.tile, borderRadius: 8 }}>
+                <input type="number" inputMode="decimal" min={0} step={1} value={minCap || ""} placeholder="0"
+                  onChange={(e) => { const v = parseFloat(e.target.value); const n = Number.isFinite(v) && v > 0 ? v : 0; setMinCap(n); try { localStorage.setItem(KEY_SCRMINCAP, String(n)); } catch (er) {} }}
+                  style={{ width: 42, border: "none", background: "transparent", padding: "5px 1px 5px 8px", fontSize: 12, fontWeight: 800, color: T.ink, outline: "none", textAlign: "right", MozAppearance: "textfield" }} />
+                <span style={{ fontSize: 12, fontWeight: 800, color: T.sub, padding: "0 8px 0 1px" }}>B</span>
+              </span>
             </label>
             <label style={{ fontSize: 11, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 5 }}>Liquidez
               <select value={String(minVol)} onChange={(e) => { const v = parseFloat(e.target.value); setMinVol(v); try { localStorage.setItem(KEY_SCRMINOI, String(v)); } catch (er) {} }}
@@ -5820,14 +5822,12 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               </select>
             </label>
             <label style={{ fontSize: 11, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 5 }}>POP ≥
-              <select value={String(minPop)} onChange={(e) => { const v = parseFloat(e.target.value); setMinPop(v); try { localStorage.setItem(KEY_SCRMINPOP, String(v)); } catch (er) {} }}
-                style={{ border: "none", borderRadius: 8, padding: "5px 8px", fontSize: 12, fontWeight: 800, background: T.tile, color: T.ink }}>
-                <option value={0}>todas</option>
-                <option value={0.5}>≥50%</option>
-                <option value={0.6}>≥60%</option>
-                <option value={0.7}>≥70%</option>
-                <option value={0.75}>≥75%</option>
-              </select>
+              <span style={{ display: "inline-flex", alignItems: "center", background: T.tile, borderRadius: 8 }}>
+                <input type="number" inputMode="numeric" min={0} max={100} step={5} value={minPop > 0 ? Math.round(minPop * 100) : ""} placeholder="0"
+                  onChange={(e) => { const v = parseFloat(e.target.value); const frac = Number.isFinite(v) && v > 0 ? Math.min(v, 100) / 100 : 0; setMinPop(frac); try { localStorage.setItem(KEY_SCRMINPOP, String(frac)); } catch (er) {} }}
+                  style={{ width: 36, border: "none", background: "transparent", padding: "5px 1px 5px 8px", fontSize: 12, fontWeight: 800, color: T.ink, outline: "none", textAlign: "right", MozAppearance: "textfield" }} />
+                <span style={{ fontSize: 12, fontWeight: 800, color: T.sub, padding: "0 8px 0 1px" }}>%</span>
+              </span>
             </label>
           </div>
           {days.length > 1 ? (
@@ -5836,7 +5836,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               {days.map((d) => <button key={d} type="button" onClick={() => setDayF(d)} style={chip(dayF === d)}>{fmtDay(d)}</button>)}
             </div>
           ) : null}
-          <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros{minPop > 0 ? " · POP open ≥ " + Math.round(minPop * 100) + "% (los tickers sin histórico no puntúan)" : ""}</div>
+          <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros{minPop > 0 ? " · POP open ≥ " + Math.round(minPop * 100) + "% (los tickers sin histórico no puntúan)" : ""}{(() => { const caps = items.map((it) => Number(it.marketCapB)).filter((v) => Number.isFinite(v)); return caps.length ? " · el barrido trae desde $" + Math.round(Math.min(...caps)) + "B" : ""; })()}</div>
         </div>
       ) : null}
 
@@ -5855,15 +5855,15 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                   {/* cabecera tocable */}
                   <div onClick={() => setOpen(isOpen ? null : it.ticker)}
                     style={{ padding: "11px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>{it.ticker}</span>
-                        <span style={{ fontSize: 10.5, fontWeight: 800, color: it.session === "BMO" ? T.gold : it.session === "AMC" ? T.green : T.sub }}>
-                          {it.session === "BMO" ? "BMO" : it.session === "AMC" ? "AMC" : "—"}
-                        </span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: lq.c }}>● {lq.t}</span>
+                    <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                        <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3, flex: "none" }}>{it.ticker}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: T.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{it.name || ""}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: T.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 190 }}>{it.name || ""}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.3, color: it.session === "BMO" ? T.gold : it.session === "AMC" ? T.green : T.sub, minWidth: 30, flex: "none" }}>{it.session === "BMO" ? "BMO" : it.session === "AMC" ? "AMC" : "—"}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: lq.c, display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: 3, background: lq.c, display: "inline-block" }} />{lq.t}</span>
+                      </div>
                     </div>
                     <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
                       <div style={miniTile(popBg(pOpen))}>
@@ -6670,7 +6670,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               const rows = Object.keys(hist).map((sym) => {
                 const s = erStats(erEvents(hist[sym]));
                 const liq = hist[sym].liq || null;
-                return { sym, n: s.M, within: s.popOpen, edge: isFinite(s.emAvg) && isFinite(s.absOpen) ? s.emAvg - s.absOpen : NaN, em: s.emAvg, worst: s.worst, liq, oi: liq && isFinite(liq.oiMed) ? liq.oiMed : NaN, spr: liq && isFinite(liq.sprMed) ? liq.sprMed : NaN, calDate: hist[sym].calDate || "", calHour: hist[sym].calHour || "" };
+                return { sym, n: s.M, within: s.popOpen, nextEm: s.nextEm, em: s.emAvg, absOpen: s.absOpen, edge: isFinite(s.emAvg) && isFinite(s.absOpen) ? s.emAvg - s.absOpen : NaN, ivCrush: s.ivCrush, worst: s.worst, liq, oi: liq && isFinite(liq.oiMed) ? liq.oiMed : NaN, spr: liq && isFinite(liq.sprMed) ? liq.sprMed : NaN, calDate: hist[sym].calDate || "", calHour: hist[sym].calHour || "" };
               });
               const val = (r, c) => c === "sym" ? r.sym : r[c];
               const dir = erSumSort.dir === "asc" ? 1 : -1;
@@ -6687,8 +6687,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               const popChips = [[0, "Todas"], [0.5, "≥50%"], [0.6, "≥60%"], [0.7, "≥70%"]];
               /* v2.14: columna "Próx" con fecha del próximo earnings + pre/post (Victor: "en el resumen por
                  ticker de earnings, la fecha del earnings y si es pre o post") */
-              const cols = [["sym", "Símbolo"], ["date", "Próx"], ["n", "N"], ["within", "Dentro EM"], ["edge", "Ø edge"], ["em", "Ø EM"], ["worst", "Peor"]];
-              const colTip = { edge: "Ø EM − Ø|open| (cuánto sobra o falta del EM frente al movimiento real medio)" };
+              const cols = [["sym", "Símbolo"], ["date", "Próx"], ["n", "N"], ["within", "Dentro EM"], ["nextEm", "EM próx"], ["em", "Ø EM"], ["absOpen", "Ø open"], ["edge", "Ø edge"], ["ivCrush", "IV crush"], ["worst", "Peor"]];
+              const colTip = { edge: "Ø EM − Ø|open| (cuánto sobra o falta del EM frente al movimiento real medio)", nextEm: "EM del próximo earnings (fila pendiente del histórico)", absOpen: "Movimiento real medio en el open (Ø|open|)", ivCrush: "Caída media de IV tras el earnings" };
               const th = (c, lbl) => (
                 <th key={c} title={colTip[c] || undefined} onClick={() => setErSumSort((p) => ({ col: c, dir: p.col === c && p.dir === "desc" ? "asc" : "desc" }))}
                   style={{ padding: "7px 8px", textAlign: c === "sym" ? "left" : "right", fontSize: 10, fontWeight: 800, color: erSumSort.col === c ? T.ink : T.sub, whiteSpace: "nowrap", cursor: "pointer", position: c === "sym" ? "sticky" : "static", left: 0, background: T.tile }}>
@@ -6712,7 +6712,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                     {erSumMinPop > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, marginLeft: "auto" }}>{shownRows.length} de {rows.length}</span>}
                   </div>
                   <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 470 }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 660 }}>
                       <thead><tr style={{ borderBottom: "1.5px solid " + T.line }}>{cols.map(([c, l]) => th(c, l))}</tr></thead>
                       <tbody>
                         {shownRows.map((r) => {
@@ -6724,8 +6724,11 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", color: T.sub, fontVariantNumeric: "tabular-nums" }}>{r.calDate ? (<span>{dShort(r.calDate)}<span style={{ color: r.calHour === "bmo" ? T.gold : r.calHour === "amc" ? T.green : T.sub, fontWeight: 800 }}>{r.calHour === "bmo" ? " · pre" : r.calHour === "amc" ? " · post" : r.calHour === "dmh" ? " · sesión" : ""}</span></span>) : "—"}</td>
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{r.n || "—"}</td>
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 800, color: isFinite(r.within) ? (r.within >= 0.7 ? T.green : r.within >= 0.5 ? T.gold : T.red) : T.sub, fontVariantNumeric: "tabular-nums" }}>{pct(r.within)}</td>
-                              <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: isFinite(r.edge) ? (r.edge >= 0 ? T.green : T.red) : T.sub, fontVariantNumeric: "tabular-nums" }}>{isFinite(r.edge) ? (r.edge >= 0 ? "+" : "") + r.edge.toFixed(1) : "—"}</td>
+                              <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 800, color: isFinite(r.nextEm) ? T.ink : T.sub, fontVariantNumeric: "tabular-nums" }}>{p1(r.nextEm)}</td>
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{p1(r.em)}</td>
+                              <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{p1(r.absOpen)}</td>
+                              <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: isFinite(r.edge) ? (r.edge >= 0 ? T.green : T.red) : T.sub, fontVariantNumeric: "tabular-nums" }}>{isFinite(r.edge) ? (r.edge >= 0 ? "+" : "") + r.edge.toFixed(1) : "—"}</td>
+                              <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{p1(r.ivCrush)}</td>
                               <td style={{ padding: "8px", textAlign: "right", fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{isFinite(r.worst) ? (r.worst >= 0 ? "+" : "") + r.worst.toFixed(1) + "%" : "—"}</td>
                             </tr>
                           );
