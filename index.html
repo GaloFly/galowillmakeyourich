@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.28"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.29"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5855,12 +5855,10 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                   {/* cabecera tocable */}
                   <div onClick={() => setOpen(isOpen ? null : it.ticker)}
                     style={{ padding: "11px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                    <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-                        <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3, flex: "none" }}>{it.ticker}</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: T.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{it.name || ""}</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>{it.ticker}</span>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name || ""}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 1 }}>
                         <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.3, color: it.session === "BMO" ? T.gold : it.session === "AMC" ? T.green : T.sub, minWidth: 30, flex: "none" }}>{it.session === "BMO" ? "BMO" : it.session === "AMC" ? "AMC" : "—"}</span>
                         <span style={{ fontSize: 10, fontWeight: 700, color: lq.c, display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: 3, background: lq.c, display: "inline-block" }} />{lq.t}</span>
                       </div>
