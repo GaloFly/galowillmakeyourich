@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.29"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.32"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2654,8 +2654,11 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
   const sorted = [...snapshots].sort((a, b) => (a.date < b.date ? 1 : -1)); // desc
   const first = sorted[sorted.length - 1];
   const asc = [...snapshots].sort((a, b) => (a.date < b.date ? -1 : 1));
-  /* aportaciones netas en el intervalo (d0, d1] */
-  const flowBetween = (d0, d1) => (flows || []).reduce((s, f) => (f.date > d0 && f.date <= d1 ? s + n(f.amount) : s), 0);
+  /* aportaciones netas en el intervalo (d0, d1] — el flujo real que entró/salió de la cuenta es el importe
+     MENOS la comisión de bróker (v3.32): un depósito con comisión mete menos capital, una retirada con
+     comisión saca más. flowNet = amount − fee cuadra en ambos sentidos (fee siempre resta). */
+  const flowNet = (f) => n(f.amount) - n(f.fee);
+  const flowBetween = (d0, d1) => (flows || []).reduce((s, f) => (f.date > d0 && f.date <= d1 ? s + flowNet(f) : s), 0);
   /* TWR: encadena retornos por tramo, neutralizando aportaciones/retiros (Dietz modificado, flujo a mitad de tramo) */
   const twrSeries = (() => {
     let idx = 100; const out = [];
@@ -2898,26 +2901,32 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
 }
 
 /* ---------- aportaciones y retiros de cash: no son rendimiento ---------- */
-function AportacionesCard({ flows, setFlows, brokers }) {
+function AportacionesCard({ flows, setFlows, brokers, accounts }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [amount, setAmount] = useState("");
+  const [fee, setFee] = useState(""); /* v3.32: comisión de bróker del movimiento */
   const [kind, setKind] = useState("Aportación");
   const [via, setVia] = useState("Efectivo"); // "Efectivo" | "Acciones" (traspaso in-kind, a valor de mercado)
   const [brk, setBrk] = useState(brokers[0] || "");
   const [note, setNote] = useState("");
+  const [warn, setWarn] = useState(false); /* v3.32: aviso post-aportación si el bróker tiene cash negativo */
   useEffect(() => { if (!brokers.includes(brk)) setBrk(brokers[0] || ""); }, [brokers]);
+  const brkCash = (b) => n(((accounts || {})[b] || {}).cash); /* cash manual del bróker (negOnly → negativo = margen) */
+  const negCashBrk = brkCash(brk) < 0;
   const add = () => {
     const a = Math.abs(n(amount));
     if (!a || !date) return;
     const signed = kind === "Retiro" ? -a : a;
-    setFlows((fs) => [...fs, { id: newId(), date, amount: String(signed), broker: brk, note: note.trim(), via }]);
-    setAmount(""); setNote("");
+    setFlows((fs) => [...fs, { id: newId(), date, amount: String(signed), broker: brk, note: note.trim(), via, fee: String(n(fee) || 0) }]);
+    setWarn(negCashBrk); /* si aportas/retiras sobre un bróker con cash negativo, recuérdalo */
+    setAmount(""); setNote(""); setFee("");
   };
   const del = (id) => setFlows((fs) => fs.filter((f) => f.id !== id));
   const sorted = [...flows].sort((a, b) => (a.date < b.date ? 1 : -1));
   const totalIn = flows.reduce((s, f) => s + Math.max(0, n(f.amount)), 0);
   const totalOut = flows.reduce((s, f) => s + Math.min(0, n(f.amount)), 0);
+  const totalFees = flows.reduce((s, f) => s + n(f.fee), 0);
   const neto = totalIn + totalOut;
   const cumSeries = (() => { let acc = 0; return [...flows].sort((a, b) => (a.date < b.date ? -1 : 1)).map((f) => { acc += n(f.amount); return { date: f.date, v: acc }; }); })();
   /* height fija + lineHeight en vez de solo padding: en iOS los input[type=date] y los select renderizan
@@ -2931,6 +2940,7 @@ function AportacionesCard({ flows, setFlows, brokers }) {
         <MicroStat label="Aportado" value={"$" + money(totalIn)} color={T.green} />
         <MicroStat label="Retirado" value={"-$" + money(Math.abs(totalOut))} color={T.red} />
         <MicroStat label="Neto" value={signMoney(neto)} color={neto >= 0 ? T.green : T.red} />
+        {totalFees > 0 && <MicroStat label="Comisiones" value={"-$" + money(totalFees)} color={T.red} />}
       </div>
 
       {cumSeries.length >= 2 && (
@@ -2951,13 +2961,29 @@ function AportacionesCard({ flows, setFlows, brokers }) {
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
           <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={via === "Acciones" ? "Valor mercado USD" : "Importe USD"} style={inputStyle} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
           <select value={brk} onChange={(e) => setBrk(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
             {brokers.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
+          <input type="number" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="Comisión USD (opc.)" style={inputStyle} />
+        </div>
+        <div style={{ marginBottom: 10 }}>
           <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota (opcional)" style={inputStyle} />
         </div>
+        {/* v3.32: pista en vivo — si el bróker elegido está en cash negativo (margen), la aportación real
+           lo reduce/cancela antes de sumar a B0. Recordatorio antes de registrar. */}
+        {negCashBrk && (
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.gold, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.5, marginBottom: 10 }}>
+            ⚠️ {brk} tiene cash negativo ({signMoney(brkCash(brk))}). Una {kind === "Retiro" ? "retirada lo agranda" : "aportación real lo reduce o lo cancela"} antes de tocar B0 — al registrar, acuérdate de actualizar el <b>cash negativo</b> y el <b>cash de B0</b> en la cuenta.
+          </div>
+        )}
         <button onClick={add} style={{ width: "100%", background: kind === "Retiro" ? T.red : T.green, border: "none", borderRadius: 14, padding: "12px 0", fontSize: 14.5, fontWeight: 700, color: "#fff", cursor: "pointer" }}>{via === "Acciones" ? (kind === "Retiro" ? "− Traspaso de acciones (salida)" : "+ Traspaso de acciones (entrada)") : (kind === "Retiro" ? "− Registrar retiro" : "+ Registrar aportación")}</button>
+        {warn && (
+          <div style={{ marginTop: 10, fontSize: 11.5, fontWeight: 700, color: T.gold, background: T.tileAmber, borderRadius: 12, padding: "10px 12px", lineHeight: 1.5, display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <span style={{ flex: 1 }}>✅ Registrado. Recuerda: esto es solo para el rendimiento, no mueve el cash de la cuenta. Ve a la cuenta y revisa el <b>cash negativo</b> y el <b>cash de B0</b> para que reflejen el saldo real tras el movimiento.</span>
+            <button onClick={() => setWarn(false)} style={{ background: "transparent", border: "none", color: T.gold, fontSize: 14, fontWeight: 800, cursor: "pointer", padding: "0 2px", flexShrink: 0 }}>✕</button>
+          </div>
+        )}
       </div>
 
       {sorted.length === 0 && <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, padding: "4px 0" }}>Sin movimientos. Registra cada aportación o retirada —de efectivo o por traspaso de acciones (a valor de mercado)— con su fecha: el Rendimiento las descuenta para que la rentabilidad no se distorsione.</div>}
@@ -2965,7 +2991,7 @@ function AportacionesCard({ flows, setFlows, brokers }) {
         <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${T.line}`, padding: "9px 0" }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{new Date(f.date + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</div>
-            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.via === "Acciones" ? "🔄 Acciones · " : ""}{f.broker}{f.note ? " · " + f.note : ""}</div>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.via === "Acciones" ? "🔄 Acciones · " : ""}{f.broker}{n(f.fee) > 0 ? " · com. $" + money2(n(f.fee)) : ""}{f.note ? " · " + f.note : ""}</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
             <span style={{ fontSize: 14.5, fontWeight: 800, color: n(f.amount) >= 0 ? T.green : T.red }}>{signMoney(f.amount)}</span>
@@ -2974,7 +3000,7 @@ function AportacionesCard({ flows, setFlows, brokers }) {
         </div>
       ))}
 
-      <div style={{ fontSize: 11, color: T.sub, lineHeight: 1.5, marginTop: 12 }}>Solo registro para el cálculo de rendimiento: no modifica el cash ni las posiciones de la cuenta (eso lo actualizas en la cuenta o con posiciones en B0). Un traspaso de acciones se registra a su valor de mercado en la fecha del traspaso, igual que una aportación de cash, para que el salto de NLV no cuente como rentabilidad. Puedes añadir movimientos con fecha pasada; el TWR se recalcula al momento.</div>
+      <div style={{ fontSize: 11, color: T.sub, lineHeight: 1.5, marginTop: 12 }}>Solo registro para el cálculo de rendimiento: no modifica el cash ni las posiciones de la cuenta. Cuando aportas o retiras de verdad, refléjalo en la cuenta: si el bróker estaba en <b>cash negativo</b> (margen), una aportación primero lo reduce o lo cancela; el resto es liquidez que sumas como <b>cash de B0</b> (y una retirada baja B0 o agranda el cash negativo). Por eso, tras registrar un movimiento sobre un bróker con cash negativo, salta el aviso de revisar esos dos saldos. La <b>comisión de bróker</b> se guarda aparte y el rendimiento (TWR) la descuenta del flujo — un depósito con comisión cuenta como capital neto entrante (importe − comisión). Un traspaso de acciones se registra a su valor de mercado en la fecha del traspaso, igual que una aportación de cash, para que el salto de NLV no cuente como rentabilidad. Puedes añadir movimientos con fecha pasada; el TWR se recalcula al momento.</div>
     </div>
   );
 }
@@ -3605,12 +3631,18 @@ function PosSummaryCard({ p, onClose }) {
   annRoi = isFinite(roi) && isFinite(dit) && dit > 0 ? roi * (365 / dit) : NaN;
   const posColor = result >= 0 ? T.green : T.red;
   const detail = isOpt ? optionDetail(p) : null;
-  const Tile = ({ label, value, tone }) => (
-    <div style={{ background: T.tile, borderRadius: 12, padding: "9px 10px", textAlign: "center", minWidth: 0 }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: tone === "green" ? T.green : tone === "red" ? T.red : T.ink, fontVariantNumeric: "tabular-nums", letterSpacing: -0.2 }}>{value}</div>
-      <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{label}</div>
-    </div>
-  );
+  const Tile = ({ label, value, tone }) => {
+    /* v3.32 (Victor: "el ROI se sale del cuadro"): en la rejilla de 4 celdas estrechas, "+151.23%" no
+       cabía a 15px. La fuente se reduce según el largo y la celda recorta con elipsis por si acaso. */
+    const s = String(value);
+    const fs = s.length >= 9 ? 11.5 : s.length >= 7 ? 13 : 15;
+    return (
+      <div style={{ background: T.tile, borderRadius: 12, padding: "9px 6px", textAlign: "center", minWidth: 0 }}>
+        <div style={{ fontSize: fs, fontWeight: 800, color: tone === "green" ? T.green : tone === "red" ? T.red : T.ink, fontVariantNumeric: "tabular-nums", letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+        <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{label}</div>
+      </div>
+    );
+  };
   return (
     <div onClick={onClose} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
       style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 75, padding: "calc(14px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom))" }}>
@@ -4486,6 +4518,7 @@ function SettingsRow({ icon, tint, iconColor, title, sub, right, onClick, danger
 
 function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, snapshots, flows, saveSnapshot, deleteSnapshot }) {
   const [sub, setSub] = useState("primas");
+  const [blockFilter, setBlockFilter] = useState("all"); /* v3.31: filtro por bloque en Primas/MTM (Todos · Bn) */
   const [stratCat, setStratCat] = useState("Acciones");
   const [stratStatus, setStratStatus] = useState("Abiertas");
   const [stratView, setStratView] = useState("cats"); /* v1.02: "cats" (por estrategia) | "tikr" (Acumulado TIKR) */
@@ -4675,8 +4708,14 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     }
   });
 
-  const events = sub === "primas" ? primaEvents : mtmEvents;
-  events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const allEvents = sub === "primas" ? primaEvents : mtmEvents;
+  allEvents.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  /* v3.31: filtro por bloque. `blocksPresent` alimenta las chips (solo los bloques que tienen movimientos
+     en la sub-pestaña actual); `events` queda filtrado, así que mes, año y acumulado se recalculan solos
+     porque todos derivan de él. v3.32: se excluye B0 de las chips (no genera primas/MTM y no hace falta;
+     "Todos" sigue incluyendo cualquier movimiento de B0 que hubiera). */
+  const blocksPresent = BLOCKS.filter((b) => b.id !== 0 && allEvents.some((e) => e.block === b.id));
+  const events = blockFilter === "all" ? allEvents : allEvents.filter((e) => e.block === blockFilter);
 
   const monthGroups = {};
   const yearTotals = {};
@@ -4817,7 +4856,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     <>
       <div style={{ display: "flex", gap: 6, background: T.card, borderRadius: 18, padding: 6, marginBottom: 14, boxShadow: T.shadow }}>
         {[["primas", "Primas"], ["mtm", "MTM"], ["rendimiento", "Rendimiento"], ["estrategias", "Histórico"]].map(([id, label]) => (
-          <button key={id} onClick={() => setSub(id)} style={{
+          <button key={id} onClick={() => { setSub(id); setBlockFilter("all"); }} style={{
             flex: 1, border: "none", cursor: "pointer", borderRadius: 13, padding: "8px 0 7px", fontSize: 12, fontWeight: 700,
             display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
             background: sub === id ? T.dark : "transparent", color: sub === id ? "#fff" : T.sub,
@@ -4838,6 +4877,22 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               {sub === "primas" ? "Cash de cada apertura, roll (neto) y cierre. Toca una línea para ver strike y detalle." : "Ganancia/pérdida realizada de cada roll y cierre, comparando contra el precio de entrada de esa pata. Fee incluido en el neto y visible por línea."}
             </div>
           </div>
+
+          {/* v3.31: filtro por bloque — solo se ofrecen los bloques con movimientos en esta sub-pestaña.
+             Al elegir uno, mes/año/acumulado se recalculan sobre ese bloque; "Todos" restaura el total. */}
+          {blocksPresent.length > 1 && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+              {[{ id: "all", label: "Todos", color: T.dark }].concat(blocksPresent.map((b) => ({ id: b.id, label: b.name.replace("Bloque ", "B"), color: b.color }))).map((opt) => {
+                const active = blockFilter === opt.id;
+                return (
+                  <button key={opt.id} onClick={() => setBlockFilter(opt.id)} style={{
+                    border: "none", cursor: "pointer", borderRadius: 10, padding: "7px 13px", fontSize: 12.5, fontWeight: 800,
+                    background: active ? opt.color : T.tile, color: active ? "#fff" : T.sub, transition: "background .15s",
+                  }}>{opt.label}</button>
+                );
+              })}
+            </div>
+          )}
 
           {events.length === 0 && (
             <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, padding: "8px 0" }}>
@@ -9308,7 +9363,7 @@ function App() {
             editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={reopenPos}
             onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
         ) : activeTab === "aportaciones" ? (
-          <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} />
+          <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} accounts={accounts} />
         ) : (
           <ExposureCard rows={exposureRows} onOpen={setInfo} showPnl={showPnl} togglePnl={togglePnl} />
         )}
