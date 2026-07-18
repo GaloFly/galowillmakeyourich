@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.37"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.38"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5322,40 +5322,63 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const res = stratItems.map(closedResultOf);
             const nAll = res.length;
             const total = res.reduce((a, b) => a + b, 0);
-            const winsArr = stratItems.filter((pp) => !pp.exercised && closedResultOf(pp) > 0).map(closedResultOf);
-            const lossArr = stratItems.filter((pp) => pp.exercised || closedResultOf(pp) < 0).map(closedResultOf);
-            const wr = nAll ? winsArr.length / nAll : NaN;
+            /* v3.38 FIX (caso Short Puts): antes las ganadoras/perdedoras se tomaban del resumen de arriba,
+               que cuenta una ASIGNADA como perdedora aunque su closedResultOf sea la prima (POSITIVA) — la
+               pérdida real se materializa en la posición de acciones, no aquí. Resultado: la "perdedora
+               media" enseñaba primas cobradas con signo negativo, el ratio no significaba nada y la peor
+               operación salía +$0. Este bloque razona SOLO con dinero registrado: ganadora = resultado > 0,
+               perdedora = resultado < 0. Las asignaciones se avisan aparte. */
+            const winsArr = res.filter((r) => r > 0);
+            const lossArr = res.filter((r) => r < 0);
+            const nEval = winsArr.length + lossArr.length;                  /* los ceros no puntúan */
+            const nAssigned = stratItems.filter((pp) => pp.exercised).length;
+            const wr = nEval ? winsArr.length / nEval : NaN;
             const avgW = winsArr.length ? winsArr.reduce((a, b) => a + b, 0) / winsArr.length : 0;
             const avgL = lossArr.length ? Math.abs(lossArr.reduce((a, b) => a + b, 0) / lossArr.length) : 0;
             const ratio = avgL > 0 ? avgW / avgL : NaN;                 /* lo que ganas por cada 1 que pierdes */
             const req = isFinite(wr) && wr < 1 && wr > 0 ? (1 - wr) / wr : NaN; /* mínimo para no perder dinero */
-            const worst = Math.min.apply(null, res.concat([0]));
+            const worst = lossArr.length ? Math.min.apply(null, lossArr) : NaN;
             /* v3.36 FIX: la peor operación se compara con el BRUTO de las ganadoras, no con el neto.
                Con el neto cerca de cero (p.ej. −850) el porcentaje se dispara o se vuelve absurdo y
                sugería un blowup donde en realidad hay un desequilibrio repartido en todas las pérdidas. */
             const grossW = winsArr.reduce((a, b) => a + b, 0);
             const grossL = Math.abs(lossArr.reduce((a, b) => a + b, 0));
-            const worstPctW = grossW > 0 ? (Math.abs(worst) / grossW) * 100 : NaN;   /* cuánto de lo ganado se come */
-            const worstPctL = grossL > 0 ? (Math.abs(worst) / grossL) * 100 : NaN;   /* cuánto pesa dentro de las pérdidas */
+            const worstPctW = isFinite(worst) && grossW > 0 ? (Math.abs(worst) / grossW) * 100 : NaN;
+            const worstPctL = isFinite(worst) && grossL > 0 ? (Math.abs(worst) / grossL) * 100 : NaN;
             const ok = isFinite(ratio) && isFinite(req) && ratio > req;
             const worstCol = !isFinite(worstPctW) ? T.sub : worstPctW >= 100 ? T.red : worstPctW >= 50 ? T.orange : T.ink;
+            const dotCol = lossArr.length === 0 ? T.sub : ok ? T.green : T.red;
+            const avisoAsig = nAssigned > 0
+              ? nAssigned + (nAssigned === 1 ? " asignación registrada" : " asignaciones registradas") + ": aquí solo se ve la prima cobrada. El resultado real de la acción vive en su propia posición, así que este análisis se queda corto en esta estrategia."
+              : "";
             return (
               <details style={{ background: T.card, borderRadius: 18, marginBottom: 14, boxShadow: T.shadow, border: "1px solid " + T.line, overflow: "hidden" }}>
                 {/* v3.36: plegable con <details> (sin hooks, seguro dentro del IIFE). Cerrado enseña el
                     veredicto en una línea; abierto, el desglose completo. */}
                 <summary style={{ listStyle: "none", cursor: "pointer", padding: "13px 16px", display: "flex", alignItems: "center", gap: 9 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 5, background: ok ? T.green : T.red, flexShrink: 0 }} />
+                  <span style={{ width: 9, height: 9, borderRadius: 5, background: dotCol, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>⚖️ Riesgo del proceso</div>
                     <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {isFinite(ratio) && isFinite(req)
                         ? "Ratio G/P " + ratio.toFixed(2) + " · mínimo " + req.toFixed(2) + " · " + nAll + " cerradas"
-                        : nAll + " cerradas"}
+                        : lossArr.length === 0
+                          ? "Sin pérdidas en dinero · " + nAll + " cerradas"
+                          : nAll + " cerradas"}
                     </div>
                   </div>
                   <span style={{ fontSize: 10, fontWeight: 800, color: T.sub }}>▾</span>
                 </summary>
                 <div style={{ padding: "0 16px 14px" }}>
+                  {lossArr.length === 0 ? (
+                    /* v3.38: sin ninguna operación cerrada en negativo no hay ratio que calcular. Es el caso
+                       de las ventas de put: la prima siempre entra, y cuando la cosa sale mal la pérdida se
+                       muda a la posición de acciones asignada. Decirlo en vez de inventar números. */
+                    <div style={{ background: T.tileAmber, borderRadius: 13, padding: "11px 12px", fontSize: 10.5, fontWeight: 700, color: T.orange, lineHeight: 1.4 }}>
+                      Ninguna de las {nAll} cerradas está registrada en negativo, así que no hay ratio ganadora/perdedora que calcular.
+                      {nAssigned > 0 ? " " + avisoAsig : ""}
+                    </div>
+                  ) : (<>
                   <div style={{ background: T.tile, borderRadius: 13, padding: "10px 12px", marginBottom: 9 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                       <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>Peor operación</span>
@@ -5407,8 +5430,12 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                                 : "Aciertas menos de la mitad de las veces, así que las ganadoras tendrían que ser bastante mayores que las perdedoras.")}
                     </div>
                   )}
+                  {nAssigned > 0 && (
+                    <div style={{ marginTop: 9, background: T.tileAmber, borderRadius: 12, padding: "9px 11px", fontSize: 10, fontWeight: 700, color: T.orange, lineHeight: 1.4 }}>{avisoAsig}</div>
+                  )}
+                  </>)}
                   <div style={{ marginTop: 8, fontSize: 9.5, color: T.sub, fontWeight: 600, lineHeight: 1.35 }}>
-                    Sobre resultados registrados a mano: si un cierre no está apuntado, aquí no aparece. Con pocas operaciones, un ratio cercano al mínimo no es concluyente.
+                    Ganadora = cerrada en positivo, perdedora = cerrada en negativo (dinero registrado; el win rate de la tarjeta de arriba cuenta además las asignadas como perdedoras). Con pocas operaciones, un ratio cercano al mínimo no es concluyente.
                   </div>
                 </div>
               </details>
