@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.32"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.33"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5753,24 +5753,11 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
       if (!j || !Array.isArray(j.items)) throw new Error("el JSON no tiene lista de tickers");
       setData(j);
       try { localStorage.setItem(KEY_SCREEN, JSON.stringify(j)); } catch (e) {}
-      /* v3.20 FASE B: el screener.json del servidor trae el histórico de earnings de cada ticker
-         (events reconstruidos de moomoo por API — mismo formato que erStats: periodo/em/open/close/high/low/ivCrush).
-         Al cargar, se vuelca a KEY_ERHIST → el detalle de la tarjeta, la pestaña Earnings, la tabla resumen
-         y el backtest se llenan solos, sin subir capturas. Se conserva lo que ya hubiera del ticker (liq,
-         calDate…) y los eventos del servidor mandan (se retira cualquier mdEvents viejo de Market Data). */
-      try {
-        const hist = loadErHist();
-        let touched = false;
-        for (const it of j.items) {
-          if (it && it.ticker && Array.isArray(it.events) && it.events.length) {
-            const merged = { ...(hist[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
-            if (merged.mdEvents) delete merged.mdEvents;
-            hist[it.ticker] = merged;
-            touched = true;
-          }
-        }
-        if (touched) saveErHist(hist);
-      } catch (e) {}
+      /* v3.33 (Victor: "en Earnings hay muchas tarjetas, solo quiero las seleccionadas manualmente"):
+         la v3.20 volcaba el histórico de TODOS los tickers del screener (164) a KEY_ERHIST en cada carga,
+         y de ahí salían decenas de tarjetas que él no había pedido. Ya NO se vuelca nada aquí: el detalle
+         del Screener lee los events del propio JSON (srvHist, en memoria) y solo "Añadir a Earnings"
+         guarda el ticker en el histórico local. Así las tarjetas de Earnings son exactamente las elegidas. */
     } catch (e) { setMsg("No se pudo cargar: " + (e && e.message ? e.message : String(e))); }
     setBusy(false); lock.current = false;
   };
@@ -5786,10 +5773,13 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   const popCol = (p) => !Number.isFinite(p) ? T.sub : p >= 0.75 ? T.green : p >= 0.5 ? T.gold : T.red;
   const popBg = (p) => !Number.isFinite(p) ? T.tile : p >= 0.75 ? T.tileGreen : p >= 0.5 ? T.tileAmber : T.tileRed; /* v3.26: fondo del mini-tile POP en la tarjeta */
 
-  /* stats del histórico del ticker (tabla moomoo subida o reconstrucción del screener), si existe */
+  /* stats del histórico del ticker. v3.33: PRIMERO los events que vienen en el propio screener.json
+     (srvHist, en memoria — ya no se guardan en local), y si no, el histórico local (tabla moomoo subida
+     o ticker ya añadido a Earnings). Así el detalle sigue enseñando POP/EM/IV crush de todos sin crear
+     una tarjeta por ticker. */
   const statsOf = (tkr) => {
     try {
-      const h = loadErHist()[tkr];
+      const h = srvHist[tkr] || loadErHist()[tkr];
       if (!h) return null;
       const ev = erEvents(h);
       const s = erStats(ev);
@@ -5807,9 +5797,17 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
 
   const items = (data && Array.isArray(data.items)) ? data.items : [];
   const days = Array.from(new Set(items.map((it) => it.date).filter(Boolean))).sort();
-  /* v3.24: POP (open) por ticker desde el histórico del servidor — una sola lectura para el filtro */
+  /* v3.33: histórico del SERVIDOR en memoria (ticker → {events}), derivado del screener.json recién
+     cargado. Sustituye al volcado a KEY_ERHIST que hacía la v3.20: alimenta el filtro POP, el mini-tile
+     de la cabecera y el detalle, sin ensuciar las tarjetas de Earnings. */
+  const srvHist = (() => {
+    const m = {};
+    for (const it of items) if (it && it.ticker && Array.isArray(it.events) && it.events.length) m[it.ticker] = { events: it.events, src: "server" };
+    return m;
+  })();
+  /* v3.24: POP (open) por ticker — servidor primero, histórico local si el ticker ya está en Earnings */
   const erHistAll = (() => { try { return loadErHist(); } catch (e) { return {}; } })();
-  const popOf = (tkr) => { try { const h = erHistAll[tkr]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
+  const popOf = (tkr) => { try { const h = srvHist[tkr] || erHistAll[tkr]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
   const filtered = items.filter((it) => {
     if (!(Number(it.marketCapB) >= minCap)) return false;
     if (!(minVol <= 0 || (Number(it.optVolume) || 0) >= minVol)) return false;
@@ -5977,7 +5975,22 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                         </div>
                       )}
 
-                      <button type="button" onClick={() => onOpenEarnings({ tkr: it.ticker, spot: it.price ? String(it.price) : undefined })}
+                      <button type="button" onClick={() => {
+                        /* v3.33: ESTE botón es la selección manual — solo aquí se guarda el ticker en el
+                           histórico local (KEY_ERHIST), así que en Earnings solo hay tarjetas de tickers
+                           que Victor eligió. Los events salen del screener.json; si no los trae, se salta
+                           y la calculadora se abre igual (podrá subir la tabla a mano). */
+                        try {
+                          if (Array.isArray(it.events) && it.events.length) {
+                            const hist = loadErHist();
+                            const merged = { ...(hist[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
+                            if (merged.mdEvents) delete merged.mdEvents;
+                            hist[it.ticker] = merged;
+                            saveErHist(hist);
+                          }
+                        } catch (e) {}
+                        onOpenEarnings({ tkr: it.ticker, spot: it.price ? String(it.price) : undefined });
+                      }}
                         style={{ marginTop: 10, width: "100%", border: "none", borderRadius: 11, padding: "10px 14px", fontSize: 13, fontWeight: 800, background: T.dark, color: "#fff" }}>
                         Añadir a Earnings →
                       </button>
@@ -6353,6 +6366,17 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     const nextI = loadErIdeas().filter((x) => !(x && x.tkr === sym));
     saveErIdeas(nextI); setIdeas(nextI);
     setDelArm(null);
+  };
+
+  /* v3.33 (Victor: "pon un botón para borrarlas todas tipo el comparador de put"): vacía TODAS las
+     tarjetas de earnings (histórico por ticker + ideas guardadas) con doble toque, igual que el 🗑️ del
+     Comparador — el primer toque arma 3 s, el segundo borra. No toca posiciones ni el screener. */
+  const [confirmClearEr, setConfirmClearEr] = useState(false);
+  const clearAllErCards = () => {
+    if (!confirmClearEr) { setConfirmClearEr(true); setTimeout(() => setConfirmClearEr(false), 3000); return; }
+    saveErHist({}); setHist({});
+    saveErIdeas([]); setIdeas([]);
+    setConfirmClearEr(false); setDelArm(null);
   };
 
   /* v1.32: guardar/cargar/borrar ideas. Una por ticker: volver a guardar el mismo la actualiza
@@ -6809,7 +6833,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         {tblMsg && <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.4 }}>{tblMsg}</div>}
         {unionSyms.length > 0 && (
           <>
-            <WizSection>▸ Earnings por ticker</WizSection>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}><WizSection>▸ Earnings por ticker ({unionSyms.length})</WizSection></div>
+              <button type="button" onClick={clearAllErCards} title="Vaciar todas las tarjetas de earnings (histórico e ideas)"
+                style={{ background: confirmClearEr ? T.red : T.tile, border: "none", borderRadius: 12, padding: confirmClearEr ? "8px 13px" : "8px 11px", fontSize: 12.5, fontWeight: 800, color: confirmClearEr ? "#fff" : T.sub, cursor: "pointer", flexShrink: 0 }}>
+                {confirmClearEr ? "¿Vaciar todo?" : "🗑️"}
+              </button>
+            </div>
             <SnapCarousel keys={unionSyms} activeKey={syncTkr} onActiveKey={setSyncTkr}>
               {unionSyms.map((sym) => {
                 const rec = ideasSorted.find((r) => String(r.tkr) === sym) || null;
