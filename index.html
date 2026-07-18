@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.33"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.34"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5816,6 +5816,31 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
     if (minPop > 0) { const p = popOf(it.ticker); if (!(Number.isFinite(p) && p >= minPop)) return false; }
     return true;
   });
+  /* v3.34: añadir a Earnings TODOS los que pasan el filtro, de una vez. Doble toque (como el 🗑️ del
+     Comparador) porque puede crear muchas tarjetas de golpe. Solo se guardan los que traen events del
+     servidor; los que no, se informan en vez de crear una tarjeta vacía. */
+  const [confirmAddAll, setConfirmAddAll] = useState(false);
+  const [addAllMsg, setAddAllMsg] = useState("");
+  const addableCount = filtered.filter((it) => it && it.ticker && Array.isArray(it.events) && it.events.length).length;
+  const addAllFiltered = () => {
+    if (!confirmAddAll) { setConfirmAddAll(true); setAddAllMsg(""); setTimeout(() => setConfirmAddAll(false), 3000); return; }
+    setConfirmAddAll(false);
+    try {
+      const hist = loadErHist();
+      let added = 0, updated = 0, skipped = 0;
+      for (const it of filtered) {
+        if (!(it && it.ticker)) continue;
+        if (!(Array.isArray(it.events) && it.events.length)) { skipped++; continue; }
+        const had = !!hist[it.ticker];
+        const merged = { ...(hist[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
+        if (merged.mdEvents) delete merged.mdEvents;
+        hist[it.ticker] = merged;
+        had ? updated++ : added++;
+      }
+      saveErHist(hist);
+      setAddAllMsg("✅ " + added + " añadido" + (added === 1 ? "" : "s") + " a Earnings" + (updated ? " · " + updated + " ya estaba" + (updated === 1 ? "" : "n") + " (actualizado" + (updated === 1 ? "" : "s") + ")" : "") + (skipped ? " · " + skipped + " sin histórico del servidor, no se añaden" : ""));
+    } catch (e) { setAddAllMsg("No se pudo guardar: " + ((e && e.message) || String(e))); }
+  };
   const groups = {};
   filtered.forEach((it) => { (groups[it.date] = groups[it.date] || []).push(it); });
   const groupDays = Object.keys(groups).sort();
@@ -5890,6 +5915,18 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
             </div>
           ) : null}
           <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros{minPop > 0 ? " · POP open ≥ " + Math.round(minPop * 100) + "% (los tickers sin histórico no puntúan)" : ""}{(() => { const caps = items.map((it) => Number(it.marketCapB)).filter((v) => Number.isFinite(v)); return caps.length ? " · el barrido trae desde $" + Math.round(Math.min(...caps)) + "B" : ""; })()}</div>
+          {/* v3.34 (Victor): añadir de golpe TODOS los resultados que pasan el filtro. Es una acción
+             explícita suya —no un volcado automático como el que se quitó en v3.33—, así que respeta la
+             regla de "solo lo que yo elija". Solo entran los que traen histórico del servidor. */}
+          {filtered.length > 0 && (
+            <>
+              <button type="button" onClick={addAllFiltered}
+                style={{ marginTop: 10, width: "100%", border: "none", borderRadius: 12, padding: "11px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer", background: confirmAddAll ? T.gold : T.tilePurple, color: confirmAddAll ? "#fff" : T.purple }}>
+                {confirmAddAll ? "¿Añadir " + addableCount + " tarjeta" + (addableCount === 1 ? "" : "s") + "? Toca otra vez" : "+ Añadir los " + filtered.length + " a Earnings"}
+              </button>
+              {addAllMsg && <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, marginTop: 6, lineHeight: 1.45 }}>{addAllMsg}</div>}
+            </>
+          )}
         </div>
       ) : null}
 
