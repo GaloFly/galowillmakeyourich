@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.38"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.40"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4784,9 +4784,38 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
      cerradas usan el realizado y abiertas la prima acumulada hasta ahora). */
   const stratDateOf = (p) => p.closeDate || p.entryDate || "";
   /* v1.07: ganadora/perdedora con el mismo criterio del resumen — cerradas: ejercida cuenta como perdedora
-     aunque quede prima; abiertas: signo del acumulado hasta ahora. Combinable con el filtro de ticker. */
-  const isWinner = (p) => (p.closed ? !p.exercised && closedResultOf(p) > 0 : openResultOf(p) > 0);
-  const isLoser = (p) => (p.closed ? p.exercised || closedResultOf(p) < 0 : openResultOf(p) < 0);
+     aunque quede prima; abiertas: signo del acumulado hasta ahora. Combinable con el filtro de ticker.
+     v3.39 (Victor): la asignación NO es automáticamente una pérdida, depende del tipo —
+     · COVERED CALL asignada: te llaman las acciones al strike. Si el strike está POR ENCIMA del BEP de la
+       acción vinculada, vendiste por encima de tu coste → es una GANANCIA (lo que se pierde es recorrido,
+       no dinero). Solo es pérdida si el strike queda por debajo del BEP.
+     · SHORT PUT asignada: el resultado real se muda a la posición de acciones (aún abierta casi siempre),
+       así que aquí no es ni ganadora ni perdedora — queda sin clasificar hasta cerrar la cadena.
+     El enlace es coveredBy (call → acción); las covered calls antiguas sin enlace caen al heurístico
+     broker+ticker, y si no aparece la acción se deja SIN clasificar antes que contarla como pérdida. */
+  const stockForCall = (p) => {
+    if (p.coveredBy) return positions.find((x) => x.id === p.coveredBy) || null;
+    const t = (p.tkr || "").toUpperCase().trim();
+    return positions.find((x) => natOf(x) === "ACC" && (x.tkr || "").toUpperCase().trim() === t && x.broker === p.broker) || null;
+  };
+  /* clasificación de una CERRADA: "W" ganadora, "L" perdedora, null = sin clasificar (no puntúa) */
+  const closedGrade = (p) => {
+    if (p.exercised) {
+      if (natOf(p) === "CRED" && p.right === "C" && !isPMCC(p)) {
+        const st = stockForCall(p);
+        if (!st) return null;                                  /* sin acción vinculada: no clasificamos */
+        const bep = n(effBep(st));
+        if (!bep) return null;
+        return n(p.strike) >= bep ? "W" : "L";                 /* strike sobre el coste = salida en beneficio */
+      }
+      if (natOf(p) === "CRED" && p.right === "P" && !isPMCC(p)) return null; /* put asignada: pendiente de la acción */
+      return "L";
+    }
+    const r = closedResultOf(p);
+    return r > 0 ? "W" : r < 0 ? "L" : null;
+  };
+  const isWinner = (p) => (p.closed ? closedGrade(p) === "W" : openResultOf(p) > 0);
+  const isLoser = (p) => (p.closed ? closedGrade(p) === "L" : openResultOf(p) < 0);
   const stratBase = positions.filter((p) => categoryOf(p) === stratCat && !!p.closed === (stratStatus === "Cerradas"));
   const stratTkrs = Array.from(new Set(stratBase.map((p) => (p.tkr || "").toUpperCase().trim()).filter(Boolean))).sort();
   const stratItems = stratBase
@@ -4836,12 +4865,12 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       if (p.closeNote) o.nota = p.closeNote;
       return o;
     });
-    const wins = stratItems.filter((pp) => !pp.exercised && closedResultOf(pp) > 0).length;
+    const wins = stratItems.filter(isWinner).length;
     const total = stratItems.reduce((s, pp) => s + closedResultOf(pp), 0);
     const payload = {
       app: "Bloques v" + APP_VERSION, exportado: todayIso, estrategia: stratCat,
       filtro: { ticker: stratTkr, resultado: stratWin, desde: stratFrom || null, hasta: stratTo || null },
-      resumen: { operaciones: ops.length, ganadoras: wins, perdedoras: stratItems.filter((pp) => pp.exercised || closedResultOf(pp) < 0).length, winRate: ops.length ? Math.round((wins / ops.length) * 100) + "%" : null, profitTotal: Math.round(total * 100) / 100, mediaPorOp: ops.length ? Math.round((total / ops.length) * 100) / 100 : null },
+      resumen: { operaciones: ops.length, ganadoras: wins, perdedoras: stratItems.filter(isLoser).length, winRate: ops.length ? Math.round((wins / ops.length) * 100) + "%" : null, profitTotal: Math.round(total * 100) / 100, mediaPorOp: ops.length ? Math.round((total / ops.length) * 100) / 100 : null },
       operaciones: ops,
     };
     const text = JSON.stringify(payload, null, 1);
@@ -5279,8 +5308,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const nAll = results.length;
             /* v5.15: una posición ejercida/asignada cuenta como PERDEDORA aunque te quedaras la prima —
                la asignación es el desenlace adverso. El profit total y la media sí usan el resultado real. */
-            const wins = stratItems.filter((pp) => !pp.exercised && closedResultOf(pp) > 0).length;
-            const losses = stratItems.filter((pp) => pp.exercised || closedResultOf(pp) < 0).length;
+            const wins = stratItems.filter(isWinner).length;
+            const losses = stratItems.filter(isLoser).length;
             const total = results.reduce((a, b) => a + b, 0);
             const avg = nAll ? total / nAll : 0;
             const winRate = nAll ? wins / nAll : NaN;
@@ -5514,8 +5543,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                grupos entre sí — aplicarlo vaciaría una columna y perdería el sentido. */
             const closedA = positions.filter((x) => categoryOf(x) === stratCat && x.closed && (stratTkr === "Todos" || (x.tkr || "").toUpperCase().trim() === stratTkr));
             if (closedA.length < 2) return null;
-            const winsA = closedA.filter((x) => !x.exercised && closedResultOf(x) > 0);
-            const lossesA = closedA.filter((x) => x.exercised || closedResultOf(x) < 0);
+            const winsA = closedA.filter(isWinner);
+            const lossesA = closedA.filter(isLoser);
             const totalA = closedA.reduce((s, x) => s + closedResultOf(x), 0);
             const avgOf = (arr, fn) => { const v = arr.map(fn).filter(isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
             /* delta guardada como 0.30 o como 30 según la época — se normaliza a fracción */
@@ -5558,6 +5587,105 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                   ))}
                 </div>
               </div>
+            );
+          })()}
+
+          {stratCat === "Short Puts" && (() => {
+            /* v3.39: SUBMENÚ "Asignadas" — solo en Short Puts, porque solo ahí la asignación desplaza el
+               resultado a otra posición. La app ya crea la acción con assignedFrom = id de la put y coste
+               base = BEP, así que la cadena se reconstruye sin pedir nada al usuario.
+               · VIVAS: la acción sigue abierta → valoración a hoy (BEP vs last), NUNCA entra en estadísticas.
+               · CERRADAS: acción vendida → resultado real de la cadena = prima de la put + realizado de la acción.
+               Respeta el filtro de ticker de la pestaña; ignora el de estado (una asignación es, por
+               definición, una put cerrada con una acción que puede seguir viva). */
+            const asigs = positions
+              .filter((p) => p.exercised && p.closed && natOf(p) === "CRED" && p.right === "P" && !isPMCC(p))
+              .filter((p) => stratTkr === "Todos" || (p.tkr || "").toUpperCase().trim() === stratTkr)
+              .map((p) => {
+                /* v3.40 FIX: si la acción no se encuentra por assignedFrom (asignaciones anteriores a la
+                   v5.15, acciones fusionadas o creadas a mano), antes caía en st=null y la fila acababa en
+                   "cerradas del todo" sin valoración — justo al revés de la realidad. Ahora: 1º enlace
+                   explícito, 2º acción ABIERTA del mismo ticker y broker, 3º del mismo ticker; y si no hay
+                   ninguna, va a su propio grupo "sin acción vinculada", nunca a cerradas. */
+                const tk = (p.tkr || "").toUpperCase().trim();
+                const accs = positions.filter((x) => natOf(x) === "ACC" && (x.tkr || "").toUpperCase().trim() === tk);
+                const st = positions.find((x) => x.assignedFrom === p.id)
+                  || accs.find((x) => !x.closed && x.broker === p.broker)
+                  || accs.find((x) => !x.closed)
+                  || null;
+                const linkOk = st ? (st.assignedFrom === p.id) : false;
+                const prima = primaSumOf(p);
+                const bep = st ? n(effBep(st)) : NaN;
+                const shares = st ? n(st.qty) : NaN;
+                const last = st ? n(st.last) : NaN;
+                const viva = !!st && !st.closed;
+                const accion = !st ? NaN : st.closed ? mtmSumOf(st) : (isFinite(last) && last > 0 && isFinite(bep) ? (last - bep) * shares : NaN);
+                return { p, st, linkOk, prima, bep, shares, last, viva, accion, total: isFinite(accion) ? prima + accion : NaN };
+              })
+              .sort((a, b) => (b.p.closeDate || "").localeCompare(a.p.closeDate || ""));
+            if (asigs.length === 0) return null;
+            const vivas = asigs.filter((a) => a.st && !a.st.closed);
+            const cerr = asigs.filter((a) => a.st && a.st.closed);
+            const huerf = asigs.filter((a) => !a.st);
+            const sumOf = (arr) => arr.reduce((s, a) => s + (isFinite(a.total) ? a.total : 0), 0);
+            const sinPrecio = vivas.filter((a) => !isFinite(a.accion)).length;
+            const Row = ({ a }) => (
+              <div key={a.p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, padding: "8px 0", borderTop: "1px solid " + T.line }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>{a.p.tkr} <span style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>${money2(n(a.p.strike))} · {a.p.closeDate || "—"}</span></div>
+                  <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 2 }}>
+                    Prima {signMoney(a.prima)}{isFinite(a.bep) ? " · BEP $" + money2(a.bep) : ""}{a.viva && isFinite(a.last) && a.last > 0 ? " · hoy $" + money2(a.last) : ""}{isFinite(a.shares) ? " · " + a.shares + " acc." : ""}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: !isFinite(a.total) ? T.sub : a.total >= 0 ? T.green : T.red, fontVariantNumeric: "tabular-nums" }}>{isFinite(a.total) ? signMoney(a.total) : "sin precio"}</div>
+                  <div style={{ fontSize: 9, color: T.sub, fontWeight: 700 }}>{a.viva ? "valoración" : "realizado"}</div>
+                </div>
+              </div>
+            );
+            return (
+              <details style={{ background: T.card, borderRadius: 18, marginBottom: 14, boxShadow: T.shadow, border: "1px solid " + T.line, overflow: "hidden" }}>
+                <summary style={{ listStyle: "none", cursor: "pointer", padding: "13px 16px", display: "flex", alignItems: "center", gap: 9 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 5, background: T.gold, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>🔗 Asignadas ({asigs.length})</div>
+                    <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {vivas.length} vivas · {cerr.length} cerradas{huerf.length > 0 ? " · " + huerf.length + " sin enlace" : ""}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: T.sub }}>▾</span>
+                </summary>
+                <div style={{ padding: "0 16px 14px" }}>
+                  <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginBottom: 9 }}>
+                    La put asignada no acaba en la put: sigue en las acciones. Aquí se ve la cadena entera (prima + acción). Las vivas son valoración a día de hoy, no resultado, y por eso no entran en ninguna estadística.
+                  </div>
+                  {vivas.length > 0 && (<>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Vivas ({vivas.length})</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: sumOf(vivas) >= 0 ? T.green : T.red }}>{signMoney(sumOf(vivas))}</span>
+                    </div>
+                    {vivas.map((a) => <Row key={a.p.id} a={a} />)}
+                    {sinPrecio > 0 && <div style={{ fontSize: 9.5, color: T.sub, fontWeight: 600, marginTop: 5 }}>{sinPrecio} sin precio actual: mete el último en la posición de acciones (o espera al feed de cotizaciones).</div>}
+                  </>)}
+                  {cerr.length > 0 && (<>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 12 }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Cerradas del todo ({cerr.length})</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: sumOf(cerr) >= 0 ? T.green : T.red }}>{signMoney(sumOf(cerr))}</span>
+                    </div>
+                    {cerr.map((a) => <Row key={a.p.id} a={a} />)}
+                  </>)}
+                  {huerf.length > 0 && (<>
+                    {/* v3.40: sin acción vinculada NO se puede decir si la cadena está viva o cerrada.
+                        Grupo propio en vez de colarlas entre las cerradas. */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 12 }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: T.orange, textTransform: "uppercase", letterSpacing: 0.4 }}>Sin acción vinculada ({huerf.length})</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: T.sub }}>prima {signMoney(huerf.reduce((s, a) => s + a.prima, 0))}</span>
+                    </div>
+                    {huerf.map((a) => <Row key={a.p.id} a={a} />)}
+                    <div style={{ fontSize: 9.5, color: T.sub, fontWeight: 600, marginTop: 5, lineHeight: 1.35 }}>No encuentro la posición de acciones de estas asignaciones (ni por enlace ni por ticker), así que no puedo cerrar la cadena. Solo se ve la prima.</div>
+                  </>)}
+                </div>
+              </details>
             );
           })()}
 
