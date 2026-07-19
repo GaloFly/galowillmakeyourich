@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.42"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.43"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1228,7 +1228,7 @@ function EarningsHint({ tkr, expiry }) {
   if (d.none) return line(T.tile, T.sub, "Sin earnings de " + sym + " en los próximos 60 días (Finnhub). Ojo: los ADRs a veces no aparecen.");
   const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
   const hTxt = d.hour === "bmo" ? " (antes de la apertura)" : d.hour === "amc" ? " (tras el cierre)" : d.hour === "dmh" ? " (en sesión)" : "";
-  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + sym + " el " + dTxt + hTxt + " — DENTRO del vencimiento. §5: documentar y valorar un escalón menos de tamaño.");
+  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + sym + " el " + dTxt + hTxt + " — DENTRO del vencimiento. Documentar y valorar sizing.");
   return line(T.tile, T.sub, "Earnings de " + sym + " el " + dTxt + " — después del vencimiento. ✓");
 }
 async function fetchQuote(symbol, key) {
