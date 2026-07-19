@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.40"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.41"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8750,6 +8750,29 @@ function App() {
   const [wizOcrBusy, setWizOcrBusy] = useState(false);
   const [wizOcrMsg, setWizOcrMsg] = useState("");
   const [scan, setScan] = useState(null); // v1.60: overlay de lectura de capturas (wizard)
+  /* v3.41: aviso de earnings dentro del vencimiento en el wizard (playbook §5: se permite, se documenta).
+     Consulta fetchNextEarnings (Finnhub, 60 días) con debounce y caché por ticker; solo se cachean
+     respuestas con dato ({date}|{none}) — un fallo (null) se reintenta al volver a tocar el campo. */
+  const [wizEarn, setWizEarn] = useState({ st: "idle" }); // st: idle|nokey|busy|done · tkr · data
+  const wizEarnCache = useRef({});
+  useEffect(() => {
+    if (!wizOpen || wizStep !== 3) { return; }
+    const tkr = String(wizForm.tkr || "").trim().toUpperCase();
+    const exp = String(wizForm.expiry || "");
+    if (!tkr || !/^\d{4}-\d{2}-\d{2}$/.test(exp) || wizNat === "CASH" || wizNat === "ACC") { setWizEarn({ st: "idle" }); return; }
+    if (!apiKey) { setWizEarn({ st: "nokey" }); return; }
+    const c = wizEarnCache.current[tkr];
+    if (c) { setWizEarn({ st: "done", tkr, data: c }); return; }
+    setWizEarn({ st: "busy", tkr });
+    let dead = false;
+    const t = setTimeout(async () => {
+      const nx = await fetchNextEarnings(tkr, apiKey);
+      if (dead) return;
+      if (nx) wizEarnCache.current[tkr] = nx; /* null (fallo) no se cachea */
+      setWizEarn({ st: "done", tkr, data: nx });
+    }, 600);
+    return () => { dead = true; clearTimeout(t); };
+  }, [wizOpen, wizStep, wizForm.tkr, wizForm.expiry, wizNat, apiKey]);
   const wizPhotoRef = useRef(null);
   const openWizard = () => {
     setWizBlock(null); setWizNat(null); setWizStrat(""); setWizStep(1); setWizSub(1);
@@ -10150,6 +10173,25 @@ function App() {
                   )}
                 </div>
                 )}
+                {/* v3.41: aviso de earnings dentro del vencimiento — informa, nunca bloquea (§5 del playbook) */}
+                {(() => {
+                  const tkr = String(wizForm.tkr || "").trim().toUpperCase();
+                  const exp = String(wizForm.expiry || "");
+                  if (!tkr || !/^\d{4}-\d{2}-\d{2}$/.test(exp) || wizNat === "CASH" || wizNat === "ACC") return null;
+                  const line = (bg, col, txt) => (
+                    <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>{txt}</div>
+                  );
+                  if (wizEarn.st === "nokey") return line(T.tile, T.sub, "Sin key de Finnhub en Ajustes — no puedo comprobar earnings antes del vencimiento.");
+                  if (wizEarn.st === "busy") return line(T.tile, T.sub, "⏳ Comprobando earnings de " + tkr + "…");
+                  if (wizEarn.st !== "done" || wizEarn.tkr !== tkr) return null;
+                  const d = wizEarn.data;
+                  if (!d) return line(T.tile, T.sub, "Finnhub no respondió — sin dato de earnings para " + tkr + ". Compruébalo a mano si es carril B.");
+                  if (d.none) return line(T.tile, T.sub, "Sin earnings de " + tkr + " en los próximos 60 días (Finnhub). Ojo: los ADRs a veces no aparecen.");
+                  const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+                  const hTxt = d.hour === "bmo" ? " (antes de la apertura)" : d.hour === "amc" ? " (tras el cierre)" : d.hour === "dmh" ? " (en sesión)" : "";
+                  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + tkr + " el " + dTxt + hTxt + " — DENTRO del vencimiento. §5: documentar y valorar un escalón menos de tamaño.");
+                  return line(T.tile, T.sub, "Earnings de " + tkr + " el " + dTxt + " — después del vencimiento. ✓");
+                })()}
                 {(wizNat === "CRED") && !CREDIT_SPREAD_STRATS.has(wizStrat) && (
                   <>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
