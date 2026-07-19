@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.41"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.42"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1190,6 +1190,46 @@ async function fetchNextEarnings(symbol, key) {
        marcarse como "comprobado hoy" o la tarjeta queda sin fecha hasta mañana (el bug de STT). */
     return rows.length ? { date: rows[0].date, hour: rows[0].hour || null } : { none: true };
   } catch (e) { return null; }
+}
+/* v3.42: aviso de earnings reutilizable (wizard "Nueva posición" + hoja de roll). Caché a nivel de módulo
+   para no repetir llamadas entre componentes; solo se cachean respuestas con dato ({date}|{none}) — un
+   fallo (null: red, 429…) se reintenta. wizSave lee esta misma caché para persistir p.earnIn. */
+const earnHintCache = {};
+function EarningsHint({ tkr, expiry }) {
+  const sym = String(tkr || "").trim().toUpperCase();
+  const exp = String(expiry || "");
+  const okExp = /^\d{4}-\d{2}-\d{2}$/.test(exp);
+  const [st, setSt] = useState({ k: "idle" });
+  useEffect(() => {
+    if (!sym || !okExp) { setSt({ k: "idle" }); return; }
+    let key = ""; try { key = localStorage.getItem(KEY_FINNHUB) || ""; } catch (e) {}
+    if (!key) { setSt({ k: "nokey" }); return; }
+    const c = earnHintCache[sym];
+    if (c) { setSt({ k: "done", sym, data: c }); return; }
+    setSt({ k: "busy", sym });
+    let dead = false;
+    const t = setTimeout(async () => {
+      const nx = await fetchNextEarnings(sym, key);
+      if (dead) return;
+      if (nx) earnHintCache[sym] = nx;
+      setSt({ k: "done", sym, data: nx });
+    }, 600);
+    return () => { dead = true; clearTimeout(t); };
+  }, [sym, exp, okExp]);
+  if (!sym || !okExp || st.k === "idle") return null;
+  const line = (bg, col, txt) => (
+    <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>{txt}</div>
+  );
+  if (st.k === "nokey") return line(T.tile, T.sub, "Sin key de Finnhub en Ajustes — no puedo comprobar earnings antes del vencimiento.");
+  if (st.k === "busy") return line(T.tile, T.sub, "⏳ Comprobando earnings de " + sym + "…");
+  if (st.k !== "done" || st.sym !== sym) return null;
+  const d = st.data;
+  if (!d) return line(T.tile, T.sub, "Finnhub no respondió — sin dato de earnings para " + sym + ". Compruébalo a mano si es carril B.");
+  if (d.none) return line(T.tile, T.sub, "Sin earnings de " + sym + " en los próximos 60 días (Finnhub). Ojo: los ADRs a veces no aparecen.");
+  const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+  const hTxt = d.hour === "bmo" ? " (antes de la apertura)" : d.hour === "amc" ? " (tras el cierre)" : d.hour === "dmh" ? " (en sesión)" : "";
+  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + sym + " el " + dTxt + hTxt + " — DENTRO del vencimiento. §5: documentar y valorar un escalón menos de tamaño.");
+  return line(T.tile, T.sub, "Earnings de " + sym + " el " + dTxt + " — después del vencimiento. ✓");
 }
 async function fetchQuote(symbol, key) {
   try {
@@ -4244,6 +4284,11 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 <div style={{ gridColumn: "span 2" }}>
                   <WizInput label="Comentario (motivo del roll)" value={rollNote} onChange={setRollNote} />
                 </div>
+                {/* v3.42: mismo aviso de earnings que el wizard — al rolar se INFORMA, pero no se toca
+                    p.earnIn (la estadística de Estrategias mide solo la decisión de apertura) */}
+                <div style={{ gridColumn: "span 2" }}>
+                  <EarningsHint tkr={p.tkr} expiry={rollExpiry} />
+                </div>
               </div>
               <button onClick={confirmRoll} disabled={!ok} style={{ marginTop: 16, width: "100%", background: ok ? T.green : T.tile, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, color: ok ? "#fff" : T.sub, cursor: "pointer" }}>Confirmar roll</button>
             </div>
@@ -5338,6 +5383,34 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                     </div>
                   ))}
                 </div>
+                {/* v3.42: desglose con/sin earnings dentro del vencimiento (p.earnIn, escrito por el wizard
+                    desde la apertura). Alimenta la pregunta de la ronda 3 del playbook: ¿las posiciones
+                    abiertas con earnings dentro van sistemáticamente peor? Solo aparece si hay alguna. */}
+                {stratWin === "Todas" && (() => {
+                  const withE = stratItems.filter((p) => p.earnIn);
+                  if (!withE.length) return null;
+                  const noE = stratItems.filter((p) => !p.earnIn);
+                  const grp = (arr) => {
+                    const w = arr.filter(isWinner).length, l = arr.filter(isLoser).length;
+                    const tot = arr.map(closedResultOf).reduce((a, b) => a + b, 0);
+                    const wr = w + l ? Math.round((w / (w + l)) * 100) + "%" : "—";
+                    return { n: arr.length, wr, tot };
+                  };
+                  const a = grp(withE), b = grp(noE);
+                  const row = (icon, lbl, g) => (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: "#B9C2CC" }}>{icon} {lbl} ({g.n})</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>wr {g.wr} · <span style={{ color: g.tot >= 0 ? T.green : T.red }}>{signMoney(g.tot)}</span></span>
+                    </div>
+                  );
+                  return (
+                    <div style={{ marginTop: 10, background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "9px 12px", display: "grid", gap: 5 }}>
+                      {row("⚠️", "Con earnings dentro", a)}
+                      {noE.length > 0 && row("○", "Sin earnings dentro", b)}
+                      <div style={{ fontSize: 9, color: "#8D97A3", fontWeight: 600, lineHeight: 1.4 }}>Marcadas al abrir con earnings antes del vencimiento (v3.42+); las anteriores cuentan como "sin".</div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -8750,29 +8823,8 @@ function App() {
   const [wizOcrBusy, setWizOcrBusy] = useState(false);
   const [wizOcrMsg, setWizOcrMsg] = useState("");
   const [scan, setScan] = useState(null); // v1.60: overlay de lectura de capturas (wizard)
-  /* v3.41: aviso de earnings dentro del vencimiento en el wizard (playbook §5: se permite, se documenta).
-     Consulta fetchNextEarnings (Finnhub, 60 días) con debounce y caché por ticker; solo se cachean
-     respuestas con dato ({date}|{none}) — un fallo (null) se reintenta al volver a tocar el campo. */
-  const [wizEarn, setWizEarn] = useState({ st: "idle" }); // st: idle|nokey|busy|done · tkr · data
-  const wizEarnCache = useRef({});
-  useEffect(() => {
-    if (!wizOpen || wizStep !== 3) { return; }
-    const tkr = String(wizForm.tkr || "").trim().toUpperCase();
-    const exp = String(wizForm.expiry || "");
-    if (!tkr || !/^\d{4}-\d{2}-\d{2}$/.test(exp) || wizNat === "CASH" || wizNat === "ACC") { setWizEarn({ st: "idle" }); return; }
-    if (!apiKey) { setWizEarn({ st: "nokey" }); return; }
-    const c = wizEarnCache.current[tkr];
-    if (c) { setWizEarn({ st: "done", tkr, data: c }); return; }
-    setWizEarn({ st: "busy", tkr });
-    let dead = false;
-    const t = setTimeout(async () => {
-      const nx = await fetchNextEarnings(tkr, apiKey);
-      if (dead) return;
-      if (nx) wizEarnCache.current[tkr] = nx; /* null (fallo) no se cachea */
-      setWizEarn({ st: "done", tkr, data: nx });
-    }, 600);
-    return () => { dead = true; clearTimeout(t); };
-  }, [wizOpen, wizStep, wizForm.tkr, wizForm.expiry, wizNat, apiKey]);
+  /* v3.42: el aviso de earnings del wizard es ahora el componente EarningsHint (compartido con la hoja
+     de roll); wizSave lee earnHintCache para persistir p.earnIn cuando el earnings cae dentro. */
   const wizPhotoRef = useRef(null);
   const openWizard = () => {
     setWizBlock(null); setWizNat(null); setWizStrat(""); setWizStep(1); setWizSub(1);
@@ -8880,9 +8932,15 @@ function App() {
     const dcRiskManOk = isFinite(dcRiskMan) && dcRiskMan > 0;
     const gdCostAuto = isGenericDebit && isFinite(gdPrimaPS) && isFinite(cts) ? String(Math.max(0, gdPrimaPS) * cts * 100) : "";
     const gdCost = isDCDDw && dcRiskManOk ? String(dcRiskMan) : gdCostAuto;
+    /* v3.42: si la caché del aviso tiene earnings DENTRO del vencimiento, se persiste en la posición
+       (p.earnIn = fecha) — alimenta el desglose "con/sin earnings dentro" de Estrategias. Solo en la
+       APERTURA: los rolls muestran el aviso pero no tocan el flag (la estadística mide la decisión de
+       entrada). Limitación honesta: si guardas antes de que responda Finnhub, el flag no se escribe. */
+    const ehc = earnHintCache[(f.tkr || "").toUpperCase().trim()];
+    const earnIn = ehc && ehc.date && f.expiry && ehc.date <= f.expiry ? ehc.date : "";
     const p = {
       id: newId(), block: wizBlock, broker: f.broker, tkr: effNat === "CASH" ? "CASH" : (f.tkr || "").toUpperCase().trim(),
-      tipo: wizStrat, nat: effNat, right,
+      tipo: wizStrat, nat: effNat, right, earnIn,
       strike: f.strike || "", expiry: f.expiry || "", qty: effNat === "CASH" ? "" : qty,
       bep: (effNat === "CASH" || isLongCall || isPMCCw || CREDIT_SPREAD_STRATS.has(wizStrat)) ? "" : (f.bep || ""), prima: isLongCall ? (isFinite(lcPrimaPS) ? String(lcPrimaPS) : "") : isPMCCw ? (isFinite(pmShortPS) ? String(pmShortPS) : "") : isDCDDw ? (dcNet ? String(dcNet) : "") : (f.prima || ""), comision: isDCDDw ? String((absPf(f.comision)) + dcFees) : (f.comision || ""), ivr: f.ivr || "",
       last: "", mktValue: effNat === "CASH" ? (f.mktValue || "") : "", riesgo: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (nat === "DEF" ? (f.margen || "") : ""),
@@ -10173,25 +10231,8 @@ function App() {
                   )}
                 </div>
                 )}
-                {/* v3.41: aviso de earnings dentro del vencimiento — informa, nunca bloquea (§5 del playbook) */}
-                {(() => {
-                  const tkr = String(wizForm.tkr || "").trim().toUpperCase();
-                  const exp = String(wizForm.expiry || "");
-                  if (!tkr || !/^\d{4}-\d{2}-\d{2}$/.test(exp) || wizNat === "CASH" || wizNat === "ACC") return null;
-                  const line = (bg, col, txt) => (
-                    <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>{txt}</div>
-                  );
-                  if (wizEarn.st === "nokey") return line(T.tile, T.sub, "Sin key de Finnhub en Ajustes — no puedo comprobar earnings antes del vencimiento.");
-                  if (wizEarn.st === "busy") return line(T.tile, T.sub, "⏳ Comprobando earnings de " + tkr + "…");
-                  if (wizEarn.st !== "done" || wizEarn.tkr !== tkr) return null;
-                  const d = wizEarn.data;
-                  if (!d) return line(T.tile, T.sub, "Finnhub no respondió — sin dato de earnings para " + tkr + ". Compruébalo a mano si es carril B.");
-                  if (d.none) return line(T.tile, T.sub, "Sin earnings de " + tkr + " en los próximos 60 días (Finnhub). Ojo: los ADRs a veces no aparecen.");
-                  const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
-                  const hTxt = d.hour === "bmo" ? " (antes de la apertura)" : d.hour === "amc" ? " (tras el cierre)" : d.hour === "dmh" ? " (en sesión)" : "";
-                  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + tkr + " el " + dTxt + hTxt + " — DENTRO del vencimiento. §5: documentar y valorar un escalón menos de tamaño.");
-                  return line(T.tile, T.sub, "Earnings de " + tkr + " el " + dTxt + " — después del vencimiento. ✓");
-                })()}
+                {/* v3.42: aviso de earnings dentro del vencimiento — informa, nunca bloquea (§5 del playbook) */}
+                {wizNat !== "CASH" && wizNat !== "ACC" && <EarningsHint tkr={wizForm.tkr} expiry={wizForm.expiry} />}
                 {(wizNat === "CRED") && !CREDIT_SPREAD_STRATS.has(wizStrat) && (
                   <>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
