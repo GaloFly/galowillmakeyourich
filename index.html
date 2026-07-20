@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.48"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.49"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8843,7 +8843,7 @@ function App() {
     if (action === "edit") { setEditSet((s) => new Set(s).add(sheetPos.id)); }
     if (action === "lotes") { setEditLotsId(sheetPos.id); }
     if (action === "dividendos") { setEditDivId(sheetPos.id); }
-    if (action === "roll" || action === "close") { setPendingAction({ id: sheetPos.id, action }); if (view !== "portfolio") selectView("portfolio"); } /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio (v3.46: navegar si venimos de otra pestaña, p.ej. del banner de vencidas) */
+    if (action === "roll" || action === "close") { setPendingAction({ id: sheetPos.id, action }); if (view !== "bloques") selectView("bloques"); } /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio (v3.46: navegar si venimos de otra pestaña; v3.49 FIX: el id de la pestaña Portfolio es "bloques" — "portfolio" es solo el nombre del ICONO; con el id malo la app caía al fallback Herramientas y la acción pendiente quedaba colgada) */
     if (action === "reopen") { reopenPos(sheetPos.id); }
     setSheetPosId(null);
   };
