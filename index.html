@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.45"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.46"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3180,6 +3180,22 @@ function RollChainTable({ p }) {
   acc(!shortSide, openAmt, p.comision, false);
   if (p.entryNote) rows.push(<div key="entrynote" style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", margin: "0 0 6px 4px", lineHeight: 1.4 }}>💬 {p.entryNote}</div>);
   chain.forEach((r, idx) => {
+    /* v3.46: pata de PMCC cuya corta expiró sin valor — una sola fila EXPIRA en gris, sin recompra fantasma */
+    if (r.expiredShort) {
+      rows.push(<LegRow key={"e" + idx} date={r.date} actionLabel={"EXPIRA " + rightLabel} strike={r.prevStrike} expiry={r.prevExpiry} perShare={0} amount={0} isExp={true} />);
+      if (r.note) rows.push(<div key={"n" + idx} style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", margin: "0 0 6px 4px", lineHeight: 1.4 }}>💬 {r.note}</div>);
+      return;
+    }
+    /* v3.46: venta de call nueva tras un periodo sin corta — solo la fila de VENTA (no hubo recompra) */
+    if (r.soldAfterExpiry) {
+      const sellAmt = n(r.newCredit) * q;
+      if (pmcc) bepRun -= n(r.newCredit);
+      if (credBep) primaAcc += n(r.newCredit);
+      rows.push(<LegRow key={"s" + idx} date={r.date} action={"VENTA"} strike={stkAfter(idx)} expiry={expAfter(idx)} perShare={n(r.newCredit)} amount={sellAmt} fee={n(r.comision)} ivr={r.ivr} delta={r.delta} bepAfter={credBep ? (n(stkAfter(idx)) - primaAcc) : pmcc ? bepRun : undefined} ret={retOf(n(r.newCredit), stkAfter(idx))} isBuy={false} />);
+      acc(false, sellAmt, r.comision, false);
+      if (r.note) rows.push(<div key={"n" + idx} style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", margin: "0 0 6px 4px", lineHeight: 1.4 }}>💬 {r.note}</div>);
+      return;
+    }
     const buyAmt = n(r.buybackCost) * q, sellAmt = n(r.newCredit) * q;
     rows.push(<LegRow key={"b" + idx} date={r.date} action={shortSide ? "COMPRA" : "VENTA"} strike={r.prevStrike} expiry={r.prevExpiry} perShare={n(r.buybackCost)} amount={buyAmt} fee={n(r.comision)} isBuy={shortSide} />);
     acc(shortSide, buyAmt, r.comision, false);
@@ -3800,7 +3816,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const openClose = () => { setCloseDateV(new Date().toISOString().slice(0, 10)); setClosePriceV(""); setCloseComisionV(""); setCloseNoteV(""); setCloseLongPriceV(""); setCloseLongComisionV(""); setCloseExercised(false); setCloseMode("total"); setCloseQtyV(String(n(p.qty))); setClosing(true); };
   const confirmClose = () => {
     const partial = natOf(p) === "ACC" && closeMode === "parcial";
-    onClose({ date: closeDateV, price: closeExercised ? "0" : closePriceV, comision: closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "" });
+    onClose({ date: closeDateV, price: closeExercised || (isPMCC(p) && p.noShort) ? "0" : closePriceV, comision: closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "" });
     setClosing(false);
   };
   useEffect(() => {
@@ -4247,7 +4263,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />Rolar {p.tkr}</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />{isPMCC(p) && p.noShort ? "Vender call · " + p.tkr : "Rolar " + p.tkr}</div>
                   <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{optionDetail(p)} · precios por acción, ×{rollQty} al calcular el cash{p.covered && p.right === "C" ? " · el neto del roll ajusta el BEP de la acción cubierta" : ""}</div>
                 </div>
                 <button onClick={() => setRolling(false)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -4272,7 +4288,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 <WizInput label="Nuevo strike" value={rollStrike} onChange={setRollStrike} placeholder="$" inputMode="decimal" />
                 <WizInput label="IVR del roll" value={rollIvr} onChange={setRollIvr} inputMode="numeric" />
                 <WizInput label="Delta nueva short (ej. 0.30)" value={rollDelta} onChange={setRollDelta} inputMode="decimal" />
-                <WizInput label="Prima recompra $/acc" value={rollBuyback} onChange={setRollBuyback} placeholder="$" inputMode="decimal" />
+                {!(isPMCC(p) && p.noShort) && <WizInput label="Prima recompra $/acc" value={rollBuyback} onChange={setRollBuyback} placeholder="$" inputMode="decimal" />}
                 <WizInput label="Prima nueva venta $/acc" value={rollCredit} onChange={setRollCredit} placeholder="$" inputMode="decimal" />
                 <WizInput label="Comisión" value={rollComision} onChange={setRollComision} placeholder="$" inputMode="decimal" />
                 <div style={{ background: hasNums ? (rollNet >= 0 ? T.tileGreen : T.tileRed) : T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
@@ -4303,8 +4319,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         const q = n(p.qty);
         const sellQty = partial ? Math.max(0, Math.min(n(closeQtyV), q)) : q;
         const okQty = !partial || sellQty > 0;
-        const ok = closeDateV && (closeExercised || closePriceV) && (!pmcc || closeLongPriceV !== "") && okQty;
-        const px = n(closePriceV);
+        const ok = closeDateV && (closeExercised || closePriceV || (pmcc && p.noShort)) && (!pmcc || closeLongPriceV !== "") && okQty;
+        const px = pmcc && p.noShort ? 0 : n(closePriceV);
         const shortSide = natOf(p) === "CRED" || isCreditSpread(p);
         const canExercise = opt && natOf(p) === "CRED" && !pmcc; // short put / covered call: se pueden ejercer/asignar
         /* estimación en vivo del resultado del cierre: opción corta → prima acumulada − recompra; resto → precio venta − BEP.
@@ -4362,9 +4378,14 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 {!pmcc && <WizInput label={closeExercised ? "Comisión asignación" : "Comisión de cierre"} value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />}
                 {pmcc && (
                   <>
-                    <div style={{ gridColumn: "span 2", fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 }}>Short call · recompra</div>
-                    <WizInput label="Recompra short $/acc" value={closePriceV} onChange={setClosePriceV} placeholder="0 si expira sin valor" inputMode="decimal" />
-                    <WizInput label="Comisión short" value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />
+                    {!p.noShort && (
+                      <>
+                        <div style={{ gridColumn: "span 2", fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 }}>Short call · recompra</div>
+                        <WizInput label="Recompra short $/acc" value={closePriceV} onChange={setClosePriceV} placeholder="0 si expira sin valor" inputMode="decimal" />
+                        <WizInput label="Comisión short" value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />
+                      </>
+                    )}
+                    {p.noShort && <div style={{ gridColumn: "span 2", background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11, fontWeight: 700, color: T.gold }}>Sin call vendida — solo se cierra la long comprada.</div>}
                     <div style={{ gridColumn: "span 2", fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 }}>Long call · venta</div>
                     <WizInput label="Venta long $/acc" value={closeLongPriceV} onChange={setCloseLongPriceV} placeholder="0 si expira sin valor" inputMode="decimal" />
                     <WizInput label="Comisión long" value={closeLongComisionV} onChange={setCloseLongComisionV} placeholder="$" inputMode="decimal" />
@@ -4630,6 +4651,25 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       }
       chain.forEach((r, idx) => {
         const fee = n(r.comision);
+        /* v3.46: corta de PMCC expirada sin valor — el evento de Primas sería $0 (nada se cobra ni se paga),
+           así que no se pinta; el MTM sí realiza la pata (la prima de esa call queda ganada del todo). */
+        if (r.expiredShort) {
+          const legBefore0 = idx === 0 ? openingPrimaPerShare(p) : n(chain[idx - 1].newCredit);
+          mtmEvents.push({ id: p.id + "-rollmtm" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Expirada short", cash: dirSign(p) * (0 - legBefore0) * qty, fee: 0, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+            { side: "V", label: strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : ""), perShare: legBefore0, cash: legBefore0 * qty },
+            { side: "C", label: "expira sin valor", perShare: 0, cash: 0 },
+          ] });
+          return;
+        }
+        /* v3.46: venta de call nueva tras un periodo sin corta — solo pata de venta en Primas; en MTM no
+           hay nada que realizar (no se cerró ninguna pata). */
+        if (r.soldAfterExpiry) {
+          const cashSell = n(r.newCredit) * qty - fee;
+          primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta call", cash: cashSell, fee, strike: strikeAfterRoll(p, idx), right: p.right, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
+            { side: "V", label: strikeStr(strikeAfterRoll(p, idx)) + (p.right || "") + (expiryAfterRoll(p, idx) ? " " + ibkrDate(expiryAfterRoll(p, idx)) : ""), perShare: n(r.newCredit), cash: n(r.newCredit) * qty },
+          ] });
+          return;
+        }
         const cashRoll = (n(r.newCredit) - n(r.buybackCost)) * qty - fee;
         primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Roll", cash: cashRoll, fee, strike: strikeAfterRoll(p, idx), right: p.right, prevStrike: r.prevStrike, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
           { side: "C", label: strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : ""), perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
@@ -8783,7 +8823,7 @@ function App() {
     if (action === "edit") { setEditSet((s) => new Set(s).add(sheetPos.id)); }
     if (action === "lotes") { setEditLotsId(sheetPos.id); }
     if (action === "dividendos") { setEditDivId(sheetPos.id); }
-    if (action === "roll" || action === "close") { setPendingAction({ id: sheetPos.id, action }); } /* roll/cierre: hoja propia, sin abrir el menú de edición */
+    if (action === "roll" || action === "close") { setPendingAction({ id: sheetPos.id, action }); if (view !== "portfolio") selectView("portfolio"); } /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio (v3.46: navegar si venimos de otra pestaña, p.ej. del banner de vencidas) */
     if (action === "reopen") { reopenPos(sheetPos.id); }
     setSheetPosId(null);
   };
@@ -9013,8 +9053,11 @@ function App() {
       const stockIds = new Set(stockMatches.map((p) => p.id));
       return ps.map((p) => {
         if (p.id === id) {
-          const prevLeg = { date: date || new Date().toISOString().slice(0, 10), prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima, buybackCost: n(buybackCost), newCredit: n(newCredit), comision: n(comision), ivr: ivr || "", note: note || "" };
-          return { ...p, rollChain: [...(p.rollChain || []), prevLeg], strike, expiry, prima: String(n(p.prima) + netPerShare) };
+          /* v3.46: si la corta del PMCC había expirado (noShort), este "roll" es en realidad la VENTA de
+             una call nueva sobre la long — se marca la pata (soldAfterExpiry) para que la cadena y los
+             eventos no pinten una recompra fantasma de $0, y se limpia el estado sin corta. */
+          const prevLeg = { date: date || new Date().toISOString().slice(0, 10), prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima, buybackCost: n(buybackCost), newCredit: n(newCredit), comision: n(comision), ivr: ivr || "", note: note || "", ...(isPMCC(p) && p.noShort ? { soldAfterExpiry: true } : {}) };
+          return { ...p, rollChain: [...(p.rollChain || []), prevLeg], strike, expiry, prima: String(n(p.prima) + netPerShare), noShort: false };
         }
         if (perShareAdj && stockIds.has(p.id)) {
           return { ...p, bep: String(n(p.bep) - perShareAdj) };
@@ -9022,6 +9065,19 @@ function App() {
         return p;
       });
     });
+  };
+  /* v3.46: la call corta de un PMCC/Diagonal expira sin valor y NO se vende otra de momento — la posición
+     sigue abierta solo con la long. Registra la expiración en la cadena (pata expiredShort, $0), vacía
+     strike/expiry (así sale de Vencimientos) y marca noShort. Fecha: el propio vencimiento si ya pasó,
+     hoy si no. El crédito cobrado no se toca (ya vive en p.prima). */
+  const expirePmccShort = (id) => {
+    setPositions((ps) => ps.map((p) => {
+      if (p.id !== id || !isPMCC(p) || p.closed || p.noShort) return p;
+      const today = new Date().toISOString().slice(0, 10);
+      const d = p.expiry && p.expiry <= today ? p.expiry : today;
+      const leg = { date: d, prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima, buybackCost: 0, newCredit: 0, comision: 0, ivr: "", note: "", expiredShort: true };
+      return { ...p, rollChain: [...(p.rollChain || []), leg], strike: "", expiry: "", noShort: true };
+    }));
   };
   /* cierre de posición: acciones (o ETF/collar) solo necesitan precio de venta → resultado realizado va a MTM;
      opciones necesitan precio de recompra → cash de prima va a Primas. En ambos casos la posición se marca
@@ -9755,7 +9811,30 @@ function App() {
 
         </>)}
 
-        {view === "vencimientos" && (<><MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} /></>)}
+        {view === "vencimientos" && (<>
+          {(() => {
+            /* v3.46: banner persistente de opciones VENCIDAS y aún abiertas — no se descarta, desaparece
+               al resolverlas. "Resolver" abre el sheet de la posición (cerrar, o expirar la corta en PMCC). */
+            const todayIso = new Date().toISOString().slice(0, 10);
+            const expOpen = positions.filter((pp) => !pp.closed && pp.expiry && pp.expiry < todayIso);
+            if (!expOpen.length) return null;
+            return (
+              <div style={{ background: T.tileAmber, borderRadius: 18, padding: "13px 14px", marginBottom: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: T.gold, marginBottom: 8 }}>⏰ {expOpen.length === 1 ? "1 opción venció y sigue abierta" : expOpen.length + " opciones vencieron y siguen abiertas"}</div>
+                {expOpen.map((pp) => (
+                  <div key={pp.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: T.card, borderRadius: 12, padding: "9px 12px", marginBottom: 6 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pp.tkr} <span style={{ color: T.sub, fontWeight: 600 }}>· {pp.tipo || "—"}{pp.strike ? " · " + pp.strike + (pp.right || "") : ""}</span></div>
+                      <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600 }}>venció {pp.expiry} · B{pp.block} · {pp.broker}</div>
+                    </div>
+                    <button onClick={() => openSheet(pp.id)} style={{ background: T.gold, border: "none", borderRadius: 10, padding: "8px 13px", fontSize: 12, fontWeight: 800, color: "#fff", cursor: "pointer", flexShrink: 0 }}>Resolver</button>
+                  </div>
+                ))}
+                <div style={{ fontSize: 9.5, color: T.sub, fontWeight: 600, lineHeight: 1.4 }}>Registra el cierre (o la expiración de la corta, en PMCC) para que cartera y estadísticas no queden a medias.</div>
+              </div>
+            );
+          })()}
+          <MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} /></>)}
 
         {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
@@ -10055,6 +10134,7 @@ function App() {
                     {p.tipo && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>{p.tipo}</span>}
                     {blk && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: blk.badge, borderRadius: 7, padding: "3px 7px" }}>B{p.block}</span>}
                     {p.closed && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>Cerrada</span>}
+                    {!p.closed && isPMCC(p) && p.noShort && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "3px 7px" }}>Sin call vendida</span>}
                   </div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, marginTop: 4 }}>
                     {p.broker}{isOpt && p.strike ? ` · ${p.strike}${p.right}` : ""}{p.expiry ? ` · vence ${p.expiry}` : ""}{isFinite(dte) && dte >= 0 && !p.closed ? ` (${dte}d)` : ""}
@@ -10080,7 +10160,9 @@ function App() {
                 {!p.closed && nat === "ACC" && <ActionBtn icon="lots" label="Lotes" sub="Ver lotes por fecha · editar · vender · añadir" color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("lotes")} />}
                 {p.tipo === "Long Stock" && <ActionBtn icon="dividend" label="Dividendos" sub="Registrar cobros · van a Primas y MTM" color={T.green} tint={T.tileGreen} onClick={() => sheetDo("dividendos")} />}
                 {!p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar cualquier campo de la posición" onClick={() => sheetDo("edit")} />}
-                {canRollP && <ActionBtn icon="roll" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
+                {canRollP && !(isPMCC(p) && p.noShort) && <ActionBtn icon="roll" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
+                {!p.closed && isPMCC(p) && p.noShort && <ActionBtn icon="roll" label="Vender call" sub="Nueva call corta sobre la long comprada" color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
+                {!p.closed && isPMCC(p) && !p.noShort && <ActionBtn icon="close" label="Expirar corta" sub="La call vendida expira sin valor · la long sigue viva" color={T.gold} tint={T.tileAmber} onClick={() => { expirePmccShort(p.id); setSheetPosId(null); }} />}
                 {canCloseP && <ActionBtn icon="close" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
                 {p.closed && <ActionBtn icon="reopen" label="Reabrir" sub="Deshace el cierre y vuelve a activa" onClick={() => sheetDo("reopen")} />}
                 {p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar campos de la posición cerrada" onClick={() => sheetDo("edit")} />}
@@ -10749,7 +10831,13 @@ function App() {
                 background: "transparent", borderRadius: 19, padding: "7px 0 6px",
                 color: on ? NAV_BLUE : "rgba(255,255,255,0.92)", transition: "color 0.15s",
               }}>
-                <NavIcon name={icon} />
+                <span style={{ position: "relative", display: "inline-flex" }}>
+                  <NavIcon name={icon} />
+                  {/* v3.46: punto rojo si hay opciones vencidas y aún abiertas — refuerzo pasivo del banner */}
+                  {icon === "vencimientos" && positions.some((pp) => !pp.closed && pp.expiry && pp.expiry < new Date().toISOString().slice(0, 10)) && (
+                    <span style={{ position: "absolute", top: -2, right: -5, width: 7, height: 7, borderRadius: 4, background: "#E5484D", border: "1.5px solid rgba(24,24,30,0.9)" }} />
+                  )}
+                </span>
                 <span style={{ fontSize: 9.5, fontWeight: on ? 800 : 600, letterSpacing: 0.1, whiteSpace: "nowrap", color: on ? NAV_BLUE : "rgba(255,255,255,0.92)" }}>{label}</span>
               </button>
             );
