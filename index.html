@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.43"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.45"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5383,34 +5383,6 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                     </div>
                   ))}
                 </div>
-                {/* v3.42: desglose con/sin earnings dentro del vencimiento (p.earnIn, escrito por el wizard
-                    desde la apertura). Alimenta la pregunta de la ronda 3 del playbook: ¿las posiciones
-                    abiertas con earnings dentro van sistemáticamente peor? Solo aparece si hay alguna. */}
-                {stratWin === "Todas" && (() => {
-                  const withE = stratItems.filter((p) => p.earnIn);
-                  if (!withE.length) return null;
-                  const noE = stratItems.filter((p) => !p.earnIn);
-                  const grp = (arr) => {
-                    const w = arr.filter(isWinner).length, l = arr.filter(isLoser).length;
-                    const tot = arr.map(closedResultOf).reduce((a, b) => a + b, 0);
-                    const wr = w + l ? Math.round((w / (w + l)) * 100) + "%" : "—";
-                    return { n: arr.length, wr, tot };
-                  };
-                  const a = grp(withE), b = grp(noE);
-                  const row = (icon, lbl, g) => (
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: "#B9C2CC" }}>{icon} {lbl} ({g.n})</span>
-                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>wr {g.wr} · <span style={{ color: g.tot >= 0 ? T.green : T.red }}>{signMoney(g.tot)}</span></span>
-                    </div>
-                  );
-                  return (
-                    <div style={{ marginTop: 10, background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "9px 12px", display: "grid", gap: 5 }}>
-                      {row("⚠️", "Con earnings dentro", a)}
-                      {noE.length > 0 && row("○", "Sin earnings dentro", b)}
-                      <div style={{ fontSize: 9, color: "#8D97A3", fontWeight: 600, lineHeight: 1.4 }}>Marcadas al abrir con earnings antes del vencimiento (v3.42+); las anteriores cuentan como "sin".</div>
-                    </div>
-                  );
-                })()}
               </div>
             );
           })()}
@@ -5627,6 +5599,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               dte: avgOf(arr, (x) => daysBetween(x.entryDate, openingExpiry(x))),
               ivr: avgOf(arr, (x) => (n(x.ivr) ? n(x.ivr) : NaN)),
               dit: avgOf(arr, (x) => daysBetween(x.entryDate, x.closeDate)),
+              earnPct: arr.length ? (arr.filter((x) => x.earnIn).length / arr.length) * 100 : NaN,
             });
             const WA = grpA(winsA), LA = grpA(lossesA);
             const rowsA = [
@@ -5634,6 +5607,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               ["DTE apertura medio", isFinite(WA.dte) ? WA.dte.toFixed(0) + "d" : "—", isFinite(LA.dte) ? LA.dte.toFixed(0) + "d" : "—"],
               ["IVR apertura medio", isFinite(WA.ivr) ? WA.ivr.toFixed(0) : "—", isFinite(LA.ivr) ? LA.ivr.toFixed(0) : "—"],
               ["DIT medio", isFinite(WA.dit) ? WA.dit.toFixed(0) + "d" : "—", isFinite(LA.dit) ? LA.dit.toFixed(0) + "d" : "—"],
+              ["% con earnings dentro", isFinite(WA.earnPct) ? WA.earnPct.toFixed(0) + "%" : "—", isFinite(LA.earnPct) ? LA.earnPct.toFixed(0) + "%" : "—"],
             ];
             return (
               <div style={{ background: T.tile, borderRadius: 18, padding: "13px 14px", marginBottom: 14 }}>
