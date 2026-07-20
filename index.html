@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.47"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.48"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3761,6 +3761,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   /* "Avanzado" del editor (valor mercado / margen / P&L): plegado por defecto; abierto de inicio si el
      P&L está en Manual — señal de que la posición no tiene precio autodescargable y ese campo SÍ se usa */
   const [showAdv, setShowAdv] = useState(() => !isAutoPnl(p) || p.mktModo === "MANUAL");
+  const [blockAsk, setBlockAsk] = useState(null); // v3.48: bloque destino pendiente de confirmar en el editor
   const [rollDate, setRollDate] = useState("");
   const [rollStrike, setRollStrike] = useState("");
   const [rollExpiry, setRollExpiry] = useState("");
@@ -3904,11 +3905,22 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           {/* v3.47: mover la posición de bloque (p.ej. de B2 a B1). Solo se ofrecen los bloques cuya lista
               de estrategias incluye el tipo de esta posición; si el tipo no casa con ninguno (o falta),
               se ofrecen B1-B3. El cambio recoloca la posición en Portfolio y re-atribuye sus eventos de
-              Primas/MTM al bloque nuevo (los eventos leen p.block al construirse). */}
+              Primas/MTM al bloque nuevo (los eventos leen p.block al construirse).
+              v3.48: el cambio pide confirmación — tocar otro bloque arma blockAsk y sale un aviso ámbar
+              con Confirmar/Cancelar; hasta confirmar no se toca p.block. */}
           <label style={{ gridColumn: "span 2" }}>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Bloque</span>
-            <Pill options={(() => { const v = [0, 1, 2, 3].filter((b) => (STRATS[b] || []).includes(p.tipo)); return (v.length ? v : [1, 2, 3]).map((b) => "B" + b); })()} value={"B" + p.block} onChange={(v) => onChange("block")(Number(String(v).slice(1)))} />
+            <Pill options={(() => { const v = [0, 1, 2, 3].filter((b) => (STRATS[b] || []).includes(p.tipo)); return (v.length ? v : [1, 2, 3]).map((b) => "B" + b); })()} value={"B" + (blockAsk != null ? blockAsk : p.block)} onChange={(v) => { const nb = Number(String(v).slice(1)); if (nb === Number(p.block)) { setBlockAsk(null); return; } setBlockAsk(nb); }} />
           </label>
+          {blockAsk != null && (
+            <div style={{ gridColumn: "span 2", background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.gold, lineHeight: 1.45, marginBottom: 8 }}>⚠️ Mover {p.tkr || "la posición"} de B{p.block} a B{blockAsk}: cambia el bloque en Portfolio y re-atribuye sus primas/MTM y estadísticas al bloque nuevo.</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { onChange("block")(blockAsk); setBlockAsk(null); }} style={{ flex: 1, background: T.gold, border: "none", borderRadius: 10, padding: "9px 0", fontSize: 12.5, fontWeight: 800, color: "#fff", cursor: "pointer" }}>Confirmar B{blockAsk}</button>
+                <button onClick={() => setBlockAsk(null)} style={{ flex: 1, background: T.card, border: "none", borderRadius: 10, padding: "9px 0", fontSize: 12.5, fontWeight: 700, color: T.sub, cursor: "pointer" }}>Cancelar</button>
+              </div>
+            </div>
+          )}
           <div style={{ gridColumn: hideBroker ? "auto" : "span 2" }}>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Fecha de entrada</span>
             <input type="date" value={p.entryDate || ""} onChange={(e) => onChange("entryDate")(e.target.value)}
