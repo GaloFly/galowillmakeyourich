@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.57"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.58"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3895,13 +3895,15 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const [closeNoteV, setCloseNoteV] = useState("");
   const [closeLongPriceV, setCloseLongPriceV] = useState(""); // PMCC: precio de venta de la pata larga
   const [closeLongComisionV, setCloseLongComisionV] = useState("");
-  const [closeExercised, setCloseExercised] = useState(false); // cierre por ejercicio / asignación
+  const [closeKind, setCloseKind] = useState("recompra"); // v3.58: "recompra" | "exercised" | "expira"
+  const closeExercised = closeKind === "exercised";
+  const closeExpira = closeKind === "expira";
   const [closeMode, setCloseMode] = useState("total"); // acciones: total o parcial
   const [closeQtyV, setCloseQtyV] = useState(""); // nº de acciones en cierre parcial
-  const openClose = () => { setCloseDateV(new Date().toISOString().slice(0, 10)); setClosePriceV(""); setCloseComisionV(""); setCloseNoteV(""); setCloseLongPriceV(""); setCloseLongComisionV(""); setCloseExercised(false); setCloseMode("total"); setCloseQtyV(String(n(p.qty))); setClosing(true); };
+  const openClose = () => { setCloseDateV(new Date().toISOString().slice(0, 10)); setClosePriceV(""); setCloseComisionV(""); setCloseNoteV(""); setCloseLongPriceV(""); setCloseLongComisionV(""); setCloseKind("recompra"); setCloseMode("total"); setCloseQtyV(String(n(p.qty))); setClosing(true); };
   const confirmClose = () => {
     const partial = natOf(p) === "ACC" && closeMode === "parcial";
-    onClose({ date: closeDateV, price: closeExercised || (isPMCC(p) && p.noShort) ? "0" : closePriceV, comision: closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "" });
+    onClose({ date: closeDateV, price: (closeExercised || closeExpira || (isPMCC(p) && p.noShort)) ? "0" : closePriceV, comision: closeExpira ? "0" : closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "" });
     setClosing(false);
   };
   /* v3.50: hoja de PATA de un vertical (Credit Spread) — cerrar / rolar / reabrir solo la corta o la larga */
@@ -4517,8 +4519,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         const q = n(p.qty);
         const sellQty = partial ? Math.max(0, Math.min(n(closeQtyV), q)) : q;
         const okQty = !partial || sellQty > 0;
-        const ok = closeDateV && (closeExercised || closePriceV || (pmcc && p.noShort)) && (!pmcc || closeLongPriceV !== "") && okQty;
-        const px = pmcc && p.noShort ? 0 : n(closePriceV);
+        const ok = closeDateV && (closeExercised || closeExpira || closePriceV || (pmcc && p.noShort)) && (!pmcc || closeLongPriceV !== "") && okQty;
+        const px = (pmcc && p.noShort) || closeExpira ? 0 : n(closePriceV);
         const shortSide = natOf(p) === "CRED" || isCreditSpread(p);
         const canExercise = opt && natOf(p) === "CRED" && !pmcc; // short put / covered call: se pueden ejercer/asignar
         /* estimación en vivo del resultado del cierre: opción corta → prima acumulada − recompra; resto → precio venta − BEP.
@@ -4527,7 +4529,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         const lg = p.long || {};
         const est = pmcc
           ? ((closePriceV === "" && closeLongPriceV === "") ? NaN : (n(closeLongPriceV) - n(lg.prima) - px) * q)
-          : (closePriceV === "" ? NaN : (opt ? (shortSide ? (n(p.prima) - px) * q : (px - n(p.prima)) * q) : (px - effBep(p)) * sellQty));
+          : ((closePriceV === "" && !closeExpira) ? NaN : (opt ? (shortSide ? (n(p.prima) - px) * q : (px - n(p.prima)) * q) : (px - effBep(p)) * sellQty));
         return (
           <div onClick={() => setClosing(false)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
             style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
@@ -4558,7 +4560,13 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 {canExercise && (
                   <div style={{ gridColumn: "span 2" }}>
                     <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Cómo se cierra?</span>
-                    <Pill options={["Recompra", "Ejercida / asignada"]} value={closeExercised ? "Ejercida / asignada" : "Recompra"} onChange={(v) => setCloseExercised(v === "Ejercida / asignada")} size="sm" />
+                    <Pill options={["Recompra", "Ejercida / asignada", "Expira sin valor"]} value={closeExercised ? "Ejercida / asignada" : closeExpira ? "Expira sin valor" : "Recompra"} onChange={(v) => setCloseKind(v === "Ejercida / asignada" ? "exercised" : v === "Expira sin valor" ? "expira" : "recompra")} size="sm" />
+                  </div>
+                )}
+                {!canExercise && !pmcc && opt && shortSide && (
+                  <div style={{ gridColumn: "span 2" }}>
+                    <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Cómo se cierra?</span>
+                    <Pill options={["Recompra", "Expira sin valor"]} value={closeExpira ? "Expira sin valor" : "Recompra"} onChange={(v) => setCloseKind(v === "Expira sin valor" ? "expira" : "recompra")} size="sm" />
                   </div>
                 )}
                 {canExercise && closeExercised && (
@@ -4572,11 +4580,11 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                     </div>
                   </div>
                 )}
-                {!pmcc && !closeExercised && <WizInput label={isCreditSpread(p) ? "Close price $/acc" : (opt ? "Precio recompra $/acc" : "Precio venta $/acc")} value={closePriceV} onChange={setClosePriceV} placeholder={opt ? "0 si expira sin valor" : "$"} inputMode="decimal" />}
-                {!pmcc && <WizInput label={closeExercised ? "Comisión asignación" : "Comisión de cierre"} value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />}
-                {!pmcc && !closeExercised && opt && shortSide && (
-                  <button type="button" onClick={() => { setClosePriceV("0"); setCloseComisionV("0"); }} style={{ gridColumn: "span 2", background: T.tileAmber, border: "none", borderRadius: 12, padding: "10px 0", fontSize: 13, fontWeight: 800, color: T.gold, cursor: "pointer" }}>Expira sin valor · $0, sin comisión</button>
+                {opt && closeExpira && (
+                  <div style={{ gridColumn: "span 2", background: T.tileAmber, borderRadius: 12, padding: "10px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>Cierre a $0 sin comisión — la opción expira sin valor.</div>
                 )}
+                {!pmcc && !closeExercised && !closeExpira && <WizInput label={isCreditSpread(p) ? "Close price $/acc" : (opt ? "Precio recompra $/acc" : "Precio venta $/acc")} value={closePriceV} onChange={setClosePriceV} placeholder={opt ? "0 si expira sin valor" : "$"} inputMode="decimal" />}
+                {!pmcc && !closeExpira && <WizInput label={closeExercised ? "Comisión asignación" : "Comisión de cierre"} value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />}
                 {pmcc && (
                   <>
                     {!p.noShort && (
