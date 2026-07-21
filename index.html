@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.49"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.52"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -247,7 +247,7 @@ const natsForBlock = (block) => {
 const STRATS = {
   0: ["Treasury ETF", "Money Market", "Cash"],
   1: ["Long Stock", "Short Put", "Covered Call", "Collar"],
-  2: ["Long Stock", "Short Put", "Covered Call", "Diagonal", "PMCC", "Long Call"],
+  2: ["Long Stock", "Short Put", "Covered Call", "Diagonal", "PMCC", "Long Call", "Credit Spread"], /* v3.51: verticales también en B2 */
   3: ["Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Credit Spread"],
 };
 const natFromStrat = (strat) => {
@@ -414,6 +414,20 @@ const natsForPos = (p) => natsForBlock(p.block).map((x) => (x.id === "DEF" && CR
 /* crédito "simple" (v5.13): Iron Fly y Credit Spread — credit spread sin campos de strikes, formulario
    mínimo (open price + riesgo + fee + VIX opcional). Comparten el flujo de entrada de Iron Fly. */
 const isSimpleCredit = (p) => isCreditSpread(p) && !hasSpreadStrikes(p);
+/* v3.50: vertical de 2 patas (Credit Spread) con ciclo por pata — la corta y la larga se cierran/rolan/
+   reabren por separado (p.legOps); p.prima pasa a ser el crédito NETO ACUMULADO de todas las operaciones
+   por pata y las comisiones de esas operaciones van a p.legFees (se restan del realizado al cerrar). */
+const isVertical = (p) => !!p && p.tipo === "Credit Spread";
+/* v3.52: cada cierre/roll de pata se REALIZA en el momento (booked), no se espera al cierre total.
+   Abrir una pata nueva a crédito NO se apunta hasta que esa pata a su vez se cierre — igual que la
+   apertura original de un credit spread nunca se registraba hasta cerrar. p.legOps guarda cash!=null
+   en las operaciones YA realizadas (close/roll); null en las de apertura (pendientes). */
+const vHasLegData = (p) => isVertical(p) && (p.sK || p.lK || p.sP || p.lP);
+/* crédito neto de las patas actualmente VIVAS (no realizado, pendiente de cierre) — sustituye a p.prima
+   para mostrar "cuánto crédito queda en juego" en una posición tocada por el ciclo de patas */
+const vPendingNet = (p) => (p.noShort ? 0 : n(p.sP)) - (p.noLong ? 0 : n(p.lP));
+const vBookedSum = (p) => (p.legOps || []).reduce((s, o) => s + (o.cash != null ? n(o.cash) : 0), 0);
+const vDisplayPrima = (p) => (vHasLegData(p) ? vPendingNet(p) : n(p.prima)); /* crédito de las patas vivas, o el p.prima manual en posiciones antiguas sin datos por pata */
 /* ---------- v1.19: riesgo de cóndores (Earnings / Iron Condor) ----------
    El riesgo máximo de un cóndor está definido por estructura: (ancho del ala mayor − crédito) × 100.
    Solo un lado puede perder, por eso manda el ala más ancha si son asimétricas. */
@@ -553,6 +567,7 @@ function primaSumOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
   if (bepAutoStrat(p) === "CREDIT" && p.entryDate) s += _oPrimaPS(p) * qty - n(p.comision);
   chain.forEach((r) => { s += (n(r.newCredit) - n(r.buybackCost)) * qty - n(r.comision); });
+  if (isVertical(p)) s += vBookedSum(p); /* v3.52: realizado ya reservado pata a pata, con su fee incluida */
   if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
     const fee = n(p.closeComision), gd = isGenericDebitPos(p) || isLongCallPos(p);
     s += isCreditSpread(p) ? (n(p.prima) - n(p.closePrice)) * qty - fee
@@ -567,6 +582,7 @@ function primaSumOfPos(p) {
 }
 function mtmSumOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
+  if (isVertical(p)) s += vBookedSum(p); /* v3.52: idéntico a Primas — un vertical no distingue prima acumulada de MTM */
   if (isOptionNat(p)) {
     chain.forEach((r, idx) => { const legBefore = idx === 0 ? _oPrimaPS(p) : n(chain[idx - 1].newCredit); s += _dirSign(p) * (n(r.buybackCost) - legBefore) * qty - n(r.comision); });
     if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
@@ -1106,7 +1122,8 @@ const optionDetail = (p) => {
   if (isCreditSpread(p)) {
     /* Credit Spread simple (v5.13): sin strikes — la descripción es el lado (Put/Call) + expiry si hay */
     if (p.tipo === "Credit Spread") {
-      const side = (p.right === "C" ? "Call" : "Put") + " credit spread";
+      const stk = (p.sK || p.lK) ? " " + [p.sK, p.lK].filter(Boolean).join("/") : ""; /* v3.50: strikes corta/larga */
+      const side = (p.right === "C" ? "Call" : "Put") + " credit spread" + stk;
       return p.expiry ? `${side} · ${ibkrDate(p.expiry)}` : side;
     }
     /* credit spread: la descripción son los spreads de strikes (put y/o call), no un único strike.
@@ -3091,6 +3108,30 @@ function SwipeDelete({ onDelete, disabled, radius, children }) {
 /* ---------- Tabla de patas / cadena de rolls: componente compartido. Es exactamente la misma tabla que se
    ve en Movimientos → Estrategias al expandir una posición, y también se muestra dentro del panel de "Rolar"
    para que el histórico completo esté delante al decidir el nuevo strike/expiry. Scroll horizontal en móvil. ---------- */
+/* v3.52: historial de operaciones por pata de un vertical (Credit Spread) — solo lectura. Las de cierre/
+   roll muestran el REALIZADO ya reservado (o.cash, neto de comisión); las de apertura muestran "pendiente"
+   porque ese crédito no se apunta hasta que esa pata se cierre a su vez. */
+function LegOpsTable({ p }) {
+  const ops = (p && p.legOps) || [];
+  if (!ops.length) return null;
+  const actLbl = (o) => o.act === "close" ? (o.leg === "S" ? "Recompra corta" : "Venta larga") : o.act === "open" ? (o.leg === "S" ? "Venta corta" : "Compra larga") : (o.leg === "S" ? "Roll corta" : "Roll larga");
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Ciclo por pata · {ops.length} operación{ops.length === 1 ? "" : "es"}</div>
+      {ops.map((o, i) => {
+        const booked = o.cash != null;
+        const net = booked ? n(o.cash) : null;
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, color: T.ink, padding: "3px 0", borderTop: i ? `1px solid ${T.line}` : "none" }}>
+            <span style={{ color: T.sub, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{o.date}</span>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actLbl(o)}{o.k ? " " + o.k : ""}{o.expiry ? " · " + ibkrDate(o.expiry) : ""}{o.note ? " · " + o.note : ""}</span>
+            <span style={{ fontVariantNumeric: "tabular-nums", color: booked ? (net >= 0 ? T.green : T.red) : T.sub, flexShrink: 0 }}>{booked ? (net >= 0 ? "+" : "−") + "$" + Math.abs(net).toFixed(2) : "pendiente"}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 function RollChainTable({ p }) {
   /* v1.69 (Victor): en la cadena de rolls la fecha lleva AÑO — una cadena puede cruzar diciembre y
      "12 may" no dice de qué año. Solo aquí; el resto de la app sigue con la fecha corta. */
@@ -3205,7 +3246,7 @@ function RollChainTable({ p }) {
     acc(!shortSide, sellAmt, 0, false);
     if (r.note) rows.push(<div key={"n" + idx} style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", margin: "0 0 6px 4px", lineHeight: 1.4 }}>💬 {r.note}</div>);
   });
-  if (p.closed) {
+  if (p.closed && !isVertical(p)) { /* v3.52: los verticales muestran su cierre por pata en LegOpsTable */
     const closeAmt = n(p.closePrice) * q;
     const isExp = n(p.closePrice) === 0;
     rows.push(<LegRow key="close" date={p.closeDate} action={isExp ? "EXPIRA" : (shortSide ? "COMPRA" : "VENTA")} strike={p.strike} expiry={p.expiry} perShare={n(p.closePrice)} amount={closeAmt} fee={n(p.closeComision)} isBuy={shortSide && !isExp} isExp={isExp} />);
@@ -3741,7 +3782,7 @@ function PosSummaryCard({ p, onClose }) {
   );
 }
 
-function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, onEditChain, onEditLots }) {
+function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, onEditChain, onEditLots }) {
   const detail = optionDetail(p);
   const nat = natOf(p);
   const cap = capDesplegado(p);
@@ -3756,7 +3797,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const pnlPct = pnlBasis ? pnlVal / pnlBasis : NaN;
   const rollChain = p.rollChain || [];
   const canRoll = !!onRoll && !p.closed && opt && natOf(p) === "CRED"; // roll de cadena: solo opciones cortas (Short Put/Short Call, nat=Crédito)
-  const canClose = !!onClose && !p.closed && (nat === "ACC" || nat === "COLLAR" || opt); // acciones/collar/cualquier opción se pueden cerrar
+  const canClose = !!onClose && !p.closed && (nat === "ACC" || nat === "COLLAR" || opt) && !(isVertical(p) && (p.noShort || p.noLong)); // acciones/collar/cualquier opción; vertical con UNA pata cerrada se remata desde su hoja de pata
   const [rolling, setRolling] = useState(false);
   /* "Avanzado" del editor (valor mercado / margen / P&L): plegado por defecto; abierto de inicio si el
      P&L está en Manual — señal de que la posición no tiene precio autodescargable y ese campo SÍ se usa */
@@ -3820,15 +3861,38 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
     onClose({ date: closeDateV, price: closeExercised || (isPMCC(p) && p.noShort) ? "0" : closePriceV, comision: closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "" });
     setClosing(false);
   };
+  /* v3.50: hoja de PATA de un vertical (Credit Spread) — cerrar / rolar / reabrir solo la corta o la larga */
+  const [legSheet, setLegSheet] = useState(null); // { leg: "S" | "L" }
+  const [legMode, setLegMode] = useState("close"); // close | roll | open
+  const [legDate, setLegDate] = useState("");
+  const [legPx, setLegPx] = useState("");
+  const [legNewK, setLegNewK] = useState("");
+  const [legNewP, setLegNewP] = useState("");
+  const [legNewExpiry, setLegNewExpiry] = useState("");
+  const [legFee, setLegFee] = useState("");
+  const [legNote, setLegNote] = useState("");
+  const openLeg = (leg) => {
+    const closedLeg = leg === "S" ? p.noShort : p.noLong;
+    setLegMode(closedLeg ? "open" : "close");
+    setLegDate(new Date().toISOString().slice(0, 10));
+    setLegPx(""); setLegNewK(""); setLegNewP(""); setLegNewExpiry(""); setLegFee(""); setLegNote("");
+    setLegSheet({ leg });
+  };
+  const confirmLeg = () => {
+    onLegOp && onLegOp({ leg: legSheet.leg, act: legMode, date: legDate, px: legMode === "open" ? legNewP : legPx, newK: legNewK, newP: legNewP, newExpiry: legNewExpiry, fee: legFee, note: legNote });
+    setLegSheet(null);
+  };
   useEffect(() => {
     if (pendingAction && pendingAction.id === p.id) {
       if (pendingAction.action === "roll") openRoll();
       if (pendingAction.action === "close") openClose();
+      if (pendingAction.action === "legS") openLeg("S");
+      if (pendingAction.action === "legL") openLeg("L");
       clearPending && clearPending();
     }
   }, [pendingAction]);
   /* avisa hacia arriba cuando hay una hoja de roll/cierre abierta (BlockCard desactiva el swipe-eliminar) */
-  useEffect(() => { onRollingChange && onRollingChange(rolling || closing); return () => { onRollingChange && onRollingChange(false); }; }, [rolling, closing]);
+  useEffect(() => { onRollingChange && onRollingChange(rolling || closing || !!legSheet); return () => { onRollingChange && onRollingChange(false); }; }, [rolling, closing, legSheet]);
   return (
     <div style={{ borderTop: `1px solid ${T.line}`, padding: "10px 0" }}>
       {coveredLabel && coveredLabel.length > 0 && natOf(p) === "ACC" && (
@@ -4001,6 +4065,18 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                     <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Put o Call credit spread?</span>
                     <Pill options={["Put", "Call"]} value={p.right === "C" ? "Call" : "Put"} onChange={(v) => onChange("right")(v === "Call" ? "C" : "P")} size="sm" />
                   </label>
+                )}
+                {p.tipo === "Credit Spread" && (
+                  <>
+                    {/* v3.50: campos por pata del vertical; la prima de arriba es el NETO ACUMULADO (la ajustan las operaciones por pata) */}
+                    <EditField label="Strike corta" value={p.sK} onChange={onChange("sK")} />
+                    <EditField label="Strike larga" value={p.lK} onChange={onChange("lK")} />
+                    <EditField label="Prima corta $/acc" prefix="$" value={p.sP} onChange={onChange("sP")} />
+                    <EditField label="Prima larga $/acc" prefix="$" value={p.lP} onChange={onChange("lP")} />
+                    <EditField label="Nota corta" value={p.sNote} onChange={onChange("sNote")} />
+                    <EditField label="Nota larga" value={p.lNote} onChange={onChange("lNote")} />
+                    <div style={{ gridColumn: "span 2" }}><LegOpsTable p={p} /></div>
+                  </>
                 )}
                 <EditField label="VIX al abrir (opcional)" value={p.vix} onChange={onChange("vix")} span={2} />
               </>
@@ -4254,7 +4330,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           {p.closed && !!onReopen && <EditSection icon="bolt" title="Acciones" />}
           {p.closed && !!onReopen && (
             <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>Cerrada el {ibkrDate(p.closeDate)} a ${money2(n(p.closePrice))}</span>
+              <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>{isVertical(p) && p.closePrice === "" ? "Cerrada el " + ibkrDate(p.closeDate) + " · resultado reservado pata a pata" : "Cerrada el " + ibkrDate(p.closeDate) + " a $" + money2(n(p.closePrice))}</span>
               <button type="button" onClick={onReopen} style={{ background: "transparent", border: "none", fontSize: 12, fontWeight: 700, color: T.purple, cursor: "pointer" }}>Reabrir</button>
             </div>
           )}
@@ -4268,6 +4344,59 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           <button onClick={onDelete} style={{ gridColumn: "span 2", background: "transparent", border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12.5, fontWeight: 700, color: T.red, cursor: "pointer", opacity: 0.85 }}>Eliminar posición</button>
         </div>
       )}
+      {legSheet && (() => { /* v3.50: hoja de pata de un vertical */
+        const S = legSheet.leg === "S";
+        const legClosed = S ? p.noShort : p.noLong;
+        const curK = S ? p.sK : p.lK;
+        const modes = legClosed ? [["open", S ? "Vender corta nueva" : "Comprar larga nueva"]] : [["close", "Cerrar"], ["roll", "Rolar"]];
+        const title = (legClosed ? (S ? "Vender corta · " : "Comprar larga · ") : (S ? "Pata corta · " : "Pata larga · ")) + p.tkr;
+        const pxLbl = S ? "Recompra corta $/acc" : "Venta larga $/acc";
+        const newLbl = S ? "Crédito nuevo $/acc" : "Coste nuevo $/acc";
+        const okPx = legMode === "open" ? legNewP !== "" : legPx !== "";
+        const ok = !!legDate && okPx && (legMode !== "roll" || legNewP !== "");
+        const qtyTot = n(p.qty);
+        const feeNum = n(legFee);
+        const realized = legMode === "close" ? (S ? (n(p.sP) - n(legPx)) * qtyTot - feeNum : (n(legPx) - n(p.lP)) * qtyTot - feeNum)
+          : legMode === "roll" ? (S ? (n(p.sP) - n(legPx)) * qtyTot - feeNum : (n(legPx) - n(p.lP)) * qtyTot - feeNum)
+          : null; /* "open": no se reserva nada todavía */
+        const willClose = legMode === "close" && (S ? p.noLong : p.noShort);
+        return (
+          <div onClick={() => setLegSheet(null)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
+            style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
+                <div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />{title}</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{(p.right === "C" ? "Call" : "Put") + " credit spread"}{curK ? " · strike " + curK : ""}{p.expiry ? " · vence " + p.expiry : ""} · solo esta pata; la otra no se toca</div>
+                </div>
+                <button onClick={() => setLegSheet(null)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
+              </div>
+              {!legClosed && (
+                <div style={{ margin: "10px 0 4px" }}>
+                  <Pill options={modes.map((m) => m[1])} value={(modes.find((m) => m[0] === legMode) || modes[0])[1]} onChange={(v) => setLegMode((modes.find((m) => m[1] === v) || modes[0])[0])} size="sm" />
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+                <WizInput label="Fecha" value={legDate} onChange={setLegDate} type="date" />
+                {legMode !== "open" && <WizInput label={pxLbl} value={legPx} onChange={setLegPx} placeholder="0 si expira sin valor" inputMode="decimal" />}
+                {legMode !== "close" && <WizInput label={S ? "Nuevo strike corta" : "Nuevo strike larga"} value={legNewK} onChange={setLegNewK} inputMode="decimal" />}
+                {legMode !== "close" && <WizInput label={newLbl} value={legNewP} onChange={setLegNewP} inputMode="decimal" />}
+                {legMode !== "close" && S && <WizInput label="Nuevo vencimiento (opc.)" value={legNewExpiry} onChange={setLegNewExpiry} type="date" />}
+                <WizInput label="Comisión" value={legFee} onChange={setLegFee} placeholder="$" inputMode="decimal" />
+                <div style={{ gridColumn: "span 2" }}><WizInput label="Nota (opc.)" value={legNote} onChange={setLegNote} placeholder="Ej. recompro tras el susto, re-vendo en unos días" /></div>
+              </div>
+              <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", marginTop: 10, fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.5 }}>
+                {realized !== null ? (
+                  <>Se reserva ahora en Primas y MTM ({legDate || "fecha pendiente"}): <span style={{ color: realized >= 0 ? T.green : T.red, fontWeight: 800 }}>{(realized >= 0 ? "+" : "−") + "$" + Math.abs(realized).toFixed(2)}</span>.{legMode === "roll" ? " El nuevo crédito de la pata que reabre queda pendiente hasta que ella misma se cierre." : ""}{willClose ? " Era la última pata viva: la posición se cierra." : ""}</>
+                ) : (
+                  <>Venta/compra a crédito — no se apunta en Movimientos todavía; se reservará cuando esta pata se cierre a su vez.</>
+                )}
+              </div>
+              <button onClick={confirmLeg} disabled={!ok} style={{ marginTop: 14, width: "100%", background: ok ? T.dark : T.tile, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, color: ok ? "#fff" : T.sub, cursor: "pointer" }}>Confirmar</button>
+            </div>
+          </div>
+        );
+      })()}
       {rolling && (() => {
         /* ---------- SHEET DE ROLL: mismo formato que el asistente "Nueva posición" — hoja inferior sobre
            fondo oscurecido. Tocar fuera la cierra. Arriba el histórico completo de la cadena (misma tabla que
@@ -4455,7 +4584,7 @@ function NavIcon({ name }) {
 }
 
 /* ---------- tarjeta de bloque activo ---------- */
-function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, onEditChain, onEditLots }) {
+function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, onEditChain, onEditLots }) {
   const [rollingIds, setRollingIds] = useState(new Set()); // filas con el panel de roll abierto → swipe-eliminar desactivado
   const activePositions = positions.filter((p) => !p.closed);
   const capBlock = activePositions.reduce((s, p) => s + capDesplegado(p), 0);
@@ -4513,6 +4642,7 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
               coveredLabel={(coveredMap || {})[p.id]}
               onChange={(k) => (v) => setPos(p.id, k, v)} onDelete={() => delPos(p.id)} showPnl={showPnl} brokers={brokers}
               onRoll={(vals) => rollPos(p.id, vals)} onClose={(vals) => closePos(p.id, vals)} onReopen={() => reopenPos(p.id)}
+              onLegOp={legOp ? (vals) => legOp(p.id, vals) : null}
               onEditChain={onEditChain} onEditLots={onEditLots}
               pctBloque={capBlock ? capDesplegado(p) / capBlock : NaN} pctCartera={nlv ? capDesplegado(p) / nlv : NaN} />
           </SwipeDelete>
@@ -4702,6 +4832,22 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
           { side: "C", label: strikeStr(r.prevStrike) + (p.right || ""), perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
         ] });
       });
+      /* v3.52: verticales (Credit Spread) — cada cierre/roll de UNA pata se realiza en el momento, no se
+         espera al cierre total. p.legOps trae cash!=null solo en las operaciones YA realizadas (cerrar la
+         corta/larga, o la parte de cierre de un roll); las de apertura (vender/comprar de nuevo a crédito)
+         quedan sin apuntar hasta que ESA pata se cierre a su vez — mismo criterio que la apertura original. */
+      if (isVertical(p)) {
+        (p.legOps || []).forEach((o, idx) => {
+          if (o.cash == null) return;
+          const S = o.leg === "S";
+          const isExpira = o.act !== "open" && n(o.px) === 0;
+          const kind = o.act === "roll" ? (S ? "Roll corta" : "Roll larga") : isExpira ? (S ? "Expirada corta" : "Larga sin valor") : (S ? "Cierre corta" : "Cierre larga");
+          const lbl = (S ? "Corta " : "Larga ") + (o.k || "") + (p.right || "") + (o.expiry ? " " + ibkrDate(o.expiry) : "");
+          const ev = { id: p.id + "-leg" + idx, posId: p.id, date: o.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind, cash: n(o.cash), fee: n(o.fee), strike: o.k || (S ? p.sK : p.lK), right: p.right, qty: qtyLabelOf(p), expiry: o.expiry || p.expiry, note: o.note || "", legs: [{ side: S ? "C" : "V", label: lbl, perShare: n(o.cash) / (qty || 1), cash: n(o.cash) }] };
+          primaEvents.push(ev);
+          mtmEvents.push({ ...ev, id: p.id + "-legmtm" + idx }); /* un vertical no distingue prima acumulada de MTM, igual que en el cierre total */
+        });
+      }
       if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
         const fee = n(p.closeComision);
         const isExpira = n(p.closePrice) === 0;
@@ -4962,6 +5108,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
         o.rolls = rolls;
         if (rolls > 0) { o.strikeFinal = p.strike || null; o.expiryFinal = p.expiry || null; }
         if (isCreditSpread(p)) { o.putSpread = p.putSpread || null; o.callSpread = p.callSpread || null; o.riesgoManual = n(p.margen) || null; }
+        if (isVertical(p)) { o.strikeCorta = p.sK || null; o.strikeLarga = p.lK || null; o.opsPorPata = (p.legOps || []).length || null; }
         else if (natOf(p) === "CRED" && !isPMCC(p)) o.riesgo = Math.round(Math.abs((n(openStrike) - n(openPrima)) * n(p.qty)));
       } else {
         o.acciones = n(p.qty);
@@ -5819,7 +5966,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                crédito pendiente (prima × qty − comisión) y su ROI potencial sobre el riesgo introducido.
                Al cerrar, pasa a medirse el realizado: P&L (neto prima − recompra) / riesgo. */
             const csPending = isCreditSpread(p) && !p.closed;
-            const csCredit = isCreditSpread(p) ? n(p.prima) * n(p.qty) - n(p.comision) : NaN;
+            const csCredit = isCreditSpread(p) ? vDisplayPrima(p) * n(p.qty) - n(p.comision) : NaN;
             const romNumer = csPending ? csCredit : primaBasis;
             const result = isOpt ? primaBasis : mtmSumOf(p);
             /* riesgo de la estrategia para el histórico: en opciones cortas siempre BEP × acciones (contratos ×100),
@@ -6005,6 +6152,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                         <RollChainTable p={p} />
                       </div>
                     )}
+                    {isVertical(p) && <LegOpsTable p={p} />}
                     {isOpt && onEditChain && (
                       <button onClick={(ev) => { ev.stopPropagation(); onEditChain(p.id); }} style={{ width: "100%", marginTop: 12, background: T.tilePurple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={15} />Editar {chain.length > 0 ? "rolls, apertura y cierre" : p.closed ? "apertura y cierre" : "apertura"}</button>
                     )}
@@ -8843,7 +8991,7 @@ function App() {
     if (action === "edit") { setEditSet((s) => new Set(s).add(sheetPos.id)); }
     if (action === "lotes") { setEditLotsId(sheetPos.id); }
     if (action === "dividendos") { setEditDivId(sheetPos.id); }
-    if (action === "roll" || action === "close") { setPendingAction({ id: sheetPos.id, action }); if (view !== "bloques") selectView("bloques"); } /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio (v3.46: navegar si venimos de otra pestaña; v3.49 FIX: el id de la pestaña Portfolio es "bloques" — "portfolio" es solo el nombre del ICONO; con el id malo la app caía al fallback Herramientas y la acción pendiente quedaba colgada) */
+    if (action === "roll" || action === "close" || action === "legS" || action === "legL") { setPendingAction({ id: sheetPos.id, action }); if (view !== "bloques") selectView("bloques"); } /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio (v3.46: navegar si venimos de otra pestaña; v3.49 FIX: el id de la pestaña Portfolio es "bloques" — "portfolio" es solo el nombre del ICONO; con el id malo la app caía al fallback Herramientas y la acción pendiente quedaba colgada) */
     if (action === "reopen") { reopenPos(sheetPos.id); }
     setSheetPosId(null);
   };
@@ -8976,7 +9124,7 @@ function App() {
       id: newId(), block: wizBlock, broker: f.broker, tkr: effNat === "CASH" ? "CASH" : (f.tkr || "").toUpperCase().trim(),
       tipo: wizStrat, nat: effNat, right, earnIn,
       strike: f.strike || "", expiry: f.expiry || "", qty: effNat === "CASH" ? "" : qty,
-      bep: (effNat === "CASH" || isLongCall || isPMCCw || CREDIT_SPREAD_STRATS.has(wizStrat)) ? "" : (f.bep || ""), prima: isLongCall ? (isFinite(lcPrimaPS) ? String(lcPrimaPS) : "") : isPMCCw ? (isFinite(pmShortPS) ? String(pmShortPS) : "") : isDCDDw ? (dcNet ? String(dcNet) : "") : (f.prima || ""), comision: isDCDDw ? String((absPf(f.comision)) + dcFees) : (f.comision || ""), ivr: f.ivr || "",
+      bep: (effNat === "CASH" || isLongCall || isPMCCw || CREDIT_SPREAD_STRATS.has(wizStrat)) ? "" : (f.bep || ""), prima: isLongCall ? (isFinite(lcPrimaPS) ? String(lcPrimaPS) : "") : isPMCCw ? (isFinite(pmShortPS) ? String(pmShortPS) : "") : isDCDDw ? (dcNet ? String(dcNet) : "") : (wizStrat === "Credit Spread" && (f.sP || "") !== "" ? String(n(f.sP) - n(f.lP)) : (f.prima || "")), comision: isDCDDw ? String((absPf(f.comision)) + dcFees) : (f.comision || ""), ivr: f.ivr || "",
       last: "", mktValue: effNat === "CASH" ? (f.mktValue || "") : "", riesgo: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (nat === "DEF" ? (f.margen || "") : ""),
       factor, margen: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (f.margen || ""),
       margenPct: effNat === "ACC" || effNat === "CASH" ? (f.margenPct || "") : "100",
@@ -8990,6 +9138,8 @@ function App() {
       putSpread: SPREAD_STRIKE_STRATS.has(wizStrat) ? (f.putSpread || "") : "",
       callSpread: (wizStrat === "Iron Condor" || wizStrat === "Earnings") ? (f.callSpread || "") : "",
       vix: (CREDIT_SPREAD_STRATS.has(wizStrat) && !SPREAD_STRIKE_STRATS.has(wizStrat)) ? (f.vix || "") : "", /* crédito simple (v5.13): VIX de apertura */
+      /* v3.50: verticales (Credit Spread) — pata corta y larga con vida propia */
+      ...(wizStrat === "Credit Spread" ? { sK: f.sK || "", lK: f.lK || "", sP: f.sP || "", lP: f.lP || "", sNote: (f.sNote || "").trim(), lNote: (f.lNote || "").trim(), legOps: [], legFees: 0 } : {}),
       /* ficha DC/DD 4 patas (v5.09): short/long put + short/long call, cada una con strike/prima/fee */
       dcdd: isDCDDw ? {
         expiryLong: f.dcExpiryLong || "",
@@ -9099,6 +9249,34 @@ function App() {
       return { ...p, rollChain: [...(p.rollChain || []), leg], strike: "", expiry: "", noShort: true };
     }));
   };
+  /* v3.52: ciclo por pata de los verticales (Credit Spread). Cerrar (o la parte de cierre de un roll)
+     de la corta o de la larga SE REALIZA EN EL MOMENTO — genera su propio evento en Primas y MTM con esa
+     fecha (op.cash, ya neto de comisión). Abrir una pata nueva a crédito (venta corta nueva / compra larga
+     nueva, incluida la parte de apertura de un roll) NO se apunta hasta que esa pata se cierre a su vez —
+     mismo criterio que la apertura original del spread, que tampoco se registra hasta cerrar. p.sP/p.lP
+     guardan el precio de entrada del ciclo VIVO de cada pata (para mostrar el crédito pendiente); p.legOps
+     es el historial completo, con `cash` solo en las operaciones ya realizadas. Si las dos patas quedan
+     cerradas la posición se cierra sola (closePrice queda vacío a propósito: ya está todo booked por
+     pata, un evento de cierre total aquí duplicaría el resultado). */
+  const legOp = (id, op) => setPositions((arr) => arr.map((p) => {
+    if (p.id !== id || !isVertical(p) || p.closed) return p;
+    const date = op.date || new Date().toISOString().slice(0, 10);
+    const qty = n(p.qty), fee = n(op.fee);
+    const out = { ...p };
+    const rec = { leg: op.leg, act: op.act, date, note: (op.note || "").trim(), fee };
+    if (op.leg === "S") {
+      if (op.act === "close") { rec.px = n(op.px); rec.cash = (n(p.sP) - n(op.px)) * qty - fee; out.noShort = true; }
+      if (op.act === "open") { rec.px = n(op.px); rec.k = op.newK || ""; rec.expiry = op.newExpiry || ""; out.noShort = false; out.sK = op.newK || p.sK; out.sP = String(n(op.px)); if (op.newExpiry) out.expiry = op.newExpiry; }
+      if (op.act === "roll") { rec.px = n(op.px); rec.newP = n(op.newP); rec.k = op.newK || ""; rec.expiry = op.newExpiry || ""; rec.cash = (n(p.sP) - n(op.px)) * qty - fee; out.sK = op.newK || p.sK; out.sP = String(n(op.newP)); if (op.newExpiry) out.expiry = op.newExpiry; }
+    } else {
+      if (op.act === "close") { rec.px = n(op.px); rec.cash = (n(op.px) - n(p.lP)) * qty - fee; out.noLong = true; }
+      if (op.act === "open") { rec.px = n(op.px); rec.k = op.newK || ""; out.noLong = false; out.lK = op.newK || p.lK; out.lP = String(n(op.px)); }
+      if (op.act === "roll") { rec.px = n(op.px); rec.newP = n(op.newP); rec.k = op.newK || ""; rec.cash = (n(op.px) - n(p.lP)) * qty - fee; out.lK = op.newK || p.lK; out.lP = String(n(op.newP)); }
+    }
+    out.legOps = [...(p.legOps || []), rec];
+    if (out.noShort && out.noLong) { out.closed = true; out.closeDate = date; out.closePrice = ""; out.closeComision = ""; out.closeNote = [p.closeNote, "Cerrada por patas — resultado ya reservado en cada cierre"].filter(Boolean).join(" · "); }
+    return out;
+  }));
   /* cierre de posición: acciones (o ETF/collar) solo necesitan precio de venta → resultado realizado va a MTM;
      opciones necesitan precio de recompra → cash de prima va a Primas. En ambos casos la posición se marca
      "closed" pero NO se borra (así conserva su historial para Movimientos) y deja de contar en riesgo/exposición. */
@@ -9815,7 +9993,7 @@ function App() {
           </>
         ) : isBlockTab ? (
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
-            editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={reopenPos}
+            editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={reopenPos} legOp={legOp}
             onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
         ) : activeTab === "aportaciones" ? (
           <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} accounts={accounts} />
@@ -10155,9 +10333,11 @@ function App() {
                     {blk && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: blk.badge, borderRadius: 7, padding: "3px 7px" }}>B{p.block}</span>}
                     {p.closed && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>Cerrada</span>}
                     {!p.closed && isPMCC(p) && p.noShort && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "3px 7px" }}>Sin call vendida</span>}
+                    {!p.closed && isVertical(p) && p.noShort && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "3px 7px" }}>Sin pata corta</span>}
+                    {!p.closed && isVertical(p) && p.noLong && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "3px 7px" }}>Sin pata larga</span>}
                   </div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, marginTop: 4 }}>
-                    {p.broker}{isOpt && p.strike ? ` · ${p.strike}${p.right}` : ""}{p.expiry ? ` · vence ${p.expiry}` : ""}{isFinite(dte) && dte >= 0 && !p.closed ? ` (${dte}d)` : ""}
+                    {p.broker}{isOpt && p.strike ? ` · ${p.strike}${p.right}` : ""}{isVertical(p) && (p.sK || p.lK) ? ` · ${p.sK || "?"}/${p.lK || "?"}${p.right || ""}` : ""}{p.expiry ? ` · vence ${p.expiry}` : ""}{isFinite(dte) && dte >= 0 && !p.closed ? ` (${dte}d)` : ""}
                   </div>
                 </div>
                 <button onClick={() => setSheetPosId(null)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -10183,7 +10363,9 @@ function App() {
                 {canRollP && !(isPMCC(p) && p.noShort) && <ActionBtn icon="roll" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
                 {!p.closed && isPMCC(p) && p.noShort && <ActionBtn icon="roll" label="Vender call" sub="Nueva call corta sobre la long comprada" color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
                 {!p.closed && isPMCC(p) && !p.noShort && <ActionBtn icon="close" label="Expirar corta" sub="La call vendida expira sin valor · la long sigue viva" color={T.gold} tint={T.tileAmber} onClick={() => { expirePmccShort(p.id); setSheetPosId(null); }} />}
-                {canCloseP && <ActionBtn icon="close" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
+                {!p.closed && isVertical(p) && <ActionBtn icon="roll" label={p.noShort ? "Vender corta nueva" : "Pata corta"} sub={p.noShort ? "Reabrir la pata vendida días después" : "Cerrar o rolar SOLO la corta" + (p.sK ? " · strike " + p.sK : "")} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("legS")} />}
+                {!p.closed && isVertical(p) && <ActionBtn icon="shield" label={p.noLong ? "Comprar larga nueva" : "Pata larga"} sub={p.noLong ? "Reabrir la protección" : "Cerrar o rolar SOLO la larga" + (p.lK ? " · strike " + p.lK : "")} color={T.gold} tint={T.tileAmber} onClick={() => sheetDo("legL")} />}
+                {canCloseP && !(isVertical(p) && (p.noShort || p.noLong)) && <ActionBtn icon="close" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
                 {p.closed && <ActionBtn icon="reopen" label="Reabrir" sub="Deshace el cierre y vuelve a activa" onClick={() => sheetDo("reopen")} />}
                 {p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar campos de la posición cerrada" onClick={() => sheetDo("edit")} />}
                 <ActionBtn icon="🗑" danger label={sheetConfirmDel ? "¿Seguro? Se borra del todo" : "Eliminar"} sub={sheetConfirmDel ? "Esta acción no se puede deshacer" : "Borra la posición y su historial de rolls"} onClick={() => { if (!sheetConfirmDel) { setSheetConfirmDel(true); return; } delPos(p.id); setSheetPosId(null); }} />
@@ -10675,7 +10857,7 @@ function App() {
                       <WizInput label={"Spread " + (wizStrat === "Call Broken Wing" ? "call" : "put") + " (ej. 760/765)"} value={wizForm.putSpread} onChange={wizF("putSpread")} placeholder="760/765" />
                     ) : null}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                      <WizInput label="Open price $/acc · crédito cobrado" value={wizForm.prima} onChange={wizF("prima")} inputMode="decimal" />
+                      {wizStrat !== "Credit Spread" && <WizInput label="Open price $/acc · crédito cobrado" value={wizForm.prima} onChange={wizF("prima")} inputMode="decimal" />}
                       <WizInput label="Riesgo máximo $" value={wizForm.margen} onChange={wizF("margen")} inputMode="decimal" />
                     </div>
                     {/* crédito simple (Iron Fly / Credit Spread — v5.13): sin strikes; VIX opcional para trackear vol al abrir */}
@@ -10684,6 +10866,23 @@ function App() {
                         <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 5 }}>¿Put o Call credit spread?</div>
                         <Pill options={["Put", "Call"]} value={wizForm.right === "C" ? "Call" : "Put"} onChange={(v) => wizF("right")(v === "Call" ? "C" : "P")} size="sm" />
                       </label>
+                    )}
+                    {wizStrat === "Credit Spread" && (
+                      <>
+                        {/* v3.50: verticales con ciclo por pata — strike, prima y nota POR PATA; el crédito neto se calcula solo */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          <WizInput label="Strike corta (vendida)" value={wizForm.sK} onChange={wizF("sK")} inputMode="decimal" />
+                          <WizInput label="Strike larga (comprada)" value={wizForm.lK} onChange={wizF("lK")} inputMode="decimal" />
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          <WizInput label="Prima corta cobrada $/acc" value={wizForm.sP} onChange={wizF("sP")} inputMode="decimal" />
+                          <WizInput label="Prima larga pagada $/acc" value={wizForm.lP} onChange={wizF("lP")} inputMode="decimal" />
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          <WizInput label="Nota corta (opc.)" value={wizForm.sNote} onChange={wizF("sNote")} placeholder="Ej. delta 0.25" />
+                          <WizInput label="Nota larga (opc.)" value={wizForm.lNote} onChange={wizF("lNote")} placeholder="Ej. protección" />
+                        </div>
+                      </>
                     )}
                     {CREDIT_SPREAD_STRATS.has(wizStrat) && !SPREAD_STRIKE_STRATS.has(wizStrat) && (
                       <WizInput label="VIX al abrir (opcional)" value={wizForm.vix} onChange={wizF("vix")} inputMode="decimal" placeholder="Ej. 14,2" />
@@ -10694,7 +10893,7 @@ function App() {
                          no hay una fórmula única como en short put/call. No se registra en Movimientos hasta
                          el cierre, igual que una acción: al cerrar se contabiliza como recompra (Primas + MTM). */
                       const cts = parseFloat(String(wizForm.contratos || "").replace(",", "."));
-                      const pr = parseFloat(String(wizForm.prima || "").replace(",", "."));
+                      const pr = wizStrat === "Credit Spread" ? ((wizForm.sP || "") !== "" ? n(wizForm.sP) - n(wizForm.lP) : NaN) : parseFloat(String(wizForm.prima || "").replace(",", ".")); /* v3.50: en verticales el neto sale de las patas */
                       const rk = parseFloat(String(wizForm.margen || "").replace(",", "."));
                       const credit = isFinite(cts) && isFinite(pr) ? pr * cts * 100 : null;
                       const roi = credit !== null && rk ? credit / rk : null;
@@ -10709,6 +10908,11 @@ function App() {
                             <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px" }}>
                               <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>ROI (crédito/riesgo)</div>
                               <div style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{(roi * 100).toFixed(1)}%</div>
+                            </div>
+                          )}
+                          {wizStrat === "Credit Spread" && (
+                            <div style={{ gridColumn: "span 2", fontSize: 11.5, fontWeight: 700, color: T.sub, padding: "0 2px" }}>
+                              Crédito neto = prima corta − prima larga = ${isFinite(pr) ? pr.toFixed(2) : "—"}/acc
                             </div>
                           )}
                           <div style={{ gridColumn: "span 2", fontSize: 11.5, fontWeight: 700, color: T.sub, padding: "0 2px" }}>
