@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.56"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.57"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3124,6 +3124,31 @@ function LegOpsTable({ p }) {
   const openNotes = [p && p.sNote ? { leg: "Corta", note: p.sNote } : null, p && p.lNote ? { leg: "Larga", note: p.lNote } : null].filter(Boolean);
   if (!ops.length && !openNotes.length) return null;
   const actLbl = (o) => o.act === "close" ? (o.leg === "S" ? "Recompra corta" : "Venta larga") : o.act === "open" ? (o.leg === "S" ? "Venta corta" : "Compra larga") : (o.leg === "S" ? "Roll corta" : "Roll larga");
+  /* v3.57: reconstruye el precio vivo de cada pata tras cada operación (como el BEP tras cada roll de
+     puts/calls) — para close/roll, el precio ANTES se deriva de cash/fee/px (cash = (antes−px)×qty−fee
+     en la corta, (px−antes)×qty−fee en la larga); tras un close la pata queda plana (null, no aporta al
+     neto); tras un open/roll el precio vivo es el nuevo (px en open, newP en roll). */
+  const qty = n(p.qty) || 1;
+  const firstSOp = ops.find((o) => o.leg === "S");
+  const firstLOp = ops.find((o) => o.leg === "L");
+  /* precio original (antes de tocar la pata): si nunca se ha tocado, es el vivo actual p.sP/p.lP (no ha
+     cambiado); si se tocó, se deriva del cash reservado en la PRIMERA operación de esa pata — misma
+     fórmula que usa legOp para reservar (cash = (original−px)×qty−fee en la corta, (px−original)×qty−fee
+     en la larga) — así las filas ANTERIORES a esa operación muestran el neto real, no un 0 fantasma. */
+  let runS = firstSOp ? (n(firstSOp.cash) + n(firstSOp.fee)) / qty + n(firstSOp.px) : n(p.sP);
+  let runL = firstLOp ? n(firstLOp.px) - (n(firstLOp.cash) + n(firstLOp.fee)) / qty : n(p.lP);
+  const netAfter = ops.map((o) => {
+    if (o.leg === "S") {
+      if (o.act === "close") runS = null;
+      else if (o.act === "open") runS = n(o.px);
+      else if (o.act === "roll") runS = n(o.newP);
+    } else {
+      if (o.act === "close") runL = null;
+      else if (o.act === "open") runL = n(o.px);
+      else if (o.act === "roll") runL = n(o.newP);
+    }
+    return (runS != null ? runS : 0) - (runL != null ? runL : 0);
+  });
   return (
     <div style={{ marginTop: 8 }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Ciclo por pata{ops.length ? " · " + ops.length + " operación" + (ops.length === 1 ? "" : "es") : ""}</div>
@@ -3137,10 +3162,13 @@ function LegOpsTable({ p }) {
         const booked = o.cash != null;
         const net = booked ? n(o.cash) : null;
         return (
-          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, color: T.ink, padding: "3px 0", borderTop: (i || openNotes.length) ? `1px solid ${T.line}` : "none" }}>
-            <span style={{ color: T.sub, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{o.date}</span>
-            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actLbl(o)}{o.k ? " " + o.k : ""}{o.expiry ? " · " + ibkrDate(o.expiry) : ""}{o.note ? " · " + o.note : ""}</span>
-            <span style={{ fontVariantNumeric: "tabular-nums", color: booked ? (net >= 0 ? T.green : T.red) : T.sub, flexShrink: 0 }}>{booked ? (net >= 0 ? "+" : "−") + "$" + Math.abs(net).toFixed(2) : "pendiente"}</span>
+          <div key={i} style={{ borderTop: (i || openNotes.length) ? `1px solid ${T.line}` : "none", padding: "3px 0" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, color: T.ink }}>
+              <span style={{ color: T.sub, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{o.date}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actLbl(o)}{o.k ? " " + o.k : ""}{o.expiry ? " · " + ibkrDate(o.expiry) : ""}{o.note ? " · " + o.note : ""}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums", color: booked ? (net >= 0 ? T.green : T.red) : T.sub, flexShrink: 0 }}>{booked ? (net >= 0 ? "+" : "−") + "$" + Math.abs(net).toFixed(2) : "pendiente"}</span>
+            </div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.sub, marginTop: 1 }}>Neto en juego tras esto: <span style={{ color: netAfter[i] >= 0 ? T.ink : T.red }}>${netAfter[i].toFixed(2)}</span>/acc</div>
           </div>
         );
       })}
@@ -4387,6 +4415,11 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 </div>
                 <button onClick={() => setLegSheet(null)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
               </div>
+              {((p.legOps || []).length > 0 || p.sNote || p.lNote) && (
+                <div style={{ background: T.tile, borderRadius: 14, padding: "10px 12px", marginTop: 10, marginBottom: 4 }}>
+                  <LegOpsTable p={p} />
+                </div>
+              )}
               {!legClosed && (
                 <div style={{ margin: "10px 0 4px" }}>
                   <Pill options={modes.map((m) => m[1])} value={(modes.find((m) => m[0] === legMode) || modes[0])[1]} onChange={(v) => setLegMode((modes.find((m) => m[1] === v) || modes[0])[0])} size="sm" />
@@ -4541,6 +4574,9 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 )}
                 {!pmcc && !closeExercised && <WizInput label={isCreditSpread(p) ? "Close price $/acc" : (opt ? "Precio recompra $/acc" : "Precio venta $/acc")} value={closePriceV} onChange={setClosePriceV} placeholder={opt ? "0 si expira sin valor" : "$"} inputMode="decimal" />}
                 {!pmcc && <WizInput label={closeExercised ? "Comisión asignación" : "Comisión de cierre"} value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />}
+                {!pmcc && !closeExercised && opt && shortSide && (
+                  <button type="button" onClick={() => { setClosePriceV("0"); setCloseComisionV("0"); }} style={{ gridColumn: "span 2", background: T.tileAmber, border: "none", borderRadius: 12, padding: "10px 0", fontSize: 13, fontWeight: 800, color: T.gold, cursor: "pointer" }}>Expira sin valor · $0, sin comisión</button>
+                )}
                 {pmcc && (
                   <>
                     {!p.noShort && (
@@ -8992,6 +9028,8 @@ function App() {
   /* ===== asistente "Nueva posición" (botón + flotante) ===== */
   const [sheetPosId, setSheetPosId] = useState(null);
   const [sheetConfirmDel, setSheetConfirmDel] = useState(false);
+  const [expPmccOpen, setExpPmccOpen] = useState(false); // v3.57: revela el campo de nota antes de confirmar "Expirar corta"
+  const [expPmccNote, setExpPmccNote] = useState("");
   const [pendingAction, setPendingAction] = useState(null); // { id, action: 'roll'|'close' }
   const [editChainId, setEditChainId] = useState(null); // id de la posición cuya cadena (aperturas/rolls/cierre) se edita
   const editChainPos = editChainId ? positions.find((x) => x.id === editChainId) : null;
@@ -9002,7 +9040,7 @@ function App() {
   const editDivPos = editDivId ? positions.find((x) => x.id === editDivId) : null;
   const savePositionEdit = (next) => setPositions((ps) => ps.map((p) => (p.id === next.id ? next : p)));
   const sheetPos = sheetPosId ? positions.find((x) => x.id === sheetPosId) : null;
-  const openSheet = (p) => { setSheetPosId(p.id); setSheetConfirmDel(false); };
+  const openSheet = (p) => { setSheetPosId(p.id); setSheetConfirmDel(false); setExpPmccOpen(false); setExpPmccNote(""); };
   const sheetDo = (action) => {
     if (!sheetPos) return;
     if (action === "edit") { setEditSet((s) => new Set(s).add(sheetPos.id)); }
@@ -9257,12 +9295,12 @@ function App() {
      sigue abierta solo con la long. Registra la expiración en la cadena (pata expiredShort, $0), vacía
      strike/expiry (así sale de Vencimientos) y marca noShort. Fecha: el propio vencimiento si ya pasó,
      hoy si no. El crédito cobrado no se toca (ya vive en p.prima). */
-  const expirePmccShort = (id) => {
+  const expirePmccShort = (id, note) => {
     setPositions((ps) => ps.map((p) => {
       if (p.id !== id || !isPMCC(p) || p.closed || p.noShort) return p;
       const today = new Date().toISOString().slice(0, 10);
       const d = p.expiry && p.expiry <= today ? p.expiry : today;
-      const leg = { date: d, prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima, buybackCost: 0, newCredit: 0, comision: 0, ivr: "", note: "", expiredShort: true };
+      const leg = { date: d, prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima, buybackCost: 0, newCredit: 0, comision: 0, ivr: "", note: (note || "").trim(), expiredShort: true };
       return { ...p, rollChain: [...(p.rollChain || []), leg], strike: "", expiry: "", noShort: true };
     }));
   };
@@ -10379,7 +10417,17 @@ function App() {
                 {!p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar cualquier campo de la posición" onClick={() => sheetDo("edit")} />}
                 {canRollP && !(isPMCC(p) && p.noShort) && <ActionBtn icon="roll" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
                 {!p.closed && isPMCC(p) && p.noShort && <ActionBtn icon="roll" label="Vender call" sub="Nueva call corta sobre la long comprada" color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
-                {!p.closed && isPMCC(p) && !p.noShort && <ActionBtn icon="close" label="Expirar corta" sub="La call vendida expira sin valor · la long sigue viva" color={T.gold} tint={T.tileAmber} onClick={() => { expirePmccShort(p.id); setSheetPosId(null); }} />}
+                {!p.closed && isPMCC(p) && !p.noShort && !expPmccOpen && <ActionBtn icon="close" label="Expirar corta" sub="La call vendida expira sin valor · la long sigue viva" color={T.gold} tint={T.tileAmber} onClick={() => setExpPmccOpen(true)} />}
+                {!p.closed && isPMCC(p) && !p.noShort && expPmccOpen && (
+                  <div style={{ background: T.tileAmber, borderRadius: 14, padding: "12px 14px", display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.gold }}>La call vendida expira sin valor · $0, sin comisión</div>
+                    <WizInput label="Nota (opc.)" value={expPmccNote} onChange={setExpPmccNote} placeholder="Ej. cerró OTM, seguirá con la long" />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => { setExpPmccOpen(false); setExpPmccNote(""); }} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, color: T.ink, cursor: "pointer" }}>Cancelar</button>
+                      <button onClick={() => { expirePmccShort(p.id, expPmccNote); setExpPmccOpen(false); setExpPmccNote(""); setSheetPosId(null); }} style={{ flex: 1, background: T.gold, border: "none", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, color: "#fff", cursor: "pointer" }}>Confirmar</button>
+                    </div>
+                  </div>
+                )}
                 {!p.closed && isVertical(p) && <ActionBtn icon="roll" label={p.noShort ? "Vender corta nueva" : "Pata corta"} sub={p.noShort ? "Reabrir la pata vendida días después" : "Cerrar o rolar SOLO la corta" + (p.sK ? " · strike " + p.sK : "")} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("legS")} />}
                 {!p.closed && isVertical(p) && <ActionBtn icon="shield" label={p.noLong ? "Comprar larga nueva" : "Pata larga"} sub={p.noLong ? "Reabrir la protección" : "Cerrar o rolar SOLO la larga" + (p.lK ? " · strike " + p.lK : "")} color={T.gold} tint={T.tileAmber} onClick={() => sheetDo("legL")} />}
                 {canCloseP && !(isVertical(p) && (p.noShort || p.noLong)) && <ActionBtn icon="close" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
