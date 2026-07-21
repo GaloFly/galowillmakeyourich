@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.52"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.56"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -247,8 +247,8 @@ const natsForBlock = (block) => {
 const STRATS = {
   0: ["Treasury ETF", "Money Market", "Cash"],
   1: ["Long Stock", "Short Put", "Covered Call", "Collar"],
-  2: ["Long Stock", "Short Put", "Covered Call", "Diagonal", "PMCC", "Long Call", "Credit Spread"], /* v3.51: verticales también en B2 */
-  3: ["Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Credit Spread"],
+  2: ["Long Stock", "Short Put", "Covered Call", "Diagonal", "PMCC", "Long Call", "Spread"], /* v3.51: verticales también en B2; v3.53: renombrado "Credit Spread"→"Spread" */
+  3: ["Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Spread"], /* v3.53: renombrado "Credit Spread"→"Spread" */
 };
 const natFromStrat = (strat) => {
   const t = (strat || "").toLowerCase();
@@ -398,10 +398,11 @@ const showsUnitPremium = (p) => isCreditSpread(p) || isGenericDebitPos(p);
    · Iron Condor / Broken Wings → llevan campos de spread de strikes (put/call).
    · Iron Fly (Iron Butterfly) → crédito "simple" (v5.12): sin campos de strikes, solo open price + riesgo
      + fee + VIX opcional para trackear. Se contabiliza igual (crédito al cierre). */
-const CREDIT_SPREAD_STRATS = new Set(["Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Iron Fly", "Credit Spread"]); /* v1.06: Earnings = calco de Iron Condor con etiqueta propia */
+const CREDIT_SPREAD_STRATS = new Set(["Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Iron Fly", "Credit Spread", "Spread"]); /* v1.06: Earnings = calco de Iron Condor con etiqueta propia; v3.53: +Spread (renombre de Credit Spread) */
+const isSpreadTipo = (t) => t === "Spread" || t === "Credit Spread"; /* v3.53: acepta el nombre nuevo y el viejo (posiciones ya guardadas) */
 const SPREAD_STRIKE_STRATS = new Set(["Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing"]); // credit spreads con campos de strikes
 const hasSpreadStrikes = (p) => SPREAD_STRIKE_STRATS.has((p && p.tipo) || p);
-const csAbbr = (tipo) => (tipo === "Iron Condor" ? "IC" : tipo === "Earnings" ? "ER" : tipo === "Iron Fly" ? "IF" : tipo === "Credit Spread" ? "CS" : "BW");
+const csAbbr = (tipo) => (tipo === "Iron Condor" ? "IC" : tipo === "Earnings" ? "ER" : tipo === "Iron Fly" ? "IF" : isSpreadTipo(tipo) ? "SP" : "BW"); /* v3.53: SP en vez de CS — ya no siempre es crédito */
 const isCreditSpread = (p) => natOf(p) === "DEF" && CREDIT_SPREAD_STRATS.has(p.tipo);
 /* v1.63: un Iron Condor / Earnings / Broken Wing / Credit Spread COBRA prima — es una estrategia de
    CRÉDITO, y llamarla "Débito" en la tarjeta y en el editor era sencillamente falso. El id interno sigue
@@ -414,10 +415,11 @@ const natsForPos = (p) => natsForBlock(p.block).map((x) => (x.id === "DEF" && CR
 /* crédito "simple" (v5.13): Iron Fly y Credit Spread — credit spread sin campos de strikes, formulario
    mínimo (open price + riesgo + fee + VIX opcional). Comparten el flujo de entrada de Iron Fly. */
 const isSimpleCredit = (p) => isCreditSpread(p) && !hasSpreadStrikes(p);
-/* v3.50: vertical de 2 patas (Credit Spread) con ciclo por pata — la corta y la larga se cierran/rolan/
-   reabren por separado (p.legOps); p.prima pasa a ser el crédito NETO ACUMULADO de todas las operaciones
-   por pata y las comisiones de esas operaciones van a p.legFees (se restan del realizado al cerrar). */
-const isVertical = (p) => !!p && p.tipo === "Credit Spread";
+/* v3.50/v3.53: verticales de 2 patas (antes "Credit Spread", ahora "Spread") con ciclo por pata — la
+   corta y la larga se cierran/rolan/reabren por separado (p.legOps); el resultado de cada cierre se
+   reserva en su momento (v3.52). Puede resultar en crédito o en débito neto según las primas entradas;
+   la app lo calcula sola, no se elige a mano. */
+const isVertical = (p) => !!p && isSpreadTipo(p.tipo); /* v3.53: "Credit Spread" se renombra a "Spread" (acepta ambos nombres) */
 /* v3.52: cada cierre/roll de pata se REALIZA en el momento (booked), no se espera al cierre total.
    Abrir una pata nueva a crédito NO se apunta hasta que esa pata a su vez se cierre — igual que la
    apertura original de un credit spread nunca se registraba hasta cerrar. p.legOps guarda cash!=null
@@ -428,6 +430,9 @@ const vHasLegData = (p) => isVertical(p) && (p.sK || p.lK || p.sP || p.lP);
 const vPendingNet = (p) => (p.noShort ? 0 : n(p.sP)) - (p.noLong ? 0 : n(p.lP));
 const vBookedSum = (p) => (p.legOps || []).reduce((s, o) => s + (o.cash != null ? n(o.cash) : 0), 0);
 const vDisplayPrima = (p) => (vHasLegData(p) ? vPendingNet(p) : n(p.prima)); /* crédito de las patas vivas, o el p.prima manual en posiciones antiguas sin datos por pata */
+/* v3.54: "Spread" se muestra como "Credit Spread" / "Debit Spread" según el signo de vDisplayPrima —
+   Victor: llamarlas así en vez de "Spread de crédito/débito", calculado igual (restar sP − lP) */
+const tipoChipLabel = (p) => (isVertical(p) ? (p.right === "C" ? "Call " : "Put ") + (vDisplayPrima(p) >= 0 ? "Credit Spread" : "Debit Spread") : p.tipo);
 /* ---------- v1.19: riesgo de cóndores (Earnings / Iron Condor) ----------
    El riesgo máximo de un cóndor está definido por estructura: (ancho del ala mayor − crédito) × 100.
    Solo un lado puede perder, por eso manda el ala más ancha si son asimétricas. */
@@ -465,7 +470,10 @@ const condorValueAt = (S, spK, lpK, scK, lcK) => {
 const popSmooth = (M, X) => (isFinite(M) && M > 0 && isFinite(X) && X >= 0 && X <= M ? (M - X + 1) / (M + 2) : NaN);
 /* agrupación VISUAL en el asistente: los credit spreads (IC/Broken Wings) se listan bajo "Crédito"
    porque cobran prima, aunque internamente sigan siendo nat=DEF (riesgo manual, sin prima hasta cierre,
-   sin rolls). Esta función solo decide bajo qué botón del paso 2 aparece cada estrategia. */
+   sin rolls). Esta función solo decide bajo qué botón del paso 2 aparece cada estrategia por defecto.
+   v3.55: "Spread" (antes "Credit Spread") puede salir en crédito o en débito según las primas que se
+   metan luego, así que en el paso 2 se muestra bajo AMBOS botones (Crédito y Débito) — ver el filtro
+   extra en el render de la lista de estrategias, no aquí. */
 const wizNatOfStrat = (s) => (CREDIT_SPREAD_STRATS.has(s) ? "CRED" : natFromStrat(s));
 /* ---------- DC/DD (Double Calendar / Double Diagonal) — v5.08 ----------
    Contablemente siguen siendo débito genérico (prima = débito total $/acc = spread put + spread call,
@@ -1042,9 +1050,9 @@ function mapLegsToWizForm(result, wizStrat) {
     const sp = pick("P", true), lp = pick("P", false), sc = pick("C", true), lc = pick("C", false);
     const spreadStr = (a, b) => (a && a.strike && b && b.strike ? a.strike + "/" + b.strike : "");
     const putSp = spreadStr(sp, lp), callSp = spreadStr(sc, lc);
-    if (wizStrat === "Call Broken Wing" || (wizStrat === "Credit Spread" && sc)) { if (callSp) out.putSpread = callSp; if (sc) out.right = "C"; }
+    if (wizStrat === "Call Broken Wing" || (isSpreadTipo(wizStrat) && sc)) { if (callSp) out.putSpread = callSp; if (sc) out.right = "C"; }
     else if (putSp && callSp) { out.putSpread = putSp; out.callSpread = callSp; }
-    else if (putSp) { out.putSpread = putSp; if (wizStrat === "Credit Spread") out.right = "P"; }
+    else if (putSp) { out.putSpread = putSp; if (isSpreadTipo(wizStrat)) out.right = "P"; }
     else if (callSp) { out[wizStrat === "Iron Condor" || wizStrat === "Earnings" ? "callSpread" : "putSpread"] = callSp; }
     const soldSum = [sp, sc].filter(Boolean).reduce((t, l) => t + n(l.price), 0);
     const boughtSum = [lp, lc].filter(Boolean).reduce((t, l) => t + n(l.price), 0);
@@ -1121,9 +1129,9 @@ const optionDetail = (p) => {
   }
   if (isCreditSpread(p)) {
     /* Credit Spread simple (v5.13): sin strikes — la descripción es el lado (Put/Call) + expiry si hay */
-    if (p.tipo === "Credit Spread") {
-      const stk = (p.sK || p.lK) ? " " + [p.sK, p.lK].filter(Boolean).join("/") : ""; /* v3.50: strikes corta/larga */
-      const side = (p.right === "C" ? "Call" : "Put") + " credit spread" + stk;
+    if (isSpreadTipo(p.tipo)) {
+      const stk = (p.sK || p.lK) ? " " + [p.sK, p.lK].filter(Boolean).join("/") : ""; /* strikes corta/larga */
+      const side = tipoChipLabel(p) + stk; /* v3.54: "Call/Put Credit Spread" o "Debit Spread" según sP−lP */
       return p.expiry ? `${side} · ${ibkrDate(p.expiry)}` : side;
     }
     /* credit spread: la descripción son los spreads de strikes (put y/o call), no un único strike.
@@ -3113,16 +3121,23 @@ function SwipeDelete({ onDelete, disabled, radius, children }) {
    porque ese crédito no se apunta hasta que esa pata se cierre a su vez. */
 function LegOpsTable({ p }) {
   const ops = (p && p.legOps) || [];
-  if (!ops.length) return null;
+  const openNotes = [p && p.sNote ? { leg: "Corta", note: p.sNote } : null, p && p.lNote ? { leg: "Larga", note: p.lNote } : null].filter(Boolean);
+  if (!ops.length && !openNotes.length) return null;
   const actLbl = (o) => o.act === "close" ? (o.leg === "S" ? "Recompra corta" : "Venta larga") : o.act === "open" ? (o.leg === "S" ? "Venta corta" : "Compra larga") : (o.leg === "S" ? "Roll corta" : "Roll larga");
   return (
     <div style={{ marginTop: 8 }}>
-      <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Ciclo por pata · {ops.length} operación{ops.length === 1 ? "" : "es"}</div>
+      <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Ciclo por pata{ops.length ? " · " + ops.length + " operación" + (ops.length === 1 ? "" : "es") : ""}</div>
+      {openNotes.map((o, i) => (
+        <div key={"open" + i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, color: T.ink, padding: "3px 0", borderTop: i ? `1px solid ${T.line}` : "none" }}>
+          <span style={{ color: T.sub, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{p.entryDate || ""}</span>
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Apertura {o.leg} · {o.note}</span>
+        </div>
+      ))}
       {ops.map((o, i) => {
         const booked = o.cash != null;
         const net = booked ? n(o.cash) : null;
         return (
-          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, color: T.ink, padding: "3px 0", borderTop: i ? `1px solid ${T.line}` : "none" }}>
+          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, color: T.ink, padding: "3px 0", borderTop: (i || openNotes.length) ? `1px solid ${T.line}` : "none" }}>
             <span style={{ color: T.sub, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{o.date}</span>
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actLbl(o)}{o.k ? " " + o.k : ""}{o.expiry ? " · " + ibkrDate(o.expiry) : ""}{o.note ? " · " + o.note : ""}</span>
             <span style={{ fontVariantNumeric: "tabular-nums", color: booked ? (net >= 0 ? T.green : T.red) : T.sub, flexShrink: 0 }}>{booked ? (net >= 0 ? "+" : "−") + "$" + Math.abs(net).toFixed(2) : "pendiente"}</span>
@@ -3144,7 +3159,7 @@ function RollChainTable({ p }) {
   const noRet = cs || dcdd;
   /* etiqueta de la pata: en credit spreads no es CALL/PUT sino la propia estrategia (IC = Iron Condor,
      BW = Broken Wing), porque cada "pata" es en realidad el spread completo abierto/cerrado de una vez. */
-  const rightLabel = cs ? csAbbr(p.tipo) : (p.right === "C" ? "CALL" : "PUT");
+  const rightLabel = cs ? (isVertical(p) ? (vDisplayPrima(p) >= 0 ? "CS" : "DS") : csAbbr(p.tipo)) : (p.right === "C" ? "CALL" : "PUT");
   /* strikes que se muestran en la columna Strike: en IC los dos spreads APILADOS en dos mini-filas dentro
      de la misma celda (v5.00 — en una sola línea desbordaban la columna y pisaban el Expiry); en broken
      wing, el único spread. Fuente mucho más pequeña que la de un strike normal. */
@@ -3749,7 +3764,7 @@ function PosSummaryCard({ p, onClose }) {
             <div style={{ fontSize: 10, fontWeight: 800, color: T.green, textTransform: "uppercase", letterSpacing: 0.5 }}>{p.exercised ? "Posición asignada" : "Posición cerrada"}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
               <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>{p.tkr || "\u2014"}</span>
-              {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 6px" }}>{p.tipo}</span>}
+              {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 6px" }}>{tipoChipLabel(p)}</span>}
               {detail && <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{detail}</span>}
             </div>
             <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{ibkrDate(p.entryDate)}{p.closeDate ? " \u2192 " + ibkrDate(p.closeDate) : ""}</div>
@@ -3911,7 +3926,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.tkr || (cash ? "Cash" : "Sin ticker")}</span>
-              {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{p.tipo}</span>}
+              {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{tipoChipLabel(p)}</span>}
               {detail && <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{detail}</span>}
               {rollChain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{rollChain.length}</span>}
               {p.closed && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>Cerrada</span>}
@@ -3990,7 +4005,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <input type="date" value={p.entryDate || ""} onChange={(e) => onChange("entryDate")(e.target.value)}
               style={{ width: "100%", boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: p.entryDate ? T.ink : T.sub, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none" }} />
           </div>
-          <SelectField label="Estrategia" value={p.tipo} options={STRATS[p.block] || []} span={2}
+          <SelectField label="Estrategia" value={p.tipo} options={Array.from(new Set([...(STRATS[p.block] || []), ...(p.tipo ? [p.tipo] : [])]))} span={2}
             onChange={(val) => { onChange("tipo")(val); const newNat = natFromStrat(val); onChange("nat")(newNat); if (newNat === "CASH") onChange("tkr")("CASH"); if (newNat === "CRED") onChange("right")(val.toLowerCase().includes("call") ? "C" : "P"); }} />
           {!cash && (isOptionNat(p) ? (
             <EditField label="Cantidad (contratos)" span={2}
@@ -4060,21 +4075,22 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             ) : (
               /* crédito simple (v5.13): Iron Fly (sin lado) y Credit Spread (con selector Put/Call) */
               <>
-                {p.tipo === "Credit Spread" && (
+                {isSpreadTipo(p.tipo) && (
                   <label style={{ gridColumn: "span 2" }}>
-                    <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Put o Call credit spread?</span>
+                    <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Put o Call spread?</span>
                     <Pill options={["Put", "Call"]} value={p.right === "C" ? "Call" : "Put"} onChange={(v) => onChange("right")(v === "Call" ? "C" : "P")} size="sm" />
                   </label>
                 )}
-                {p.tipo === "Credit Spread" && (
+                {isSpreadTipo(p.tipo) && (
                   <>
-                    {/* v3.50: campos por pata del vertical; la prima de arriba es el NETO ACUMULADO (la ajustan las operaciones por pata) */}
+                    {/* campos por pata del vertical; crédito o débito se calcula solo a partir de sP/lP */}
                     <EditField label="Strike corta" value={p.sK} onChange={onChange("sK")} />
                     <EditField label="Strike larga" value={p.lK} onChange={onChange("lK")} />
                     <EditField label="Prima corta $/acc" prefix="$" value={p.sP} onChange={onChange("sP")} />
                     <EditField label="Prima larga $/acc" prefix="$" value={p.lP} onChange={onChange("lP")} />
-                    <EditField label="Nota corta" value={p.sNote} onChange={onChange("sNote")} />
-                    <EditField label="Nota larga" value={p.lNote} onChange={onChange("lNote")} />
+                    {/* v3.56: quitadas las notas editables de corta/larga aquí — la nota solo tiene sentido
+                        ligada a un momento concreto: la de apertura (wizard, p.sNote/p.lNote) o la de cada
+                        cierre/roll de pata (campo Nota de la hoja de pata, guardada en legOps) */}
                     <div style={{ gridColumn: "span 2" }}><LegOpsTable p={p} /></div>
                   </>
                 )}
@@ -4367,7 +4383,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />{title}</div>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{(p.right === "C" ? "Call" : "Put") + " credit spread"}{curK ? " · strike " + curK : ""}{p.expiry ? " · vence " + p.expiry : ""} · solo esta pata; la otra no se toca</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{tipoChipLabel(p)}{curK ? " · strike " + curK : ""}{p.expiry ? " · vence " + p.expiry : ""} · solo esta pata; la otra no se toca</div>
                 </div>
                 <button onClick={() => setLegSheet(null)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
               </div>
@@ -4488,7 +4504,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                   <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>✕ Cerrar {p.tkr || "posición"}</div>
                   {/* descripción clara de qué posición se cierra (v5.13): tipo + strikes/spreads/expiry + nº contratos */}
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-                    {p.tipo && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>{p.tipo}</span>}
+                    {p.tipo && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>{tipoChipLabel(p)}</span>}
                     {optionDetail(p) && <span style={{ fontSize: 12, fontWeight: 700, color: T.ink }}>{optionDetail(p)}</span>}
                     <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>× {Number.isInteger(n(p.qty) / 100) && opt ? n(p.qty) / 100 + " contr." : n(p.qty) + (opt ? " opc" : " acc")}</span>
                   </div>
@@ -4855,7 +4871,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
         /* credit spreads (v5.00): la etiqueta de las patas en Primas/MTM pasa a ser la abreviatura de la
            estrategia (IC / BW) + vencimiento — la ristra "715/720 · 760/765" no cabía y se truncaba;
            los strikes completos siguen visibles en Estrategias y en la cadena de la posición. */
-        const stkLbl = isCreditSpread(p) ? (csAbbr(p.tipo) + (p.tipo === "Credit Spread" ? " " + (p.right === "C" ? "Call" : "Put") : "")) : isGenericDebitPos(p) ? (p.tipo || "Débito") : strikeStr(p.strike) + (p.right || "");
+        const stkLbl = isCreditSpread(p) ? ((isVertical(p) ? (vDisplayPrima(p) >= 0 ? "CS" : "DS") : csAbbr(p.tipo)) + (isSpreadTipo(p.tipo) ? " " + (p.right === "C" ? "Call" : "Put") : "")) : isGenericDebitPos(p) ? (p.tipo || "Débito") : strikeStr(p.strike) + (p.right || "");
         const expLbl = p.expiry ? " " + ibkrDate(p.expiry) : "";
         /* credit spreads (Iron Condor / Broken Wings): la prima cobrada NO se registró al abrir, así que
            el cierre materializa el NETO = (prima cobrada − recompra) × qty − fee, como un MTM. Si solo se
@@ -4990,7 +5006,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const monthLabel = (key) => { if (key === "sin-fecha") return "Sin fecha"; const [y, m] = key.split("-"); return MESES[Number(m) - 1] + " " + y; };
 
   /* ---------- Estrategias: todas las posiciones archivadas por tipo ---------- */
-  const STRAT_CATS = ["Acciones", "Covered Calls", "Short Puts", "Long Calls", "PMCC", "Diagonal", "Iron Condor", "Earnings", "Iron Fly", "Iron Man", "Credit Spreads", "Broken Wings", "DC/DD", "Otras"];
+  const STRAT_CATS = ["Acciones", "Covered Calls", "Short Puts", "Long Calls", "PMCC", "Diagonal", "Iron Condor", "Earnings", "Iron Fly", "Iron Man", "Spreads", "Broken Wings", "DC/DD", "Otras"]; /* v3.53: "Credit Spreads" -> "Spreads" */
   const categoryOf = (p) => {
     const t = (p.tipo || "").toLowerCase();
     if (isCashNat(p)) return null; // cash no es una estrategia
@@ -5008,8 +5024,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     /* cualquier opción corta (nat Crédito) de CUALQUIER bloque cae en su estrategia por el right,
        aunque la etiqueta de estrategia esté vacía o sea otra: P → Short Puts, C → Covered Calls */
     if (natOf(p) === "CRED") return p.right === "C" ? "Covered Calls" : "Short Puts";
-    /* v1.63: Credit Spread y Broken Wings COBRAN prima — no son débitos y no pintan nada en "Otras" */
-    if (t === "credit spread") return "Credit Spreads";
+    /* v1.63: Credit Spread/Spread y Broken Wings COBRAN (o pagan) una prima neta — no son débitos genéricos
+       y no pintan nada en "Otras"; v3.53: acepta el nombre nuevo "spread" y el viejo "credit spread" */
+    if (t === "credit spread" || t === "spread") return "Spreads";
     if (t.includes("broken wing")) return "Broken Wings";
     return "Otras"; /* solo débitos genéricos */
   };
@@ -6011,7 +6028,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink }}>{p.tkr || "—"}</span>
-                      {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{p.tipo}</span>}
+                      {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{tipoChipLabel(p)}</span>}
                       {isOpt && optionDetail(p) && <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{optionDetail(p)}</span>}
                       {blk && <span style={{ fontSize: 9.5, fontWeight: 800, color: blk.color, background: blk.bg, borderRadius: 6, padding: "2px 5px" }}>{blk.name.replace("Bloque ", "B")}</span>}
                       {chain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{chain.length}</span>}
@@ -6039,7 +6056,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
                           <div>
                             <div style={{ fontSize: 24, fontWeight: 800, color: (csPending ? csCredit : primaBasis) >= 0 ? T.ink : T.red, letterSpacing: -0.5 }}>{signMoney(csPending ? csCredit : primaBasis)}</div>
-                            <div style={{ fontSize: 11, color: T.sub, fontWeight: 500 }}>{csPending ? "Crédito pendiente (no registrado hasta el cierre)" : noOpenBooked ? (p.closed ? "P&L realizado" : "Prima acumulada") : "Prima acumulada"}</div>
+                            <div style={{ fontSize: 11, color: T.sub, fontWeight: 500 }}>{csPending ? (csCredit >= 0 ? "Crédito" : "Débito") + " pendiente (no registrado hasta el cierre)" : noOpenBooked ? (p.closed ? "P&L realizado" : "Prima acumulada") : "Prima acumulada"}</div>
                           </div>
                           <div style={{ textAlign: "right" }}>
                             <div style={{ fontSize: 24, fontWeight: 800, color: isFinite(romAnn) && romAnn >= 0 ? T.green : T.red, letterSpacing: -0.5 }}>{fmtPct2(romAnn)}</div>
@@ -6047,7 +6064,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                           </div>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-                          <MiniStat label={csPending ? "ROI potencial (crédito/riesgo)" : isCreditSpread(p) ? "ROI (P&L/riesgo)" : "ROI (prima/riesgo)"} value={fmtPct2(rom)} color={isFinite(rom) && rom >= 0 ? T.green : T.red} size={18} />
+                          <MiniStat label={csPending ? "ROI potencial (" + (csCredit >= 0 ? "crédito" : "débito") + "/riesgo)" : isCreditSpread(p) ? "ROI (P&L/riesgo)" : "ROI (prima/riesgo)"} value={fmtPct2(rom)} color={isFinite(rom) && rom >= 0 ? T.green : T.red} size={18} />
                           <div style={{ display: "flex", gap: 14, background: T.card, borderRadius: 12, padding: "8px 12px", flexShrink: 0 }}>
                             <div style={{ textAlign: "center" }}>
                               <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>Riesgo</div>
@@ -9124,7 +9141,7 @@ function App() {
       id: newId(), block: wizBlock, broker: f.broker, tkr: effNat === "CASH" ? "CASH" : (f.tkr || "").toUpperCase().trim(),
       tipo: wizStrat, nat: effNat, right, earnIn,
       strike: f.strike || "", expiry: f.expiry || "", qty: effNat === "CASH" ? "" : qty,
-      bep: (effNat === "CASH" || isLongCall || isPMCCw || CREDIT_SPREAD_STRATS.has(wizStrat)) ? "" : (f.bep || ""), prima: isLongCall ? (isFinite(lcPrimaPS) ? String(lcPrimaPS) : "") : isPMCCw ? (isFinite(pmShortPS) ? String(pmShortPS) : "") : isDCDDw ? (dcNet ? String(dcNet) : "") : (wizStrat === "Credit Spread" && (f.sP || "") !== "" ? String(n(f.sP) - n(f.lP)) : (f.prima || "")), comision: isDCDDw ? String((absPf(f.comision)) + dcFees) : (f.comision || ""), ivr: f.ivr || "",
+      bep: (effNat === "CASH" || isLongCall || isPMCCw || CREDIT_SPREAD_STRATS.has(wizStrat)) ? "" : (f.bep || ""), prima: isLongCall ? (isFinite(lcPrimaPS) ? String(lcPrimaPS) : "") : isPMCCw ? (isFinite(pmShortPS) ? String(pmShortPS) : "") : isDCDDw ? (dcNet ? String(dcNet) : "") : (isSpreadTipo(wizStrat) && (f.sP || "") !== "" ? String(n(f.sP) - n(f.lP)) : (f.prima || "")), comision: isDCDDw ? String((absPf(f.comision)) + dcFees) : (f.comision || ""), ivr: f.ivr || "",
       last: "", mktValue: effNat === "CASH" ? (f.mktValue || "") : "", riesgo: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (nat === "DEF" ? (f.margen || "") : ""),
       factor, margen: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (f.margen || ""),
       margenPct: effNat === "ACC" || effNat === "CASH" ? (f.margenPct || "") : "100",
@@ -9139,7 +9156,7 @@ function App() {
       callSpread: (wizStrat === "Iron Condor" || wizStrat === "Earnings") ? (f.callSpread || "") : "",
       vix: (CREDIT_SPREAD_STRATS.has(wizStrat) && !SPREAD_STRIKE_STRATS.has(wizStrat)) ? (f.vix || "") : "", /* crédito simple (v5.13): VIX de apertura */
       /* v3.50: verticales (Credit Spread) — pata corta y larga con vida propia */
-      ...(wizStrat === "Credit Spread" ? { sK: f.sK || "", lK: f.lK || "", sP: f.sP || "", lP: f.lP || "", sNote: (f.sNote || "").trim(), lNote: (f.lNote || "").trim(), legOps: [], legFees: 0 } : {}),
+      ...(isSpreadTipo(wizStrat) ? { sK: f.sK || "", lK: f.lK || "", sP: f.sP || "", lP: f.lP || "", sNote: (f.sNote || "").trim(), lNote: (f.lNote || "").trim(), legOps: [] } : {}),
       /* ficha DC/DD 4 patas (v5.09): short/long put + short/long call, cada una con strike/prima/fee */
       dcdd: isDCDDw ? {
         expiryLong: f.dcExpiryLong || "",
@@ -10329,7 +10346,7 @@ function App() {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 20, fontWeight: 800, color: T.ink }}>{p.tkr || "Sin ticker"}</span>
-                    {p.tipo && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>{p.tipo}</span>}
+                    {p.tipo && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>{tipoChipLabel(p)}</span>}
                     {blk && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: blk.badge, borderRadius: 7, padding: "3px 7px" }}>B{p.block}</span>}
                     {p.closed && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>Cerrada</span>}
                     {!p.closed && isPMCC(p) && p.noShort && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "3px 7px" }}>Sin call vendida</span>}
@@ -10422,10 +10439,10 @@ function App() {
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Estrategia</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {(STRATS[wizBlock] || []).filter((s) => wizNatOfStrat(s) === wizNat).map((s) => (
+                      {(STRATS[wizBlock] || []).filter((s) => wizNatOfStrat(s) === wizNat || (isSpreadTipo(s) && wizNat === "DEF")).map((s) => (
                         <button key={s} onClick={() => { setWizStrat(s); setWizSub(1); setWizStep(3); }} style={{ background: T.tile, border: "none", borderRadius: 20, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: T.ink, cursor: "pointer" }}>{s}</button>
                       ))}
-                      {(STRATS[wizBlock] || []).filter((s) => wizNatOfStrat(s) === wizNat).length === 0 && (
+                      {(STRATS[wizBlock] || []).filter((s) => wizNatOfStrat(s) === wizNat || (isSpreadTipo(s) && wizNat === "DEF")).length === 0 && (
                         <button onClick={() => { setWizStrat(wizNat === "ACC" ? "Long Stock" : wizNat === "CASH" ? "Cash" : ""); if (wizNat === "CASH") setWizForm((f) => ({ ...f, tkr: "CASH" })); setWizStep(3); }} style={{ background: T.tile, border: "none", borderRadius: 20, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Continuar</button>
                       )}
                     </div>
@@ -10857,19 +10874,19 @@ function App() {
                       <WizInput label={"Spread " + (wizStrat === "Call Broken Wing" ? "call" : "put") + " (ej. 760/765)"} value={wizForm.putSpread} onChange={wizF("putSpread")} placeholder="760/765" />
                     ) : null}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                      {wizStrat !== "Credit Spread" && <WizInput label="Open price $/acc · crédito cobrado" value={wizForm.prima} onChange={wizF("prima")} inputMode="decimal" />}
+                      {!isSpreadTipo(wizStrat) && <WizInput label="Open price $/acc · crédito cobrado" value={wizForm.prima} onChange={wizF("prima")} inputMode="decimal" />}
                       <WizInput label="Riesgo máximo $" value={wizForm.margen} onChange={wizF("margen")} inputMode="decimal" />
                     </div>
-                    {/* crédito simple (Iron Fly / Credit Spread — v5.13): sin strikes; VIX opcional para trackear vol al abrir */}
-                    {wizStrat === "Credit Spread" && (
+                    {/* crédito o débito simple (Iron Fly / Spread — v5.13): sin strikes de ala; VIX opcional para trackear vol al abrir */}
+                    {isSpreadTipo(wizStrat) && (
                       <label style={{ display: "block" }}>
-                        <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 5 }}>¿Put o Call credit spread?</div>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 5 }}>¿Put o Call spread?</div>
                         <Pill options={["Put", "Call"]} value={wizForm.right === "C" ? "Call" : "Put"} onChange={(v) => wizF("right")(v === "Call" ? "C" : "P")} size="sm" />
                       </label>
                     )}
-                    {wizStrat === "Credit Spread" && (
+                    {isSpreadTipo(wizStrat) && (
                       <>
-                        {/* v3.50: verticales con ciclo por pata — strike, prima y nota POR PATA; el crédito neto se calcula solo */}
+                        {/* verticales con ciclo por pata — strike, prima y nota POR PATA; crédito o débito se calcula solo */}
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                           <WizInput label="Strike corta (vendida)" value={wizForm.sK} onChange={wizF("sK")} inputMode="decimal" />
                           <WizInput label="Strike larga (comprada)" value={wizForm.lK} onChange={wizF("lK")} inputMode="decimal" />
@@ -10893,26 +10910,27 @@ function App() {
                          no hay una fórmula única como en short put/call. No se registra en Movimientos hasta
                          el cierre, igual que una acción: al cerrar se contabiliza como recompra (Primas + MTM). */
                       const cts = parseFloat(String(wizForm.contratos || "").replace(",", "."));
-                      const pr = wizStrat === "Credit Spread" ? ((wizForm.sP || "") !== "" ? n(wizForm.sP) - n(wizForm.lP) : NaN) : parseFloat(String(wizForm.prima || "").replace(",", ".")); /* v3.50: en verticales el neto sale de las patas */
+                      const pr = isSpreadTipo(wizStrat) ? ((wizForm.sP || "") !== "" ? n(wizForm.sP) - n(wizForm.lP) : NaN) : parseFloat(String(wizForm.prima || "").replace(",", ".")); /* en verticales el neto sale de las patas */
                       const rk = parseFloat(String(wizForm.margen || "").replace(",", "."));
                       const credit = isFinite(cts) && isFinite(pr) ? pr * cts * 100 : null;
                       const roi = credit !== null && rk ? credit / rk : null;
                       if (credit === null) return null;
+                      const isDebit = isSpreadTipo(wizStrat) && credit < 0;
                       return (
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                          <div style={{ background: T.tileGreen, borderRadius: 12, padding: "8px 12px" }}>
-                            <div style={{ fontSize: 9.5, fontWeight: 700, color: T.green, textTransform: "uppercase", letterSpacing: 0.3 }}>Crédito recibido</div>
-                            <div style={{ fontSize: 16, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>${credit.toLocaleString("en-US", { maximumFractionDigits: 0 })}</div>
+                          <div style={{ background: isDebit ? T.tileAmber : T.tileGreen, borderRadius: 12, padding: "8px 12px" }}>
+                            <div style={{ fontSize: 9.5, fontWeight: 700, color: isDebit ? T.gold : T.green, textTransform: "uppercase", letterSpacing: 0.3 }}>{isDebit ? "Débito pagado" : "Crédito recibido"}</div>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: isDebit ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>${Math.abs(credit).toLocaleString("en-US", { maximumFractionDigits: 0 })}</div>
                           </div>
                           {roi !== null && (
                             <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px" }}>
-                              <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>ROI (crédito/riesgo)</div>
+                              <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>ROI ({isDebit ? "débito" : "crédito"}/riesgo)</div>
                               <div style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{(roi * 100).toFixed(1)}%</div>
                             </div>
                           )}
-                          {wizStrat === "Credit Spread" && (
+                          {isSpreadTipo(wizStrat) && (
                             <div style={{ gridColumn: "span 2", fontSize: 11.5, fontWeight: 700, color: T.sub, padding: "0 2px" }}>
-                              Crédito neto = prima corta − prima larga = ${isFinite(pr) ? pr.toFixed(2) : "—"}/acc
+                              {isFinite(pr) ? (pr >= 0 ? "Crédito neto" : "Débito neto") + " = prima corta − prima larga = $" + Math.abs(pr).toFixed(2) + "/acc" : "Crédito/débito neto = prima corta − prima larga"}
                             </div>
                           )}
                           <div style={{ gridColumn: "span 2", fontSize: 11.5, fontWeight: 700, color: T.sub, padding: "0 2px" }}>
