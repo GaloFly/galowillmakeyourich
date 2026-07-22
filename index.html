@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.62"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.63"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -611,7 +611,7 @@ function mtmSumOfPos(p) {
     s += (natOf(p) === "ACC" && hasLots(p)) ? fifoRealized(p.lots, p.closePrice, fee) : (n(p.closePrice) - n(effBep(p))) * qty - fee;
   }
   if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) p.soldLots.forEach((sl) => { s += (n(sl.price) - n(sl.cost)) * n(sl.qty) - n(sl.fee); });
-  if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d) => { s += n(d.amount) - n(d.fee); });
+  if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d) => { s += n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
   return s;
 }
 const realizedOf = (p) => {
@@ -3695,18 +3695,18 @@ function LotsEditor({ p, onSave, onClose }) {
   );
 }
 
-/* ---------- editor de dividendos de una posición de acciones/ETF (v5.28) ----------
-   Cada dividendo = {date, amount, fee}. Es ingreso: se registra tanto en Movimientos → Primas (como cobro)
-   como en MTM (cash realizado). Se abre desde la hoja de la posición ("Dividendos"). */
+/* ---------- editor de dividendos de una posición de acciones/ETF (v5.28, retención v3.63) ----------
+   Cada dividendo = {date, amount, ret, fee}. v3.63 (Victor: "algunos brokers retienen impuestos"): campo
+   RETENCIÓN — el neto que va a Primas y MTM es importe − retención − comisión. */
 function DividendsEditor({ p, onSave, onClose }) {
-  const mkDiv = (date, amount, fee) => ({ id: "d" + Math.random().toString(36).slice(2, 8), date: date || "", amount: amount != null ? String(amount) : "", fee: fee != null ? String(fee) : "" });
+  const mkDiv = (date, amount, fee) => ({ id: "d" + Math.random().toString(36).slice(2, 8), date: date || "", amount: amount != null ? String(amount) : "", ret: "", fee: fee != null ? String(fee) : "" });
   const [divs, setDivs] = useState(() => (Array.isArray(p.dividends) ? p.dividends.map((d) => ({ ...d })) : [mkDiv(new Date().toISOString().slice(0, 10), "", "")]));
   const setDivF = (i, k) => (v) => setDivs((ds) => ds.map((d, idx) => (idx === i ? { ...d, [k]: v } : d)));
   const addDiv = () => setDivs((ds) => [...ds, mkDiv(new Date().toISOString().slice(0, 10), "", "")]);
   const delDiv = (i) => setDivs((ds) => ds.filter((_, idx) => idx !== i));
-  const net = (d) => n(d.amount) - n(d.fee);
+  const net = (d) => n(d.amount) - n(d.ret) - n(d.fee);
   const total = divs.reduce((a, d) => a + net(d), 0);
-  const save = () => { onSave({ ...p, dividends: divs.filter((d) => n(d.amount) !== 0 || n(d.fee) !== 0).map((d) => ({ id: d.id, date: d.date || "", amount: String(n(d.amount)), fee: String(n(d.fee)) })) }); onClose(); };
+  const save = () => { onSave({ ...p, dividends: divs.filter((d) => n(d.amount) !== 0 || n(d.ret) !== 0 || n(d.fee) !== 0).map((d) => ({ id: d.id, date: d.date || "", amount: String(n(d.amount)), ret: String(n(d.ret)), fee: String(n(d.fee)) })) }); onClose(); };
   return (
     <div onClick={onClose} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
       style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
@@ -3714,7 +3714,7 @@ function DividendsEditor({ p, onSave, onClose }) {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="dividend" size={19} />Dividendos de {p.tkr || "acciones"}</div>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>Fecha, importe y comisión de cada cobro. Se registra en Movimientos → Primas y en MTM.</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>Fecha, importe, retención del bróker y comisión. El NETO es lo que se registra en Movimientos → Primas y en MTM.</div>
           </div>
           <button onClick={onClose} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
         </div>
@@ -3726,8 +3726,9 @@ function DividendsEditor({ p, onSave, onClose }) {
               {divs.length > 1 && <button onClick={() => delDiv(i)} style={{ background: "transparent", border: "none", fontSize: 11.5, fontWeight: 700, color: T.red, cursor: "pointer" }}>Eliminar</button>}
             </div>
             <div style={{ marginBottom: 8 }}><WizInput label="Fecha" value={d.date} onChange={setDivF(i, "date")} type="date" /></div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               <WizInput label="Importe $" value={d.amount} onChange={setDivF(i, "amount")} placeholder="$" inputMode="decimal" />
+              <WizInput label="Retención $" value={d.ret} onChange={setDivF(i, "ret")} placeholder="$" inputMode="decimal" />
               <WizInput label="Comisión $" value={d.fee} onChange={setDivF(i, "fee")} placeholder="$" inputMode="decimal" />
             </div>
           </div>
@@ -5026,12 +5027,13 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       });
     }
     /* dividendos (v5.28): ingreso de acciones/ETF. Va tanto a Primas (cobro) como a MTM (cash realizado).
-       Cash neto = importe − comisión. Son listas distintas (dos pestañas), así que no se duplica en un total. */
+       v3.63: cash neto = importe − retención (impuestos del bróker) − comisión; la retención va en la
+       nota, no en fee (es impuesto, no comisión). Son listas distintas (dos pestañas), sin duplicar. */
     if (natOf(p) === "ACC" && Array.isArray(p.dividends)) {
       p.dividends.forEach((d, idx) => {
-        const dfee = n(d.fee);
-        const cash = n(d.amount) - dfee;
-        const base = { posId: p.id, date: d.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Dividendo", cash, fee: dfee, strike: "", right: "", qty: "", note: "Dividendo" + (dfee ? " · comisión $" + money2(dfee) : "") };
+        const dfee = n(d.fee), dret = n(d.ret);
+        const cash = n(d.amount) - dret - dfee;
+        const base = { posId: p.id, date: d.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Dividendo", cash, fee: dfee, strike: "", right: "", qty: "", note: "Dividendo" + (dret ? " · retención $" + money2(dret) : "") + (dfee ? " · comisión $" + money2(dfee) : "") };
         primaEvents.push({ ...base, id: p.id + "-div" + (d.id || idx) });
         mtmEvents.push({ ...base, id: p.id + "-divmtm" + (d.id || idx) });
       });
@@ -5424,7 +5426,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               /* v1.05: los dividendos (incluidos en el MTM realizado de la acción) se sacan a su propia
                  línea "Dividendos" — se restan de la fila Acciones para que las filas sumen el total del
                  ticker sin duplicar. Siguen el estado de su posición (abierta/cerrada) para el filtro. */
-              const dv = cat === "Acciones" && Array.isArray(p.dividends) ? p.dividends.reduce((s, d) => s + n(d.amount) - n(d.fee), 0) : 0;
+              const dv = cat === "Acciones" && Array.isArray(p.dividends) ? p.dividends.reduce((s, d) => s + n(d.amount) - n(d.ret) - n(d.fee), 0) : 0; /* v3.63: neto de retención */
               const nDv = cat === "Acciones" && Array.isArray(p.dividends) ? p.dividends.length : 0;
               g.cats[cat].res += r - dv;
               if (nDv > 0 || dv !== 0) {
