@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.58"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.60"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -575,34 +575,36 @@ function primaSumOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
   if (bepAutoStrat(p) === "CREDIT" && p.entryDate) s += _oPrimaPS(p) * qty - n(p.comision);
   chain.forEach((r) => { s += (n(r.newCredit) - n(r.buybackCost)) * qty - n(r.comision); });
-  if (isVertical(p)) s += vBookedSum(p); /* v3.52: realizado ya reservado pata a pata, con su fee incluida */
+  if (isVertical(p)) s += vBookedSum(p) - ((p.legOps || []).some((o) => o.cash != null) ? n(p.comision) : 0); /* v3.52 + v3.59: la fee de apertura del spread se imputa una vez, en cuanto hay algo realizado — réplica del derivador de Primas */
   if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
     const fee = n(p.closeComision), gd = isGenericDebitPos(p) || isLongCallPos(p);
-    s += isCreditSpread(p) ? (n(p.prima) - n(p.closePrice)) * qty - fee
-      : gd ? (n(p.closePrice) - n(p.prima)) * qty - fee
+    const openFee = (isCreditSpread(p) || gd) ? n(p.comision) : 0; /* v3.59: fee de apertura nunca restada en el modelo "neto al cierre" */
+    s += isCreditSpread(p) ? (n(p.prima) - n(p.closePrice)) * qty - fee - openFee
+      : gd ? (n(p.closePrice) - n(p.prima)) * qty - fee - openFee
         : _dirSign(p) * n(p.closePrice) * qty - fee;
   }
   if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null) {
     const lg = p.long || {};
-    s += (n(p.closeLongPrice) - n(lg.prima) - n(p.closePrice)) * qty - (n(p.closeComision) + n(p.closeLongComision));
+    s += (n(p.closeLongPrice) - n(lg.prima) - n(p.closePrice)) * qty - (n(p.closeComision) + n(p.closeLongComision) + n(lg.comision)); /* v3.60: réplica del derivador */
   }
   return s;
 }
 function mtmSumOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
-  if (isVertical(p)) s += vBookedSum(p); /* v3.52: idéntico a Primas — un vertical no distingue prima acumulada de MTM */
+  if (isVertical(p)) s += vBookedSum(p) - ((p.legOps || []).some((o) => o.cash != null) ? n(p.comision) : 0); /* v3.52 + v3.59: idéntico a Primas — un vertical no distingue prima acumulada de MTM; la fee de apertura se imputa una vez */
   if (isOptionNat(p)) {
     chain.forEach((r, idx) => { const legBefore = idx === 0 ? _oPrimaPS(p) : n(chain[idx - 1].newCredit); s += _dirSign(p) * (n(r.buybackCost) - legBefore) * qty - n(r.comision); });
     if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
       const fee = n(p.closeComision);
+      const openFee = (isCreditSpread(p) || isGenericDebitPos(p) || isLongCallPos(p)) ? n(p.comision) : 0; /* v3.59: réplica del derivador */
       const legEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : _oPrimaPS(p);
-      s += _dirSign(p) * (n(p.closePrice) - legEntry) * qty - fee;
+      s += _dirSign(p) * (n(p.closePrice) - legEntry) * qty - fee - openFee;
     }
     if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null) {
       const lg = p.long || {};
       const shortLegEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : _oPrimaPS(p);
       s += (shortLegEntry - n(p.closePrice)) * qty - n(p.closeComision);
-      s += (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision);
+      s += (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision) - n(lg.comision); /* v3.60: réplica del derivador */
     }
   } else if ((natOf(p) === "ACC" || natOf(p) === "COLLAR") && p.closed && p.closePrice !== "" && p.closePrice != null) {
     const fee = n(p.closeComision);
@@ -4897,13 +4899,18 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
          corta/larga, o la parte de cierre de un roll); las de apertura (vender/comprar de nuevo a crédito)
          quedan sin apuntar hasta que ESA pata se cierre a su vez — mismo criterio que la apertura original. */
       if (isVertical(p)) {
+        /* v3.59: la comisión de APERTURA del spread (p.comision) tampoco se restaba nunca — cada pata
+           solo resta el fee de SU operación. Se imputa una sola vez, en la primera operación realizada.
+           Derivado en render: las posiciones antiguas se autocorrigen al desplegar. */
+        let vOpenFee = n(p.comision);
         (p.legOps || []).forEach((o, idx) => {
           if (o.cash == null) return;
+          const oFee = vOpenFee; vOpenFee = 0;
           const S = o.leg === "S";
           const isExpira = o.act !== "open" && n(o.px) === 0;
           const kind = o.act === "roll" ? (S ? "Roll corta" : "Roll larga") : isExpira ? (S ? "Expirada corta" : "Larga sin valor") : (S ? "Cierre corta" : "Cierre larga");
           const lbl = (S ? "Corta " : "Larga ") + (o.k || "") + (p.right || "") + (o.expiry ? " " + ibkrDate(o.expiry) : "");
-          const ev = { id: p.id + "-leg" + idx, posId: p.id, date: o.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind, cash: n(o.cash), fee: n(o.fee), strike: o.k || (S ? p.sK : p.lK), right: p.right, qty: qtyLabelOf(p), expiry: o.expiry || p.expiry, note: o.note || "", legs: [{ side: S ? "C" : "V", label: lbl, perShare: n(o.cash) / (qty || 1), cash: n(o.cash) }] };
+          const ev = { id: p.id + "-leg" + idx, posId: p.id, date: o.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind, cash: n(o.cash) - oFee, fee: n(o.fee) + oFee, strike: o.k || (S ? p.sK : p.lK), right: p.right, qty: qtyLabelOf(p), expiry: o.expiry || p.expiry, note: o.note || "", legs: [{ side: S ? "C" : "V", label: lbl, perShare: n(o.cash) / (qty || 1), cash: n(o.cash) }] };
           primaEvents.push(ev);
           mtmEvents.push({ ...ev, id: p.id + "-legmtm" + idx }); /* un vertical no distingue prima acumulada de MTM, igual que en el cierre total */
         });
@@ -4928,10 +4935,18 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            el cierre debe materializar (venta − coste) × qty − fee, y la expiración la pérdida completa.
            Antes caía en la rama genérica y apuntaba la VENTA BRUTA, inflando Primas con el coste jamás restado. */
         const gd = isGenericDebitPos(p) || isLongCallPos(p);
+        /* v3.59 FIX (detectado por Victor en un trade de earnings): las estrategias de "neto al cierre"
+           (credit spreads IC/ER/BW, débitos genéricos B3 y Long Call) no registran evento de apertura,
+           así que su comisión de apertura (p.comision — en DC/DD el wizard le suma las fees de las 4
+           patas) no se restaba NUNCA: cada estructura cerrada inflaba Primas y MTM en esa cantidad.
+           El neto del cierre resta ahora también la comisión de apertura, y el `fee` del evento muestra
+           el TOTAL restado (apertura + cierre) para que la línea cuadre con su cash. Las opciones de
+           crédito simples NO cambian: su fee de apertura ya se resta en el evento de apertura. */
+        const openFee = (isCreditSpread(p) || gd) ? n(p.comision) : 0;
         const cashClose = isCreditSpread(p)
-          ? (n(p.prima) - n(p.closePrice)) * qty - fee
+          ? (n(p.prima) - n(p.closePrice)) * qty - fee - openFee
           : gd
-            ? (n(p.closePrice) - n(p.prima)) * qty - fee
+            ? (n(p.closePrice) - n(p.prima)) * qty - fee - openFee
             : dirSign(p) * n(p.closePrice) * qty - fee;
         const primaLegs = isCreditSpread(p)
           ? [
@@ -4948,9 +4963,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             : isExpira
               ? [{ side: null, label: stkLbl + expLbl + " · expira", perShare: 0, cash: 0 }]
               : [{ side: shortP ? "C" : "V", label: stkLbl + expLbl, perShare: dirSign(p) * n(p.closePrice), cash: dirSign(p) * n(p.closePrice) * qty }];
-        primaEvents.push({ id: p.id + "-close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: cashClose, fee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: primaLegs });
+        primaEvents.push({ id: p.id + "-close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: cashClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: primaLegs });
         const legEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : openingPrimaPerShare(p);
-        const realizedClose = dirSign(p) * (n(p.closePrice) - legEntry) * qty - fee;
+        const realizedClose = dirSign(p) * (n(p.closePrice) - legEntry) * qty - fee - openFee; /* v3.59: openFee = 0 en crédito simple */
         const mtmLegs = (isCreditSpread(p) || gd)
           ? primaLegs
           : shortP
@@ -4962,7 +4977,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 { side: "C", label: stkLbl + expLbl, perShare: -legEntry, cash: -legEntry * qty },
                 { side: "V", label: stkLbl, perShare: n(p.closePrice), cash: n(p.closePrice) * qty },
               ];
-        mtmEvents.push({ id: p.id + "-closemtm", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: realizedClose, fee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: mtmLegs });
+        mtmEvents.push({ id: p.id + "-closemtm", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: realizedClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: mtmLegs });
       }
       /* PMCC — CIERRE (modelo acordado):
          · PRIMAS: UN evento combinado = (venta long − coste long − recompra short) × qty − comisiones.
@@ -4972,7 +4987,11 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            registrado, y permiten ver qué aportó cada pata. */
       if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null) {
         const lg = p.long || {};
-        const fees = n(p.closeComision) + n(p.closeLongComision);
+        /* v3.60 (confirmado por Victor: cada pata lleva su comisión — apertura, rolls y cierre; solo la
+           corta expirada sin valor va sin fee): la comisión de apertura de la LARGA (lg.comision) sigue el
+           modelo "neto al cierre" igual que su débito — se resta aquí, no al abrir. La de la corta
+           (p.comision) ya se restó en su evento de apertura y las de los rolls en los suyos. */
+        const fees = n(p.closeComision) + n(p.closeLongComision) + n(lg.comision);
         const combined = (n(p.closeLongPrice) - n(lg.prima) - n(p.closePrice)) * qty - fees;
         primaEvents.push({ id: p.id + "-close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre PMCC", cash: combined, fee: fees, strike: p.strike, right: "C", qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: [
           { side: "C", label: strikeStr(lg.strike) + "C · long", perShare: -n(lg.prima), cash: -n(lg.prima) * qty },
@@ -4985,8 +5004,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
           { side: "V", label: strikeStr(p.strike) + "C" + (p.expiry ? " " + ibkrDate(p.expiry) : ""), perShare: shortLegEntry, cash: shortLegEntry * qty },
           { side: "C", label: strikeStr(p.strike) + "C", perShare: -n(p.closePrice), cash: -n(p.closePrice) * qty },
         ] });
-        const realizedLong = (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision);
-        mtmEvents.push({ id: p.id + "-closemtm-l", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre long", cash: realizedLong, fee: n(p.closeLongComision), strike: lg.strike, right: "C", qty: qtyLabelOf(p), expiry: lg.expiry, note: p.closeNote || "", legs: [
+        const realizedLong = (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision) - n(lg.comision); /* v3.60: fee de apertura de la larga */
+        mtmEvents.push({ id: p.id + "-closemtm-l", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre long", cash: realizedLong, fee: n(p.closeLongComision) + n(lg.comision), strike: lg.strike, right: "C", qty: qtyLabelOf(p), expiry: lg.expiry, note: p.closeNote || "", legs: [
           { side: "C", label: strikeStr(lg.strike) + "C" + (lg.expiry ? " " + ibkrDate(lg.expiry) : ""), perShare: -n(lg.prima), cash: -n(lg.prima) * qty },
           { side: "V", label: strikeStr(lg.strike) + "C", perShare: n(p.closeLongPrice), cash: n(p.closeLongPrice) * qty },
         ] });
