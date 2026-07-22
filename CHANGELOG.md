@@ -1,5 +1,41 @@
 # CHANGELOG — Bloques
 
+## v3.59 — estrategias de "neto al cierre"
+
+IC/Earnings/Broken Wings, débitos genéricos B3 y Long Call no registran evento
+al abrir y materializan el neto al cerrar — pero el cierre solo restaba
+`closeComision`. La comisión de apertura (`p.comision`, en DC/DD la suma de las
+fees de las 4 patas) quedaba guardada y NUNCA entraba en la cuenta: Primas y MTM
+inflados en esa cantidad por estructura cerrada. Lo mismo con la apertura
+original de un vertical cerrado por patas (cada pata solo restaba el fee de su
+operación).
+
+Fix en 4 sitios con fórmulas idénticas: derivador de Primas/MTM (nuevo
+`openFee` restado en `cashClose`/`realizedClose`; el `fee` del evento muestra el
+total apertura+cierre), verticales por patas (`p.comision` imputada UNA vez, en
+la primera operación realizada), y las réplicas `primaSumOfPos`/`mtmSumOfPos`.
+Las opciones de crédito simples no cambian (su fee ya se restaba al abrir).
+
+## v3.60 — PMCC (confirmado por Victor: cada pata lleva su comisión)
+
+La comisión de apertura de la pata LARGA (`lg.comision`) tampoco se restaba en
+el cierre combinado. Sigue el modelo neto-al-cierre igual que su débito: se
+resta en el cierre (Primas combinado y MTM "Cierre long"), no al abrir. La de la
+corta ya se restaba en su evento de apertura y las de los rolls en los suyos; la
+corta expirada sin valor sigue sin fee (v3.46), como opera Victor. Réplicas
+actualizadas igual.
+
+## Efecto al desplegar
+
+Todo es derivado en render → los históricos se autocorrigen sin migración.
+El total de Primas BAJARÁ en la suma de esas comisiones nunca restadas — es la
+corrección, no una pérdida nueva; el trade de earnings cuadrará con el bróker.
+
+## Verificación
+
+Babel: 1 bloque, 0 errores (v3.60).
+
+
 > Reconstruido el 19-jul-2026 a partir del registro de chat, tras perderse la copia del repo. Desde v3.44 en adelante: pegar cada fragmento nuevo al PRINCIPIO de este archivo.
 sizing."
 
