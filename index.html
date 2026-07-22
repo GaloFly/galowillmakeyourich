@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.60"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.62"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6309,6 +6309,66 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
    calendario de 7 días; gate market cap gratis (<$5B fuera); supervivientes (tope 45) → Market Data en
    caché (~2 créditos c/u). VALIDACIÓN: si el ticker está en el histórico de moomoo, cada tarjeta enseña
    el EM de Market Data JUNTO al ± pendiente de moomoo con su diferencia — el dato que decide si fiarse. */
+/* ---------- v3.62: stats extra + mini-gráficos del detalle del screener (tarjeta F10 del agente) ----------
+   Todo se DERIVA de los events que ya viajan en el screener.json — cero llamadas, cero tokens. La fila
+   pre/post-5d solo aparece si el agente añade pre5/post5 (%) a cada evento del JSON. */
+function erExtraStats(h) {
+  try {
+    const evs = (erEvents(h) || []).filter((e) => e && Number(e.em) > 0 && e.open != null && isFinite(Number(e.open)));
+    const N = (a) => a.filter((x) => Number.isFinite(x));
+    const opensA = N(evs.map((e) => Math.abs(Number(e.open))));
+    const sorted = opensA.slice().sort((a, b) => a - b);
+    const medOpen = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : NaN;
+    const nOpenUp = evs.filter((e) => Number(e.open) > 0).length;
+    /* peor move = el open O close de mayor magnitud, con su periodo (la cola real, mire donde mire) */
+    let worstV = NaN, worstPer = null;
+    for (const e of evs) for (const k of ["open", "close"]) { const v = Number(e[k]); if (Number.isFinite(v) && (!Number.isFinite(worstV) || Math.abs(v) > Math.abs(worstV))) { worstV = v; worstPer = e.periodo || null; } }
+    const pre5A = N(evs.map((e) => Number(e.pre5))), post5A = N(evs.map((e) => Number(e.post5)));
+    const hasPP = pre5A.length > 0 || post5A.length > 0;
+    const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN;
+    const lastP5 = evs.filter((e) => Number.isFinite(Number(e.post5))).slice(-4);
+    return { evs, medOpen, nOpenUp, worstV, worstPer, hasPP, pre5: avg(pre5A), post5: avg(post5A), post5Red: lastP5.filter((e) => Number(e.post5) < 0).length, post5N: lastP5.length };
+  } catch (e) { return { evs: [], medOpen: NaN, nOpenUp: 0, worstV: NaN, worstPer: null, hasPP: false, pre5: NaN, post5: NaN, post5Red: 0, post5N: 0 }; }
+}
+function ErMiniChart({ evs, field, nextEm, title }) {
+  /* barras verde/rojo del % por earnings con la banda ±EM detrás (azul claro), y una última columna con
+     la banda del EM PRÓXIMO. SVG por viewBox: se estira al ancho de la tarjeta sin media queries. */
+  const rows = evs.slice(-12);
+  const hasNext = Number.isFinite(nextEm) && nextEm > 0;
+  const cols = rows.length + (hasNext ? 1 : 0);
+  if (!cols) return null;
+  const W = 340, H = 96, padT = 12, padB = 14, cw = W / cols, bw = Math.min(16, cw * 0.55);
+  const maxAbs = Math.max(1, ...rows.map((e) => Math.abs(Number(e[field]) || 0)), ...rows.map((e) => Number(e.em) || 0), hasNext ? nextEm : 0) * 1.12;
+  const y = (v) => padT + (H - padT - padB) * (1 - (v + maxAbs) / (2 * maxAbs));
+  const y0 = y(0);
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, letterSpacing: 0.2, marginBottom: 2 }}>{title}</div>
+      <svg viewBox={"0 0 " + W + " " + H} style={{ width: "100%", height: "auto", display: "block" }}>
+        <line x1="0" y1={y0} x2={W} y2={y0} stroke={T.line} strokeWidth="1" />
+        {rows.map((e, i) => {
+          const cx = cw * i + cw / 2, v = Number(e[field]), em = Number(e.em);
+          const per = String(e.periodo || "").replace(/\s+/g, "").slice(0, 5);
+          return (
+            <g key={i}>
+              {Number.isFinite(em) && em > 0 ? <rect x={cx - bw * 0.28} y={y(em)} width={bw * 0.56} height={Math.max(1, y(-em) - y(em))} rx="2" fill="#93a8d8" opacity="0.45" /> : null}
+              {Number.isFinite(v) ? <rect x={cx - bw / 2} y={Math.min(y0, y(v))} width={bw} height={Math.max(1.5, Math.abs(y(v) - y0))} rx="2.5" fill={v >= 0 ? T.green : T.red} opacity="0.92" /> : null}
+              {Number.isFinite(v) ? <text x={cx} y={(v >= 0 ? Math.min(y0, y(v)) - 2.5 : Math.max(y0, y(v)) + 8)} textAnchor="middle" fontSize="7.5" fontWeight="800" fill={T.ink}>{(v > 0 ? "+" : "") + v.toFixed(0) + "%"}</text> : null}
+              <text x={cx} y={H - 3} textAnchor="middle" fontSize="7" fontWeight="700" fill={T.sub}>{per}</text>
+            </g>
+          );
+        })}
+        {hasNext ? (() => { const cx = cw * rows.length + cw / 2; return (
+          <g>
+            <rect x={cx - bw * 0.28} y={y(nextEm)} width={bw * 0.56} height={Math.max(1, y(-nextEm) - y(nextEm))} rx="2" fill="#5b7fd4" opacity="0.6" />
+            <text x={cx} y={y(nextEm) - 2.5} textAnchor="middle" fontSize="7.5" fontWeight="800" fill="#3d5db0">±{nextEm.toFixed(1)}</text>
+            <text x={cx} y={H - 3} textAnchor="middle" fontSize="7" fontWeight="800" fill="#3d5db0">próx.</text>
+          </g>
+        ); })() : null}
+      </svg>
+    </div>
+  );
+}
 function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   /* v3.10 (Victor: "al pulsar una tarjeta que aparezcan más datos — pre/post, IV crush, EM, Ø EM,
      Ø actual, POP open/high/low/close — y un botón de añadir a Earnings"): las tarjetas del screener
@@ -6532,6 +6592,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               const pOpen = popOf(it.ticker); /* v3.26: POP open visible en la cabecera, no solo al desplegar */
               const isOpen = open === it.ticker;
               const s = isOpen ? statsOf(it.ticker) : null;
+              const xs = s ? erExtraStats((srvHist[it.ticker] || erHistAll[it.ticker])) : null; /* v3.62 */
               return (
                 <div key={it.ticker} style={{ borderRadius: 14, background: T.card, boxShadow: T.shadow, overflow: "hidden", border: isOpen ? "1.5px solid " + T.line : "1.5px solid transparent" }}>
                   {/* cabecera tocable */}
@@ -6581,18 +6642,39 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                       {/* histórico del ticker si existe */}
                       {s ? (
                         <div>
+                          {/* v3.62 (Victor, con la tarjeta F10 del agente): el fondo del tile POP SIGUE AL
+                              NÚMERO (verde ≥75 / ámbar ≥50 / rojo <50), no verde fijo; y cada POP enseña su
+                              cuenta X/N. Todo lo nuevo se deriva de los events que YA vienen en el JSON —
+                              cero llamadas, cero tokens. */}
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 6 }}>
-                            <div style={detTile(T.tileGreen)}><div style={{ ...detVal, color: popCol(s.popOpen) }}>{popPct(s.popOpen)}</div><div style={detLbl}>POP open</div></div>
-                            <div style={detTile(T.tileGreen)}><div style={{ ...detVal, color: popCol(s.M ? 1 - s.xClose / s.M : NaN) }}>{popPct(s.M ? 1 - s.xClose / s.M : NaN)}</div><div style={detLbl}>POP close</div></div>
-                            <div style={detTile(T.tileGreen)}><div style={{ ...detVal, color: popCol(s.M ? 1 - s.xHigh / s.M : NaN) }}>{popPct(s.M ? 1 - s.xHigh / s.M : NaN)}</div><div style={detLbl}>POP high</div></div>
-                            <div style={detTile(T.tileGreen)}><div style={{ ...detVal, color: popCol(s.M ? 1 - s.xLow / s.M : NaN) }}>{popPct(s.M ? 1 - s.xLow / s.M : NaN)}</div><div style={detLbl}>POP low</div></div>
+                            {[["POP open", s.popOpen, s.M - s.xOpen], ["POP close", s.M ? 1 - s.xClose / s.M : NaN, s.M - s.xClose], ["POP high", s.M ? 1 - s.xHigh / s.M : NaN, s.M - s.xHigh], ["POP low", s.M ? 1 - s.xLow / s.M : NaN, s.M - s.xLow]].map(([lb, p, k]) => (
+                              <div key={lb} style={detTile(popBg(p))}><div style={{ ...detVal, color: popCol(p) }}>{popPct(p)}</div><div style={detLbl}>{lb}{s.M ? " · " + k + "/" + s.M : ""}</div></div>
+                            ))}
                           </div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                             <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{Number.isFinite(s.nextEm) ? "±" + s.nextEm.toFixed(1) + "%" : "—"}</div><div style={detLbl}>EM próximo</div></div>
                             <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{pct1(s.emAvg)}</div><div style={detLbl}>Ø EM</div></div>
-                            <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{pct1(s.absOpen)}</div><div style={detLbl}>Ø actual</div></div>
+                            <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{pct1(s.absOpen)}</div><div style={detLbl}>Ø actual{Number.isFinite(xs.medOpen) ? " · med " + xs.medOpen.toFixed(1) : ""}</div></div>
                             <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{pct1(s.ivCrush)}</div><div style={detLbl}>Ø IV crush</div></div>
                           </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: 6 }}>
+                            <div style={detTile()}><div style={{ ...detVal, color: popCol(s.M ? s.nUp / s.M : NaN) }}>{popPct(s.M ? s.nUp / s.M : NaN)}</div><div style={detLbl}>cierra por encima · {s.nUp}/{s.M}</div></div>
+                            <div style={detTile()}><div style={{ ...detVal, color: popCol(s.M ? xs.nOpenUp / s.M : NaN) }}>{popPct(s.M ? xs.nOpenUp / s.M : NaN)}</div><div style={detLbl}>abre en verde · {xs.nOpenUp}/{s.M}</div></div>
+                            <div style={detTile()}><div style={{ ...detVal, color: Number.isFinite(xs.worstV) && xs.worstV < 0 ? T.red : T.green }}>{Number.isFinite(xs.worstV) ? (xs.worstV > 0 ? "+" : "") + xs.worstV.toFixed(0) + "%" : "—"}</div><div style={detLbl}>peor move{xs.worstPer ? " (" + xs.worstPer + ")" : ""}</div></div>
+                          </div>
+                          {xs.hasPP ? (
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: 6 }}>
+                              <div style={detTile()}><div style={{ ...detVal, color: T.sub }}>{Number.isFinite(xs.pre5) ? (xs.pre5 > 0 ? "+" : "") + xs.pre5.toFixed(1) + "%" : "—"}</div><div style={detLbl}>Ø pre-5d</div></div>
+                              <div style={detTile()}><div style={{ ...detVal, color: T.sub }}>{Number.isFinite(xs.post5) ? (xs.post5 > 0 ? "+" : "") + xs.post5.toFixed(1) + "%" : "—"}</div><div style={detLbl}>Ø post-5d (histórico)</div></div>
+                              <div style={detTile()}><div style={{ ...detVal, color: xs.post5Red > xs.post5N / 2 ? T.red : T.green }}>{xs.post5Red} de {xs.post5N}</div><div style={detLbl}>últ. post-5d en rojo</div></div>
+                            </div>
+                          ) : null}
+                          {xs.evs.length >= 3 ? (
+                            <div>
+                              <ErMiniChart evs={xs.evs} field="open" nextEm={s.nextEm} title="APERTURA (gap) vs cierre previo · banda = EM" />
+                              <ErMiniChart evs={xs.evs} field="close" nextEm={s.nextEm} title="CIERRE del día de reacción · banda = EM" />
+                            </div>
+                          ) : null}
                           <div style={{ fontSize: 10, color: T.sub, marginTop: 6 }}>{s.M} earnings en el histórico · Ø actual = movimiento real medio · peor gap {pct1(Math.abs(s.worst))}</div>
                           {!Number.isFinite(s.nextEm) && (
                             <div style={{ fontSize: 10, color: T.gold, marginTop: 3, fontWeight: 700 }}>El servidor aún no manda el EM del trimestre en curso — para montar el IC, léelo en "Earnings" con la tabla de moomoo o metiendo spot+EM a mano.</div>
@@ -7631,12 +7713,20 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" }}>
             <label style={{ display: "block" }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 5 }}>Ancho del ala</div>
-              <Pill options={["2", "2.5", "3", "5", "10"]} value={st.wing} onChange={setWing} size="sm" />
+              <Pill options={["1", "1.5", "2", "2.5", "3", "5", "10"]} value={st.wing} onChange={setWing} size="sm" /> {/* v3.61: Victor pidió 1 y 1.5 — regla del tercio: crédito mín $0.33 / $0.50; casi binarias (franja parcial mínima), vigilar fricción de las 4 patas vs crédito */}
             </label>
             <button type="button" onClick={genSpreads}
               style={{ border: "none", cursor: "pointer", borderRadius: 12, height: 40, fontSize: 13, fontWeight: 800, background: T.tile, color: T.ink }}>
               Generar spreads
             </button>
+          </div>
+        )}
+        {emOk && pf(st.wing) > 0 && pf(st.wing) < strikeStep(spot) && (
+          /* v3.61: alas 1/1.5 solo existen donde el escalón del bróker lo permite — con spot ≥$100 la app
+             asume escalones de 2.5/5 y el strike largo no existiría. Aviso, no bloqueo (hay tickers con
+             escalones más finos que el modelo por tramos; los strikes escritos a mano mandan). */
+          <div style={{ background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>
+            Ala {st.wing} &lt; escalón de strikes estimado (${strikeStep(spot).toLocaleString("en-US", { maximumFractionDigits: 2 })} con spot ${fmtK(spot)}) — ese ancho puede no existir en este ticker; confírmalo en la cadena del bróker.
           </div>
         )}
         {emOk && (() => {
