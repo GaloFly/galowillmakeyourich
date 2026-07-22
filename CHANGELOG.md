@@ -1,5 +1,58 @@
 # CHANGELOG — Bloques
 
+## ## v3.61 — anchos de ala 1 y 1.5 (pedidos por Victor)
+
+El selector del ala gana "1" y "1.5" (antes 2/2.5/3/5/10). Todo lo demás
+(generar spreads, steppers, comparador, barra de riesgo, % sobre riesgo) los
+acepta sin cambios porque trabaja con el ancho como número.
+
+Marco para juzgarlos (regla del tercio + binario a POP 70%):
+- Ala 1 → crédito mínimo $0.33 por regla; $0.35-0.40 en la práctica (fees ~5-8%
+  del crédito, franja de pérdida parcial casi inexistente → comportamiento
+  binario; la fricción de 4 patas vs ~$33-40 de crédito suele ser el NO-GO real).
+- Ala 1.5 → $0.50 por regla; $0.48-0.55 en la práctica. Punto medio más operable
+  en nombres muy líquidos.
+
+Nuevo AVISO (ámbar) cuando el ala elegida es menor que el escalón de strikes
+estimado del ticker (la app asume $5 con spot ≥$200, $2.5 en $100-200, $1 en
+$25-100, $0.5 por debajo): con spot alto el strike largo de un ala 1/1.5 puede
+no existir — confirmar en la cadena del bróker. Aviso, no bloqueo: los strikes
+escritos a mano siguen mandando.
+
+Babel: 1 bloque, 0 errores (v3.61).
+
+## v3.62 — el detalle del screener replica la tarjeta F10 del agente (pedido por Victor)
+
+Todo derivado de los events que YA viajan en screener.json — cero llamadas,
+cero tokens. Al expandir una tarjeta:
+- POP open/close/high/low con FONDO que sigue al número (verde ≥75 / ámbar ≥50 /
+  rojo <50, antes verde fijo) y contador X/N en la etiqueta.
+- Ø actual gana la mediana; fila nueva: cierra por encima X/N · abre en verde
+  X/N · peor move con su periodo (el open o close de mayor magnitud).
+- Fila Ø pre-5d / Ø post-5d / "últ. post-5d en rojo X de Y" — SOLO si el agente
+  añade pre5/post5 a los eventos (spec entregada aparte); si no, se oculta.
+- Dos mini-gráficos SVG (≥3 eventos): APERTURA y CIERRE por earnings, barras
+  verde/rojo con banda ±EM detrás y columna final con el EM próximo — la misma
+  lectura que los charts de la tarjeta del agente, en 96px de alto.
+
+Verificado con SSR (react-dom/server): nulls de JSON.parse no rompen
+(Number.isFinite en todo), mediana/peor move/contadores correctos, chart pinta
+bandas+barras+próximo. Babel: 1 bloque, 0 errores (v3.62).
+
+## v3.63 — retención de impuestos en dividendos (pedida por Victor)
+
+Algunos brokers retienen impuestos en origen sobre el dividendo. El editor de
+dividendos gana el campo "Retención $" entre Importe y Comisión (fila de tres),
+y el NETO pasa a ser importe − retención − comisión en los cuatro sitios que
+suman dividendos: el neto de cada fila y el total del editor, el evento de
+Primas y el de MTM (la retención va en la NOTA del movimiento — "Dividendo ·
+retención $X · comisión $Y" — no en la columna fee, porque es impuesto, no
+comisión), la réplica mtmSumOfPos y la fila "Dividendos" de Estrategias.
+
+Dividendos antiguos sin el campo: n(d.ret) = 0, nada cambia. Derivado en render.
+Babel: 1 bloque, 0 errores (v3.63).
+
+
 ## v3.59 — estrategias de "neto al cierre"
 
 IC/Earnings/Broken Wings, débitos genéricos B3 y Long Call no registran evento
