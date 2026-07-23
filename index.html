@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.69"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.70"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7192,6 +7192,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
      (la sesión decide cuándo abres: AMC se abre ese mismo día 15:30-16:00; BMO, la tarde ANTERIOR). */
   const [erCal, setErCal] = useState(null); // { tkr, date, hour } | { tkr, none: true }
   const [histOpen, setHistOpen] = useState(false); /* v1.73: M/X/U plegados — casi siempre los rellena el lector */
+  const [chartSel, setChartSel] = useState("open"); /* v3.70 (Victor): el gráfico bajo las POP sigue a la tile tocada; Open por defecto (es su salida) */
   const [infoSym, setInfoSym] = useState(null); /* v1.73: tarjeta con la leyenda Ø desplegada */
   /* v1.77 (Victor: "mete que se vea en la tarjeta la fecha y pre/post"): la v1.73 solo guardaba
      calDate/calHour AL LEER una tabla — las tarjetas ya existentes se quedaban sin fecha para siempre.
@@ -7998,13 +7999,26 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         <WizInput label="Cerró en verde (U)" value={st.nUp} onChange={set("nUp")} inputMode="numeric" placeholder="11" />
         </>)}
         {scen.some((s) => isFinite(s.pop)) && (
+          /* v3.70: las 4 POP son ahora un SELECTOR — tocar una pinta debajo el gráfico de esa serie
+             (barras por earnings + banda ±EM + columna del EM próximo, el mismo chart del screener).
+             Open por defecto: es la serie de su salida. High/Low sirven para el "aguanta o cierra":
+             enseñan hasta dónde llegó el susto intradía aunque cerrase dentro. */
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
-            {scen.map((s) => (
-              <Tile key={s.k} label={"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")} value={isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}
-                tone={!isFinite(s.pop) ? "muted" : s.k === "xOpen" ? (s.pop >= 0.7 ? "green" : s.pop >= 0.5 ? "amber" : "red") : "default"} />
-            ))}
+            {scen.map((s) => { const fld = { xOpen: "open", xClose: "close", xHigh: "high", xLow: "low" }[s.k]; return (
+              <div key={s.k} onClick={() => setChartSel(fld)} style={{ cursor: "pointer", borderRadius: 15, outline: chartSel === fld ? "2.5px solid " + T.ink : "none", outlineOffset: -1 }}>
+                <Tile label={"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")} value={isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}
+                  tone={!isFinite(s.pop) ? "muted" : s.k === "xOpen" ? (s.pop >= 0.7 ? "green" : s.pop >= 0.5 ? "amber" : "red") : "default"} />
+              </div>
+            ); })}
           </div>
         )}
+        {scen.some((s) => isFinite(s.pop)) && (() => {
+          const tC = String(st.tkr || "").trim().toUpperCase();
+          const xsC = tC && hist[tC] ? erExtraStats(hist[tC]) : null;
+          if (!xsC || xsC.evs.length < 3) return null;
+          const tit = { open: "APERTURA (gap) vs cierre previo", close: "CIERRE del día de reacción", high: "HIGH intradía de la reacción", low: "LOW intradía de la reacción" }[chartSel];
+          return <ErMiniChart evs={xsC.evs} field={chartSel} nextEm={emOk ? em : NaN} title={tit + " · banda = EM · toca otra POP para cambiar"} />;
+        })()}
         {isFinite(popOpenS) && (
           <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>POP open · crudo → usada</span>
