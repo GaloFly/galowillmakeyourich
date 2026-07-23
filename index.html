@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.70"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.72"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8004,12 +8004,17 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
              Open por defecto: es la serie de su salida. High/Low sirven para el "aguanta o cierra":
              enseñan hasta dónde llegó el susto intradía aunque cerrase dentro. */
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
-            {scen.map((s) => { const fld = { xOpen: "open", xClose: "close", xHigh: "high", xLow: "low" }[s.k]; return (
-              <div key={s.k} onClick={() => setChartSel(fld)} style={{ cursor: "pointer", borderRadius: 15, outline: chartSel === fld ? "2.5px solid " + T.ink : "none", outlineOffset: -1 }}>
-                <Tile label={"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")} value={isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}
-                  tone={!isFinite(s.pop) ? "muted" : s.k === "xOpen" ? (s.pop >= 0.7 ? "green" : s.pop >= 0.5 ? "amber" : "red") : "default"} />
-              </div>
-            ); })}
+            {/* v3.71 (Victor, con captura): las 4 tiles pasan a markup propio IDÉNTICO — mismo alto
+               (estiran a la celda del grid) y el borde de selección va DENTRO, transparente cuando no
+               está activa, para que el tamaño no cambie al seleccionar. */}
+            {scen.map((s) => { const fld = { xOpen: "open", xClose: "close", xHigh: "high", xLow: "low" }[s.k];
+              const tn = !isFinite(s.pop) ? [T.tile, T.sub] : s.k === "xOpen" ? (s.pop >= 0.7 ? [T.tileGreen, T.green] : s.pop >= 0.5 ? [T.tileAmber, T.gold] : [T.tileRed, T.red]) : [T.tile, T.ink];
+              return (
+                <div key={s.k} onClick={() => setChartSel(fld)} style={{ cursor: "pointer", background: tn[0], borderRadius: 15, padding: "8px 5px", textAlign: "center", minWidth: 0, border: "2.5px solid " + (chartSel === fld ? T.ink : "transparent"), boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: tn[1], letterSpacing: -0.3 }}>{isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}</div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, marginTop: 3, lineHeight: 1.25 }}>{"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")}</div>
+                </div>
+              ); })}
           </div>
         )}
         {scen.some((s) => isFinite(s.pop)) && (() => {
@@ -8017,7 +8022,26 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           const xsC = tC && hist[tC] ? erExtraStats(hist[tC]) : null;
           if (!xsC || xsC.evs.length < 3) return null;
           const tit = { open: "APERTURA (gap) vs cierre previo", close: "CIERRE del día de reacción", high: "HIGH intradía de la reacción", low: "LOW intradía de la reacción" }[chartSel];
-          return <ErMiniChart evs={xsC.evs} field={chartSel} nextEm={emOk ? em : NaN} title={tit + " · banda = EM · toca otra POP para cambiar"} />;
+          /* v3.72 (Victor): al tocar Open o Close, la probabilidad DIRECCIONAL de esa serie — verde vs
+             rojo. Es la dimensión que la POP no cuenta (permanencia en el EM ≠ dirección), y la que
+             manda si el trade fuera un spread en vez del cóndor. */
+          const Mh = xsC.evs.length;
+          const up = chartSel === "open" ? xsC.nOpenUp : chartSel === "close" ? xsC.evs.filter((e) => Number(e.close) > 0).length : null;
+          return (
+            <div>
+              {up != null && Mh > 0 && (
+                <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{chartSel === "open" ? "Abre en" : "Cierra en"}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ color: T.green }}>verde {up}/{Mh} ({(up / Mh * 100).toFixed(0)}%)</span>
+                    <span style={{ color: T.sub }}> · </span>
+                    <span style={{ color: T.red }}>rojo {Mh - up}/{Mh} ({((Mh - up) / Mh * 100).toFixed(0)}%)</span>
+                  </span>
+                </div>
+              )}
+              <ErMiniChart evs={xsC.evs} field={chartSel} nextEm={emOk ? em : NaN} title={tit + " · banda = EM · toca otra POP para cambiar"} />
+            </div>
+          );
         })()}
         {isFinite(popOpenS) && (
           <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
