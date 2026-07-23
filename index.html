@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.76"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.78"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -11419,7 +11419,6 @@ function App() {
     )}
     {!wizOpen && (() => {
       const NAV = [["bloques", "portfolio", "Portfolio"], ["movimientos", "movimientos", "Movimientos"], ["vencimientos", "vencimientos", "Vencimientos"], ["comparador", "comparador", "Herramientas"], ["ajustes", "ajustes", "Ajustes"]];
-      const NAV_BLUE = "#4C9AF5";
       const activeIdx = Math.max(0, NAV.findIndex(([id]) => id === view));
       /* deslizar el dedo por la barra: el pill sigue el dedo (navHover) y al soltar selecciona esa pestaña.
          El índice se calcula por la posición X del dedo dentro de la zona de pestañas (descontando el padding). */
@@ -11430,6 +11429,12 @@ function App() {
         return Math.max(0, Math.min(NAV.length - 1, Math.floor(((clientX - innerLeft) / innerW) * NAV.length)));
       };
       const shownIdx = navHover != null ? navHover : activeIdx;
+      /* v3.77 (Victor: "el color no cuadra, el círculo queda justo, el deslizamiento no es fluido"):
+         rediseño — (1) colores DEL TEMA: fondo crema translúcido (oscuro en tema oscuro) y pill activo
+         T.dark con texto blanco, el mismo lenguaje de chips del resto de la app (fuera el azul #4C9AF5);
+         (2) más aire: barra y pill más altos, radio mayor, label a 10px; (3) fluidez: el pill se mueve
+         con transform:translateX (GPU) en vez de `left` (layout por frame — esa era la falta de fluidez). */
+      const barBg = DARK ? "rgba(28,28,34,0.82)" : "rgba(252,250,246,0.90)";
       return (
       <div style={{ position: "fixed", left: 12, right: 12, bottom: 24, display: "flex", justifyContent: "center", zIndex: 40, pointerEvents: "none" }}>
         <div ref={navBarRef}
@@ -11437,25 +11442,26 @@ function App() {
           onTouchMove={(e) => setNavHover(idxFromX(e.touches[0].clientX))}
           onTouchEnd={() => { if (navHover != null) selectView(NAV[navHover][0]); setNavHover(null); }}
           onTouchCancel={() => setNavHover(null)}
-          style={{ position: "relative", display: "flex", width: "100%", maxWidth: 540, background: "rgba(24,24,30,0.68)", backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)", borderRadius: 26, padding: "7px 8px", boxShadow: "0 12px 34px rgba(0,0,0,0.35)", border: "0.5px solid rgba(255,255,255,0.08)", pointerEvents: "auto", touchAction: "none" }}>
-          {/* pill deslizante: se mueve bajo el dedo (o a la pestaña activa) con transición suave */}
-          <div style={{ position: "absolute", top: 6, bottom: 6, left: `calc(8px + ${shownIdx} * (100% - 16px) / ${NAV.length})`, width: `calc((100% - 16px) / ${NAV.length})`, background: navHover != null ? "rgba(76,154,245,0.32)" : "rgba(76,154,245,0.20)", border: `1px solid rgba(76,154,245,${navHover != null ? 0.6 : 0.35})`, borderRadius: 19, transition: "left 0.19s cubic-bezier(0.22,1,0.36,1), background 0.15s", pointerEvents: "none" }} />
+          style={{ position: "relative", display: "flex", width: "100%", maxWidth: 540, background: barBg, backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)", borderRadius: 28, padding: "8px 9px", boxShadow: DARK ? "0 12px 34px rgba(0,0,0,0.45)" : "0 10px 30px rgba(30,30,40,0.16)", border: "0.5px solid " + (DARK ? "rgba(255,255,255,0.08)" : "rgba(20,20,25,0.07)"), pointerEvents: "auto", touchAction: "none" }}>
+          {/* pill deslizante: fijo en la primera celda, viaja con translateX(idx·100%) — GPU, sin layout */}
+          <div style={{ position: "absolute", top: 5, bottom: 5, left: 9, width: `calc((100% - 18px) / ${NAV.length})`, transform: `translateX(${shownIdx * 100}%)`, background: T.dark, opacity: navHover != null ? 0.88 : 1, borderRadius: 22, transition: "transform 0.32s cubic-bezier(0.3,1.12,0.35,1), opacity 0.15s", willChange: "transform", boxShadow: "0 4px 14px rgba(20,20,30,0.25)", pointerEvents: "none" }} />
           {NAV.map(([id, icon, label], i) => {
             const on = shownIdx === i;
             return (
               <button key={id} onClick={() => selectView(id)} style={{
-                position: "relative", zIndex: 1, flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, border: "none", cursor: "pointer",
-                background: "transparent", borderRadius: 19, padding: "7px 0 6px",
-                color: on ? NAV_BLUE : "rgba(255,255,255,0.92)", transition: "color 0.15s",
-              }}>
+                position: "relative", zIndex: 1, flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3.5, border: "none", cursor: "pointer",
+                background: "transparent", borderRadius: 22, padding: "8px 3px 7px",
+                color: on ? "#fff" : T.sub, transition: "color 0.18s",
+              }}>{/* v3.78 (Victor, con captura): "Vencimientos" a 10px llenaba la celda — tocaba el pill y
+                   a los vecinos. Etiquetas a 9px sin tracking + 3px de margen lateral + clip de seguridad. */}
                 <span style={{ position: "relative", display: "inline-flex" }}>
                   <NavIcon name={icon} />
                   {/* v3.46: punto rojo si hay opciones vencidas y aún abiertas — refuerzo pasivo del banner */}
                   {icon === "vencimientos" && positions.some((pp) => !pp.closed && pp.expiry && pp.expiry < new Date().toISOString().slice(0, 10)) && (
-                    <span style={{ position: "absolute", top: -2, right: -5, width: 7, height: 7, borderRadius: 4, background: "#E5484D", border: "1.5px solid rgba(24,24,30,0.9)" }} />
+                    <span style={{ position: "absolute", top: -2, right: -5, width: 7, height: 7, borderRadius: 4, background: "#E5484D", border: "1.5px solid " + barBg }} />
                   )}
                 </span>
-                <span style={{ fontSize: 9.5, fontWeight: on ? 800 : 600, letterSpacing: 0.1, whiteSpace: "nowrap", color: on ? NAV_BLUE : "rgba(255,255,255,0.92)" }}>{label}</span>
+                <span style={{ fontSize: 9, fontWeight: on ? 800 : 650, letterSpacing: 0, whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden" }}>{label}</span>
               </button>
             );
           })}
