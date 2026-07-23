@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.67"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.69"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2014,13 +2014,13 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
           </div>
           <div style={{ textAlign: "right", flex: "none" }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.6, textTransform: "uppercase" }}>P&L abierto</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: totalPnl >= 0 ? T.green : T.red, letterSpacing: -0.5, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{signMoney(totalPnl)}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: totalPnl >= 0 ? T.green : T.red, letterSpacing: -0.5, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{(totalPnl >= 0 ? "+" : "−") + sym + money(Math.abs(cv(totalPnl)))}</div>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
-          {/* v1.45: orden pedido por Victor — Riesgo · MKT VL · Posiciones · Liquidez. v3.66: MKT VL
-              respeta el selector USD/EUR; Riesgo se queda en USD (es métrica de sizing, no de valor). */}
-          {[["Riesgo", "$" + money(totalRiesgo)], ["MKT VL", sym + money(cv(mktvl))], ["Pos.", String(nPos)], ["Liquidez", nlv > 0 ? pct(cash / nlv, 0) : "—"]].map(([l, v]) => (
+          {/* v1.45: orden pedido por Victor — Riesgo · MKT VL · Posiciones · Liquidez. v3.66/v3.68: los
+              importes respetan el selector USD/EUR (Victor pidió incluir también Riesgo, cash y P&L). */}
+          {[["Riesgo", sym + money(cv(totalRiesgo))], ["MKT VL", sym + money(cv(mktvl))], ["Pos.", String(nPos)], ["Liquidez", nlv > 0 ? pct(cash / nlv, 0) : "—"]].map(([l, v]) => (
             <div key={l} style={{ background: T.tile, borderRadius: 13, padding: "9px 3px", textAlign: "center", minWidth: 0, overflow: "hidden" }}>
               <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 2 }}>{l}</div>
@@ -2046,8 +2046,8 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
             {broker === "Todos" ? (
               <>
-                <Tile label={"Cash (" + brokers.join(" + ") + ")"} value={(cash < 0 ? "-$" : "$") + money(Math.abs(cash))} />
-                <Tile label={"Margin (" + brokers.join(" + ") + ")"} value={"$" + money(margin)} />
+                <Tile label={"Cash (" + brokers.join(" + ") + ")"} value={(cash < 0 ? "-" + sym : sym) + money(Math.abs(cv(cash)))} />
+                <Tile label={"Margin (" + brokers.join(" + ") + ")"} value={sym + money(cv(margin))} />
               </>
             ) : (
               <>
@@ -2056,6 +2056,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
               </>
             )}
           </div>
+          {showEur && broker !== "Todos" && <div style={{ fontSize: 10.5, color: T.gold, fontWeight: 700, background: T.tileAmber, borderRadius: 10, padding: "7px 10px" }}>Los campos editables se guardan SIEMPRE en USD — el selector EUR solo traduce lo que se muestra.</div>}
           {broker !== "Todos" && <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, background: T.tile, borderRadius: 10, padding: "8px 10px", lineHeight: 1.5 }}>
             💡 El cash de B0 ya se suma solo al Cash y al MKT VL — no lo dupliques aquí. Este campo es solo para cash <b>negativo</b> (débito de margen), que solo debería existir si no tienes cash en B0. El margen, tal como lo muestra el bróker.
           </div>}
@@ -2066,7 +2067,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
             ⚠️ Hay un cash manual positivo guardado. Muévelo a una posición Cash en B0 y deja este campo a 0 (o en negativo si es débito de margen).
           </div>}
           {broker === "Todos" && brokers.length > 1 && <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, padding: "0 2px" }}>Elige un bróker arriba para editar su cash/margin.</div>}
-          <Tile label="Excess Liq (auto = NLV − Margin)" value={(el < 0 ? "-$" : "$") + money(Math.abs(el))} tone={el > 0 ? "green" : "red"} />
+          <Tile label="Excess Liq (auto = NLV − Margin)" value={(el < 0 ? "-" + sym : sym) + money(Math.abs(cv(el)))} tone={el > 0 ? "green" : "red"} />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 3 }}>
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
@@ -7180,7 +7181,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   }, []);
   /* v1.34: vaciar el formulario para el siguiente análisis — el riesgo objetivo (global) se conserva
      y ni las ideas guardadas ni el histórico de tablas se tocan (cada uno tiene su ✕ propia). */
-  const clearCalc = () => setMany({ tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", wings: [], putOff: "0", callOff: "0", spSOff: "0", spLOff: "0", spCredit: "" });
+  const clearCalc = () => setMany({ tkr: "", spot: "", em: "", wing: "5", put: "", call: "", credit: "", nHist: "", xOpen: "", xClose: "", xHigh: "", xLow: "", nUp: "", wings: [], putOff: "0", callOff: "0", putAbs: "", callAbs: "", spSOff: "0", spLOff: "0", spSAbs: "", spLAbs: "", spCredit: "" });
   const dropIdea = (id) => {
     if (ideaArm !== id) { setIdeaArm(id); setTimeout(() => setIdeaArm((d) => (d === id ? null : d)), 3000); return; }
     const list = loadErIdeas().filter((x) => x && x.id !== id);
@@ -7256,9 +7257,12 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
      sizing, EV — lee estos cortos, así que mover un strike recalcula el margen entero en vivo. El desvío
      se guarda con el formulario (y con la idea); Generar spreads y cambiar de ticker lo resetean. */
   const putOff = Math.round(pf(st.putOff) || 0), callOff = Math.round(pf(st.callOff) || 0);
-  const shortPut = emOk ? roundStrike(spot * (1 - em / 100), spot) + putOff * strikeStep(spot) : NaN;
-  const shortCall = emOk ? roundStrike(spot * (1 + em / 100), spot) + callOff * strikeStep(spot) : NaN;
-  const nudge = (k) => (d) => { const cur = Math.round(pf(st[k]) || 0); const wN = r && isFinite(r.width) && r.width > 0 ? r.width : pf(st.wing); const nsP = k === "putOff" ? shortPut + d * strikeStep(spot) : shortPut; const nsC = k === "callOff" ? shortCall + d * strikeStep(spot) : shortCall; setMany({ [k]: String(cur + d), ...(emOk && isFinite(wN) && wN > 0 ? { put: fmtK(nsP) + "/" + fmtK(nsP - wN), call: fmtK(nsC) + "/" + fmtK(nsC + wN) } : {}) }); };
+  const shortPut = emOk ? (pf(st.putAbs) > 0 ? pf(st.putAbs) : roundStrike(spot * (1 - em / 100), spot) + putOff * strikeStep(spot)) : NaN; /* v3.69: strike escrito a mano manda */
+  const shortCall = emOk ? (pf(st.callAbs) > 0 ? pf(st.callAbs) : roundStrike(spot * (1 + em / 100), spot) + callOff * strikeStep(spot)) : NaN;
+  const nudge = (k) => (d) => { const abs = k === "putOff" ? pf(st.putAbs) : pf(st.callAbs); const cur = Math.round(pf(st[k]) || 0); const wN = r && isFinite(r.width) && r.width > 0 ? r.width : pf(st.wing); const nsP = k === "putOff" ? shortPut + d * strikeStep(spot) : shortPut; const nsC = k === "callOff" ? shortCall + d * strikeStep(spot) : shortCall; const patch = abs > 0 ? { [k === "putOff" ? "putAbs" : "callAbs"]: String(k === "putOff" ? nsP : nsC) } : { [k]: String(cur + d) }; setMany({ ...patch, ...(emOk && isFinite(wN) && wN > 0 ? { put: fmtK(nsP) + "/" + fmtK(nsP - wN), call: fmtK(nsC) + "/" + fmtK(nsC + wN) } : {}) }); };
+  /* v3.69: escribir el strike directamente — guarda el texto tal cual (putAbs/callAbs) y, si parsea,
+     reescribe el spread de esa pata con el ancho vigente. Vaciar el campo = volver al automático. */
+  const typeAbs = (k) => (v) => { const wN = r && isFinite(r.width) && r.width > 0 ? r.width : pf(st.wing); const num = pf(v); const patch = { [k]: v }; if (Number.isFinite(num) && num > 0 && emOk && isFinite(wN) && wN > 0) { if (k === "putAbs") patch.put = fmtK(num) + "/" + fmtK(num - wN); else patch.call = fmtK(num) + "/" + fmtK(num + wN); } setMany(patch); };
   const wing = pf(st.wing);
   /* v1.66 FIX (Victor, con su IC de ASML: "no calcula bien con patas de 10"): fmtK generaba "1,640" con
      separador de miles y el parser leía 1.64 — el ancho de CUALQUIER ticker de más de $1,000 salía 0.01 y
@@ -7267,7 +7271,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   const genSpreads = () => {
     if (!emOk || !isFinite(wing) || wing <= 0) return;
     const p0 = roundStrike(spot * (1 - em / 100), spot), c0 = roundStrike(spot * (1 + em / 100), spot);
-    setMany({ putOff: "0", callOff: "0", put: fmtK(p0) + "/" + fmtK(p0 - wing), call: fmtK(c0) + "/" + fmtK(c0 + wing) }); /* v1.66: generar = volver al EM */
+    setMany({ putOff: "0", callOff: "0", putAbs: "", callAbs: "", put: fmtK(p0) + "/" + fmtK(p0 - wing), call: fmtK(c0) + "/" + fmtK(c0 + wing) }); /* v1.66: generar = volver al EM */
   };
   /* v1.61: al cambiar el ancho del ala, los spreads se regeneran solos (si hay spot y EM). Antes el
      selector cambiaba pero el sizing seguía calculando con el ancho de los strikes viejos, así que la
@@ -7471,16 +7475,18 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     </div>
   );
   const Dot = ({ c }) => <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 4, background: c, marginRight: 4 }} />;
-  const StrikeTile = ({ side, k, pct, onNudge }) => {
+  const StrikeTile = ({ side, k, pct, onNudge, raw, onType }) => {
     const inside = Math.abs(pct) < em; // dentro del EM → más expuesto que lo pedido
     const bt = { border: "none", cursor: "pointer", width: 30, height: 30, borderRadius: 9, background: T.card, color: T.ink, fontSize: 16, fontWeight: 800, lineHeight: 1, padding: 0, flex: "none" };
     return (
       <div style={{ background: inside ? T.tileAmber : T.tileGreen, borderRadius: 15, padding: "10px 8px", textAlign: "center", minWidth: 0 }}>
         <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>{side}</div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 3 }}>
-          {/* v1.66: −/+ mueven el corto un escalón del bróker; el % de margen y todo el sizing se recalculan al vuelo */}
+          {/* v1.66: −/+ mueven el corto un escalón del bróker. v3.69 (Victor): el número es EDITABLE —
+              escribir un strike activa el modo manual (raw); borrar el campo vuelve al automático. */}
           <button type="button" style={bt} onClick={() => onNudge(-1)} aria-label="Strike abajo">−</button>
-          <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, letterSpacing: -0.3, minWidth: 0 }}>{fmtK(k)}</div>
+          <input inputMode="decimal" value={raw != null && raw !== "" ? raw : Number.isFinite(k) ? String(k) : ""} onChange={(e) => onType(e.target.value)}
+            style={{ width: 72, textAlign: "center", fontSize: 19, fontWeight: 800, color: T.ink, letterSpacing: -0.3, background: "transparent", border: "none", borderBottom: "1.5px dashed " + (raw ? T.gold : T.line), outline: "none", padding: 0, fontVariantNumeric: "tabular-nums" }} />
           <button type="button" style={bt} onClick={() => onNudge(1)} aria-label="Strike arriba">+</button>
         </div>
         <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2, color: inside ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>{sgn(pct) + Math.abs(pct).toFixed(2) + "%"}</div>
@@ -7768,8 +7774,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           const place = st.spPlace === "Δ30" ? "D30" : "ATM";
           const emD = spot * em / 100, stp = strikeStep(spot);
           const sOff = Math.round(pf(st.spSOff) || 0), lOff = Math.round(pf(st.spLOff) || 0);
-          const shortK = roundStrike(place === "ATM" ? spot : side === "P" ? spot - 0.65 * emD : spot + 0.65 * emD, spot) + sOff * stp;
-          const longK = roundStrike(side === "P" ? shortK - emD : shortK + emD, spot) + lOff * stp;
+          const shortK = pf(st.spSAbs) > 0 ? pf(st.spSAbs) : roundStrike(place === "ATM" ? spot : side === "P" ? spot - 0.65 * emD : spot + 0.65 * emD, spot) + sOff * stp; /* v3.69: escrito a mano manda */
+          const longK = pf(st.spLAbs) > 0 ? pf(st.spLAbs) : roundStrike(side === "P" ? shortK - emD : shortK + emD, spot) + lOff * stp;
           const width = Math.abs(shortK - longK);
           const minC = width * (place === "ATM" ? 0.5 : 1 / 3);
           const sPct = (shortK - spot) / spot * 100, lPct = (longK - spot) / spot * 100;
@@ -7785,12 +7791,12 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           return (
             <div style={{ background: T.tile, borderRadius: 18, padding: "14px 14px 12px", display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <label><div style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Lado</div><Pill options={["PUT", "CALL"]} value={side === "C" ? "CALL" : "PUT"} onChange={(v) => setMany({ spSide: v, spSOff: "0", spLOff: "0" })} size="sm" /></label>
-                <label><div style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Colocación de la corta</div><Pill options={["ATM", "Δ30"]} value={place === "D30" ? "Δ30" : "ATM"} onChange={(v) => setMany({ spPlace: v, spSOff: "0", spLOff: "0" })} size="sm" /></label>
+                <label><div style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Lado</div><Pill options={["PUT", "CALL"]} value={side === "C" ? "CALL" : "PUT"} onChange={(v) => setMany({ spSide: v, spSOff: "0", spLOff: "0", spSAbs: "", spLAbs: "" })} size="sm" /></label>
+                <label><div style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Colocación de la corta</div><Pill options={["ATM", "Δ30"]} value={place === "D30" ? "Δ30" : "ATM"} onChange={(v) => setMany({ spPlace: v, spSOff: "0", spLOff: "0", spSAbs: "", spLAbs: "" })} size="sm" /></label>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <StrikeTile side={"Short " + (side === "P" ? "put" : "call") + (place === "D30" ? " · ≈Δ30" : " · ATM")} k={shortK} pct={sPct} onNudge={(d) => set("spSOff")(String(sOff + d))} />
-                <StrikeTile side={"Long " + (side === "P" ? "put" : "call") + " · 1 EM"} k={longK} pct={lPct} onNudge={(d) => set("spLOff")(String(lOff + d))} />
+                <StrikeTile side={"Short " + (side === "P" ? "put" : "call") + (place === "D30" ? " · ≈Δ30" : " · ATM")} k={shortK} pct={sPct} onNudge={(d) => (pf(st.spSAbs) > 0 ? set("spSAbs")(String(shortK + d * stp)) : set("spSOff")(String(sOff + d)))} raw={st.spSAbs || ""} onType={set("spSAbs")} />
+                <StrikeTile side={"Long " + (side === "P" ? "put" : "call") + " · 1 EM"} k={longK} pct={lPct} onNudge={(d) => (pf(st.spLAbs) > 0 ? set("spLAbs")(String(longK + d * stp)) : set("spLOff")(String(lOff + d)))} raw={st.spLAbs || ""} onType={set("spLAbs")} />
               </div>
               {place === "D30" && <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>Δ30 estimada del EM (sin greeks): corta a 0.65 × EM del spot. Contrasta con la delta real del bróker antes de abrir.</div>}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
@@ -7815,8 +7821,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         {icMode && (<>
         {emOk && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <StrikeTile side="Short put" k={shortPut} pct={putPct} onNudge={nudge("putOff")} />
-            <StrikeTile side="Short call" k={shortCall} pct={callPct} onNudge={nudge("callOff")} />
+            <StrikeTile side="Short put" k={shortPut} pct={putPct} onNudge={nudge("putOff")} raw={st.putAbs || ""} onType={typeAbs("putAbs")} />
+            <StrikeTile side="Short call" k={shortCall} pct={callPct} onNudge={nudge("callOff")} raw={st.callAbs || ""} onType={typeAbs("callAbs")} />
           </div>
         )}
         {emOk && Math.abs(asym) >= 0.2 && (
