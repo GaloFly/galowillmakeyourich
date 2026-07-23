@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.75"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.76"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7212,7 +7212,6 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   /* v1.71: junto al spot, el PRÓXIMO EARNINGS del calendario de Finnhub — fecha y si es pre o post market
      (la sesión decide cuándo abres: AMC se abre ese mismo día 15:30-16:00; BMO, la tarde ANTERIOR). */
   const [erCal, setErCal] = useState(null); // { tkr, date, hour } | { tkr, none: true }
-  const [histOpen, setHistOpen] = useState(false); /* v1.73: M/X/U plegados — casi siempre los rellena el lector */
   const [chartSel, setChartSel] = useState("open"); /* v3.70 (Victor): el gráfico bajo las POP sigue a la tile tocada; Open por defecto (es su salida) */
   const [minInfo, setMinInfo] = useState(null); /* v3.75: hoja ⓘ del crédito mínimo dinámico ({t:"ic"|"sp", d:{...}}) */
   const [infoSym, setInfoSym] = useState(null); /* v1.73: tarjeta con la leyenda Ø desplegada */
@@ -8023,22 +8022,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
            (subir ideas es el primer gesto, no el último) y los campos M/X/U se pliegan — casi siempre los
            rellena el lector; a mano solo cuando no hay tabla. Lo que queda a la vista es lo que se LEE:
            las 4 POP, la suavizada, los últimos 6 y la recomendación. */}
-        <button type="button" onClick={() => setHistOpen((v) => !v)}
-          style={{ border: "none", cursor: "pointer", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 800, background: T.tile, color: T.sub, textAlign: "left" }}>
-          {histOpen ? "▾" : "▸"} Editar histórico a mano (M · fuera del EM · verdes) {histOpen ? "" : "— lo rellena el lector"}
-        </button>
-        {histOpen && (<>
-        <WizInput label="Earnings analizados (M)" value={st.nHist} onChange={set("nHist")} inputMode="numeric" placeholder="16" span={2} />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <WizInput label="Fuera del EM · Open" value={st.xOpen} onChange={set("xOpen")} inputMode="numeric" placeholder="2" />
-          <WizInput label="Fuera del EM · Close" value={st.xClose} onChange={set("xClose")} inputMode="numeric" placeholder="3" />
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <WizInput label="Fuera del EM · High" value={st.xHigh} onChange={set("xHigh")} inputMode="numeric" placeholder="4" />
-          <WizInput label="Fuera del EM · Low" value={st.xLow} onChange={set("xLow")} inputMode="numeric" placeholder="3" />
-        </div>
-        <WizInput label="Cerró en verde (U)" value={st.nUp} onChange={set("nUp")} inputMode="numeric" placeholder="11" />
-        </>)}
+        {/* v3.76 (Victor): FUERA el "Editar histórico a mano" (M/X/U) — ya no tiene sentido: esos campos
+           los rellenan las tarjetas, la reconstrucción y el screener.json; siguen en el estado (applyHist)
+           pero sin editor en pantalla. */}
         {scen.some((s) => isFinite(s.pop)) && (
           /* v3.70: las 4 POP son ahora un SELECTOR — tocar una pinta debajo el gráfico de esa serie
              (barras por earnings + banda ±EM + columna del EM próximo, el mismo chart del screener).
@@ -8068,16 +8054,29 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
              manda si el trade fuera un spread en vez del cóndor. */
           const Mh = xsC.evs.length;
           const up = chartSel === "open" ? xsC.nOpenUp : chartSel === "close" ? xsC.evs.filter((e) => Number(e.close) > 0).length : null;
+          /* v3.76 (Victor): en CADA serie, su MAYOR movimiento (magnitud máxima, con signo y periodo) */
+          let mxV = NaN, mxP = null;
+          xsC.evs.forEach((e) => { const v = Number(e[chartSel]); if (Number.isFinite(v) && (!Number.isFinite(mxV) || Math.abs(v) > Math.abs(mxV))) { mxV = v; mxP = e.periodo || null; } });
+          const serieLbl = { open: "Open", close: "Close", high: "High", low: "Low" }[chartSel];
           return (
             <div>
-              {up != null && Mh > 0 && (
-                <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 2 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{chartSel === "open" ? "Abre en" : "Cierra en"}</span>
-                  <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-                    <span style={{ color: T.green }}>verde {up}/{Mh} ({(up / Mh * 100).toFixed(0)}%)</span>
-                    <span style={{ color: T.sub }}> · </span>
-                    <span style={{ color: T.red }}>rojo {Mh - up}/{Mh} ({((Mh - up) / Mh * 100).toFixed(0)}%)</span>
-                  </span>
+              {Mh > 0 && (
+                <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
+                  {up != null ? (
+                    <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{chartSel === "open" ? "Abre en " : "Cierra en "}</span>
+                      <span style={{ color: T.green }}>verde {up}/{Mh} ({(up / Mh * 100).toFixed(0)}%)</span>
+                      <span style={{ color: T.sub }}> · </span>
+                      <span style={{ color: T.red }}>rojo {Mh - up}/{Mh} ({((Mh - up) / Mh * 100).toFixed(0)}%)</span>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>Serie {serieLbl}</span>
+                  )}
+                  {Number.isFinite(mxV) && (
+                    <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: mxV >= 0 ? T.green : T.red }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>mayor </span>{(mxV >= 0 ? "+" : "") + mxV.toFixed(0)}%{mxP ? <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}> ({mxP})</span> : null}
+                    </span>
+                  )}
                 </div>
               )}
               <ErMiniChart evs={xsC.evs} field={chartSel} nextEm={emOk ? em : NaN} title={tit + " · banda = EM · toca otra POP para cambiar"} />
