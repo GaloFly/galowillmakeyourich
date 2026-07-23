@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.64"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.65"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7702,6 +7702,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
             </div>
           )
         )}
+        {reco && (
+          /* v3.65 (Victor): la sugerencia del histórico se lee ANTES de elegir — informa la elección */
+          <div style={{ background: reco.bg, borderRadius: 15, padding: "12px 14px" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: reco.col }}>Estrategia sugerida: {reco.t}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.45 }}>{reco.txt}</div>
+          </div>
+        )}
         {emOk && (
           /* v3.64 (Victor): selector de estrategia bajo spot/EM. IC = todo el panel de siempre; Credit
              spread = lado PUT/CALL + colocación ATM/Δ30 con strikes automáticos. El Δ30 se ESTIMA del EM
@@ -7917,6 +7924,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           <WizInput label="Riesgo objetivo $ / op" value={st.obj} onChange={set("obj")} inputMode="decimal" placeholder="500" />
         </div>
         <WizSection>▸ Probabilidad · histórico</WizSection>
+        </>)}
+        {/* v3.65 (Victor): las ESTADÍSTICAS (histórico a mano, 4 POP, suavizada, últimos 6) quedan FUERA
+           del modo — se ven igual con IC que con spread; solo strikes/ala/comparador y sizing son de IC. */}
         {/* v1.73 (Victor: "toda la parte de abajo es un poco confusa"): el lector se va ARRIBA del todo
            (subir ideas es el primer gesto, no el último) y los campos M/X/U se pliegan — casi siempre los
            rellena el lector; a mano solo cuando no hay tabla. Lo que queda a la vista es lo que se LEE:
@@ -7973,12 +7983,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
             Manda <b>Open</b> (sales al abrir). <b>High/Low</b> = extremos del día; con <b>Close</b> alimentan el plan B.
           </div>
         )}
-        {reco && (
-          <div style={{ background: reco.bg, borderRadius: 15, padding: "12px 14px" }}>
-            <div style={{ fontSize: 13.5, fontWeight: 800, color: reco.col }}>Estrategia sugerida: {reco.t}</div>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.45 }}>{reco.txt}</div>
-          </div>
-        )}
+        {/* v3.65: la recomendación de estrategia sube ANTES del selector (petición de Victor) */}
+        {icMode && (<>
         {r && r.maxLossPC > 0 && (
           <>
             <WizSection>▸ Sizing y esperanza</WizSection>
