@@ -1,5 +1,28 @@
 # CHANGELOG — Bloques
 
+## v3.66 — selector USD/EUR en el valor de cuenta (solo visualización)
+Victor descartó el sistema de conversión por posición (”¿no se va a liar mucho
+todo?”) en favor de la versión ligera: un toggle USD | EUR junto a “Valor de la
+cuenta” que traduce SOLO lo que se ve — el valor de cuenta (NLV), el cambio del
+día en importe y el tile MKT VL. Nada se guarda ni se calcula en euros: el motor
+sigue 100% USD. Defecto: USD (persistido en localStorage).
+Tipo de cambio: referencia oficial del BCE vía api.frankfurter.app (sin key,
+sin CORS), cacheado un día en localStorage; bajo el importe se muestra
+“1 USD = 0.XXXX € · BCE fecha”. Si la llamada falla y no hay caché, se queda en
+USD con aviso. El Riesgo se mantiene en USD a propósito (métrica de sizing).
+NOTA: el problema original (posiciones REGISTRADAS en euros mezclando divisas
+en las sumas) sigue existiendo — el parche acordado es meterlas ya convertidas
+a USD al tipo del día de la operación.
+Babel 0 errores + montaje jsdom con toggle verificado (v3.66).
+v3.67 — FIX del tipo de cambio (“no ha funcionado”)
+Causa más probable: Frankfurter migró su API a api.frankfurter.dev y el
+endpoint antiguo (.app) puede fallar según red/navegador. La llamada pasa a
+CASCADA de 3 fuentes sin key (frankfurter.dev → frankfurter.app → er-api.com);
+la primera que devuelva un número gana y se cachea con su fuente en la leyenda.
+Si fallan las tres, la leyenda lo dice en claro (“sin conexión con las fuentes
+de cambio — mostrando USD, reintenta con el toggle”) y el reintento es
+automático al volver a tocar EUR. Babel + jsdom OK.
+
 ## v3.65 — recolocación pedida por Victor
 	•	La “Estrategia sugerida” del histórico sube ANTES del botón “Seleccionar
 estrategia”: se lee la recomendación y luego se elige.
