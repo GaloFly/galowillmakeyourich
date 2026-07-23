@@ -1,5 +1,25 @@
 # CHANGELOG — Bloques
 
+## v3.77 — rediseño de la barra de navegación inferior (pedido por Victor)
+Tres males, tres arreglos:
+	1.	COLOR: fuera el gris-azulado con acento #4C9AF5 ajeno a la paleta. La barra
+pasa a crema translúcido del tema (oscuro en tema oscuro) con borde y sombra
+suaves, y el pill activo es T.dark con texto blanco — el mismo lenguaje de
+chips que usa toda la app.
+	2.	AIRE: barra y pill más altos (padding 8px, pill inset 5px, radio 28/22),
+label a 10px con más peso — el icono y el nombre ya no van justos.
+	3.	FLUIDEZ: el pill deja de animarse con left (fuerza layout en cada frame —
+esa era la falta de fluidez) y pasa a transform:translateX(idx·100%) con
+willChange — animación en GPU, curva 0.32s con leve sobreimpulso. El
+arrastre con el dedo (navHover) se mantiene idéntico, ahora suave.
+El punto rojo de Vencimientos toma el borde del color de la barra. Babel +
+montaje jsdom con el translateX verificado (v3.77).
+v3.78 — retoque de la barra: etiquetas con aire (captura de Victor)
+“Vencimientos” a 10px llenaba su celda: tocaba el borde del pill y a las
+etiquetas vecinas. Fix: etiquetas a 9px sin tracking, 3px de margen lateral en
+cada pestaña y clip de seguridad (nowrap + overflow hidden) para pantallas
+estrechas. Babel + montaje jsdom OK (v3.78).
+
 ## v3.75 — crédito mínimo DINÁMICO con ideal y ficha ⓘ (caso AXP de Victor)
 Problema: la regla del tercio está calibrada para POP ~70% y sobre-exige a los
 nombres de POP alta — en AXP (POP suavizada 92.3%, ala 2.5) pedía $0.83 y el
