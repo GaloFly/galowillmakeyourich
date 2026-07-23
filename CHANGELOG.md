@@ -1,4 +1,14 @@
 # CHANGELOG — Bloques
+
+## v3.65 — recolocación pedida por Victor
+	•	La “Estrategia sugerida” del histórico sube ANTES del botón “Seleccionar
+estrategia”: se lee la recomendación y luego se elige.
+	•	Las ESTADÍSTICAS (editar histórico a mano, 4 tiles de POP, suavizada
+crudo→usada, últimos 6 earnings y sus notas) quedan fuera del modo: se ven
+igual con Iron Condor que con Credit spread. Solo strikes/ala/comparador y
+el bloque de sizing/EV/Abrir posición siguen siendo exclusivos del IC.
+Babel 0 errores + montaje jsdom OK (v3.65).
+
 ## v3.64 — Earnings con spreads: submenu, filtro del histórico y panel en la herramienta
 
 **Wizard:** tocar "Earnings" en el bloque 3 abre submenu Iron Condor / Spread.
