@@ -1,5 +1,35 @@
 # CHANGELOG — Bloques
 
+## v3.75 — crédito mínimo DINÁMICO con ideal y ficha ⓘ (caso AXP de Victor)
+Problema: la regla del tercio está calibrada para POP ~70% y sobre-exige a los
+nombres de POP alta — en AXP (POP suavizada 92.3%, ala 2.5) pedía $0.83 y el
+mercado paga ~$0.45: nunca llenaba.
+Regla nueva (IC y Credit spread): mín = ancho × (1 − (POP − 10 pts)), con
+suelo del 15% del ancho. El colchón fijo de 10 pts entre la POP suavizada y el
+win rate mínimo hace que la regla se adapte sola: AXP → $0.44 (llenable);
+POP 70% → $1.00 (MÁS exigente que el tercio, como debe). La probabilidad usada
+es la QUE MANDA en cada estrategia: IC → POP open suavizada; spread ATM →
+direccional suavizada del lado; spread Δ30 → Δ empírica suavizada (opens que
+respetaron la corta). Sin histórico → manda el estático.
+UI: el panel del ala muestra “mín $X · ideal ⅓ $Y” (el ideal como referencia:
+si lo pagan, mejor); el tile del spread “≥ $X · mín sugerido · ideal: $Y”;
+check verde/rojo y banner de calidad del sizing juzgan contra el dinámico
+(“por debajo del mín — no malvender”). Botón ⓘ en ambos → hoja explicativa con
+los números vivos: probabilidad usada, colchón de 10 pts, fórmula, suelo,
+ideal, y el aviso de asimetría (una rotura ≈ N ganadores).
+Verificado: AXP $0.44 / POP70 $1.00 / suelo $0.38 (sanity), babel, jsdom OK.
+v3.76 — fuera el editor manual del histórico + mayor movimiento por serie
+	•	ELIMINADO el desplegable “Editar histórico a mano (M · fuera del EM ·
+verdes)” — pedido por Victor: ya no tiene sentido, esos campos los rellenan
+las tarjetas, la reconstrucción y el screener.json. Los campos siguen en el
+estado (applyHist) — solo desaparece el editor de pantalla.
+	•	El strip bajo las POP sale ahora en LAS CUATRO series y añade el MAYOR
+MOVIMIENTO de la serie seleccionada (magnitud máxima con signo y periodo):
+Open/Close mantienen además la direccional verde/rojo; High/Low muestran
+“Serie High · mayor +18% (oct24)”.
+Babel + montaje jsdom OK (v3.76). (Nota: los histOpens que quedan en código
+son otra variable — el array de opens del plan B, sin relación con el editor.)
+
 ## v3.74 — FIX del crash “Can’t find variable: sgn” (captura de Victor)
 Secuela del movimiento de la v3.73: StrikeTile, ya a nivel de módulo, seguía
 usando el helper sgn que es LOCAL de EarningsToolContent → crash al pintar la
