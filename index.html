@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.73"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.74"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6442,7 +6442,7 @@ function StrikeTile({ side, k, pct, em, onNudge, raw, onType }) {
           style={{ width: 72, textAlign: "center", fontSize: 19, fontWeight: 800, color: T.ink, letterSpacing: -0.3, background: "transparent", border: "none", borderBottom: "1.5px dashed " + (raw ? T.gold : T.line), outline: "none", padding: 0, fontVariantNumeric: "tabular-nums" }} />
         <button type="button" style={bt} onClick={() => onNudge(1)} aria-label="Strike arriba">+</button>
       </div>
-      <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2, color: inside ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>{sgn(pct) + Math.abs(pct).toFixed(2) + "%"}</div>
+      <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2, color: inside ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>{(pct >= 0 ? "+" : "−") + Math.abs(pct).toFixed(2) + "%"}</div> {/* v3.74: sgn era local de la herramienta — inline para que el módulo no dependa de él */}
       <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2, lineHeight: 1.2 }}>margen real · EM {Number.isFinite(em) ? em.toFixed(2) : "—"}%</div>
     </div>
   );
