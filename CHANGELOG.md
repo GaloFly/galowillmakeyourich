@@ -1,4 +1,31 @@
 # CHANGELOG — Bloques
+## v3.64 — Earnings con spreads: submenu, filtro del histórico y panel en la herramienta
+
+**Wizard:** tocar "Earnings" en el bloque 3 abre submenu Iron Condor / Spread.
+IC = el calco de siempre (tipo "Earnings"). Spread = el MISMO flujo del wizard
+de spreads (tipo "Spread") con la marca er:true, que lo agrupa en el histórico
+de Earnings. Elegir cualquier otra estrategia limpia la marca.
+
+**Histórico (Estrategias → Earnings):** chips Todo / Iron Condor / Spreads.
+Los spreads de earnings (er:true) viven en la categoría Earnings, no en Spreads.
+
+**Herramienta Earnings:**
+- FUERA el botón "Leer tabla de earnings" (cerrando la decisión del 17-jul:
+  los datos llegan del screener.json del servidor). runTableOcr queda en código.
+- Nuevo selector "Seleccionar estrategia" bajo spot/EM: Iron Condor (defecto,
+  todo el panel de siempre) o Credit spread.
+- Panel Credit spread: lado PUT/CALL + colocación ATM/Δ30. Corta automática —
+  ATM en el spot; Δ30 estimada del EM sin greeks (spot ∓ 0.65·EM, con aviso de
+  contrastar con la delta del bróker). Larga siempre a 1 EM de la corta. Ambas
+  con steppers al escalón. Crédito mínimo pintado según colocación (ATM ≥50%
+  del ancho, Δ30 ≥⅓) con check verde/rojo al apuntar el crédito del bróker y
+  riesgo por contrato. Stat que MANDA en un spread: la direccional del
+  histórico (abrió/cerró a favor del lado X/N) y, en Δ30, cuántos opens reales
+  habrían respetado la corta → la "Δ empírica" del ticker.
+
+Verificado: babel 0 errores, montaje jsdom OK, aritmética TSLA (spot 379,
+EM 5.6%): Δ30 PUT corta 365 / larga 345 / mín $6.67 · ATM corta 380 / larga
+360 / mín $10.00.
 
 ## ## v3.61 — anchos de ala 1 y 1.5 (pedidos por Victor)
 
