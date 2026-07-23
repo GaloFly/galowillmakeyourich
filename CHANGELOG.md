@@ -1,5 +1,22 @@
 # CHANGELOG — Bloques
 
+
+## v3.71 — FIX tamaño de las tiles POP selectoras (captura de Victor)
+El anillo de selección de la v3.70 (outline en un envoltorio) no coincidía con
+la tile y las cuatro tenían alturas distintas (la de Open, con etiqueta a dos
+líneas, era más alta). Fix: las 4 tiles pasan a markup propio idéntico —
+estiran a la celda del grid (misma altura siempre) y el borde de selección va
+DENTRO, transparente cuando no está activa, así seleccionar no cambia ni un
+píxel el tamaño. Colores/tonos como antes (Open coloreada por valor).
+Babel + montaje jsdom OK (v3.71).
+v3.72 — probabilidad direccional al tocar Open o Close (pedida por Victor)
+Al seleccionar la POP Open o la POP Close, sobre el gráfico aparece un strip
+con la probabilidad DIRECCIONAL de esa serie: “Abre en verde 5/11 (45%) · rojo
+6/11 (55%)” o “Cierra en verde/rojo” — verde y rojo coloreados. Es la dimensión
+que la POP no cuenta (permanencia dentro del EM ≠ dirección), y la que manda si
+el trade fuera un spread. High/Low no llevan strip (su dirección no aplica).
+Babel + montaje jsdom OK (v3.72).
+
 ## v3.70 — gráfico histórico interactivo bajo las POP de la herramienta
 Consultado por Victor (¿gráfico según la POP tocada, o fijo open+close como el
 screener?), se eligió el interactivo: las 4 tiles de POP (open/close/high/low)
