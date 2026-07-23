@@ -1,5 +1,28 @@
 # CHANGELOG — Bloques
 
+## v3.68 — el selector EUR alcanza Riesgo, cash y P&L abierto (pedido por Victor)
+En modo EUR se traducen ahora también: el tile Riesgo, el P&L abierto, y en el
+estado desplegado el Cash y Margin consolidados y el Excess Liq. Los RATIOS
+(Liquidez %, EL/NLV, apalancamiento) no cambian — son adimensionales. Los
+CAMPOS EDITABLES (cash negativo / margin por bróker) siguen guardándose en USD,
+con aviso ámbar visible cuando el selector está en EUR. El tile Excess Liq de
+la otra vista (línea 10215, fuera de AccountHero) queda en USD a propósito.
+Babel 0 errores + montaje jsdom OK (v3.68).
+v3.69 — strikes escribibles a mano en la herramienta Earnings (pedido por Victor)
+El número del strike en las tiles (Short put / Short call del IC, y corta/larga
+del panel de spread) pasa a ser un CAMPO EDITABLE además de los botones −/+:
+	•	Escribir un valor activa el modo manual (subrayado punteado en dorado) y ese
+strike manda sobre el automático — sin restricción de escalón (vale 1642.5
+aunque el modelo estime escalones de 5).
+	•	Los botones −/+ siguen funcionando en modo manual: mueven el valor escrito
+un escalón.
+	•	VACIAR el campo devuelve el strike al automático (EM/colocación + offsets).
+	•	En el IC, escribir el corto reescribe también el spread de esa pata con el
+ancho vigente (igual que hacían los −/+); “Generar spreads” y “Limpiar”
+resetean el modo manual. En el panel de spread, cambiar lado o colocación
+también lo resetea.
+Babel 0 errores + montaje jsdom OK (v3.69).
+
 ## v3.66 — selector USD/EUR en el valor de cuenta (solo visualización)
 Victor descartó el sistema de conversión por posición (”¿no se va a liar mucho
 todo?”) en favor de la versión ligera: un toggle USD | EUR junto a “Valor de la
