@@ -1,5 +1,16 @@
 # CHANGELOG — Bloques
 
+## v3.70 — gráfico histórico interactivo bajo las POP de la herramienta
+Consultado por Victor (¿gráfico según la POP tocada, o fijo open+close como el
+screener?), se eligió el interactivo: las 4 tiles de POP (open/close/high/low)
+son ahora un SELECTOR — tocar una pinta debajo el gráfico de esa serie (barras
+verde/rojo por earnings, banda ±EM, columna del EM próximo — el mismo
+ErMiniChart del screener). Open por defecto (la serie de su salida); High/Low
+sirven para el “aguanta o cierra” (hasta dónde llegó el susto intradía). Marco
+visual: borde en la tile activa + título del chart con la serie y el hint
+“toca otra POP para cambiar”. Requiere ≥3 earnings con datos del ticker cargado.
+Verificado: las 4 series renderizan (SSR), babel 0 errores, montaje jsdom OK.
+
 ## v3.68 — el selector EUR alcanza Riesgo, cash y P&L abierto (pedido por Victor)
 En modo EUR se traducen ahora también: el tile Riesgo, el P&L abierto, y en el
 estado desplegado el Cash y Margin consolidados y el Excess Liq. Los RATIOS
