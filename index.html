@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.74"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.75"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7214,6 +7214,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   const [erCal, setErCal] = useState(null); // { tkr, date, hour } | { tkr, none: true }
   const [histOpen, setHistOpen] = useState(false); /* v1.73: M/X/U plegados — casi siempre los rellena el lector */
   const [chartSel, setChartSel] = useState("open"); /* v3.70 (Victor): el gráfico bajo las POP sigue a la tile tocada; Open por defecto (es su salida) */
+  const [minInfo, setMinInfo] = useState(null); /* v3.75: hoja ⓘ del crédito mínimo dinámico ({t:"ic"|"sp", d:{...}}) */
   const [infoSym, setInfoSym] = useState(null); /* v1.73: tarjeta con la leyenda Ø desplegada */
   /* v1.77 (Victor: "mete que se vea en la tarjeta la fecha y pre/post"): la v1.73 solo guardaba
      calDate/calHour AL LEER una tabla — las tarjetas ya existentes se quedaban sin fecha para siempre.
@@ -7766,6 +7767,28 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
             <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.45 }}>{reco.txt}</div>
           </div>
         )}
+        {minInfo && (() => {
+          /* v3.75 (Victor): hoja explicativa del crédito mínimo — con los números vivos del caso */
+          const d = minInfo.d, ic = minInfo.t === "ic";
+          const popTxt = isFinite(d.pop) ? (d.pop * 100).toFixed(1) + "%" : "sin dato";
+          const wr = isFinite(d.pop) ? ((d.pop - 0.10) * 100).toFixed(1) + "%" : "—";
+          const ratioLoss = d.dyn > 0 ? ((d.w - d.dyn) / d.dyn).toFixed(1) : "—";
+          return (
+            <div onClick={() => setMinInfo(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,25,0.45)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: "22px 22px 0 0", padding: "18px 18px 28px", maxWidth: 560, width: "100%", maxHeight: "82vh", overflowY: "auto", boxShadow: T.shadow }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: T.ink }}>Cómo se calcula el crédito mínimo</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, lineHeight: 1.6, marginTop: 10, display: "grid", gap: 10 }}>
+                  <div><b style={{ color: T.ink }}>1 · La probabilidad que manda.</b> {ic ? "En el cóndor es la POP OPEN SUAVIZADA (Laplace: (M−X+1)/(M+2) — con pocos earnings y 0 roturas, el 100% crudo no es certeza)." : minInfo.d.place === "D30" ? "En un spread Δ30 es la Δ EMPÍRICA suavizada: cuántos opens reales respetaron la corta (" + d.fav + " de " + d.M + ")." : "En un spread ATM es la DIRECCIONAL suavizada: cuántas veces fue a favor del lado " + (d.side === "P" ? "PUT" : "CALL") + " (" + d.fav + " de " + d.M + ")."} Aquí: <b style={{ color: T.ink }}>{popTxt}</b>.</div>
+                  <div><b style={{ color: T.ink }}>2 · Colchón de 10 puntos.</b> Se exige que el win rate mínimo del trade quede 10 pts POR DEBAJO de esa probabilidad — el margen de error de una muestra pequeña. Win rate exigido: <b style={{ color: T.ink }}>{wr}</b>.</div>
+                  <div><b style={{ color: T.ink }}>3 · La fórmula.</b> mín = ancho × (1 − (POP − 10 pts)), con suelo del 15% del ancho para no vender céntimos que se come la fricción. Con ancho {d.w.toLocaleString("en-US", { maximumFractionDigits: 2 })}: <b style={{ color: T.gold }}>${d.dyn.toFixed(2)}</b>.</div>
+                  <div><b style={{ color: T.ink }}>4 · El ideal.</b> La referencia clásica ({ic ? "⅓ del ancho" : minInfo.d.place === "D30" ? "⅓ del ancho" : "50% del ancho"}) = <b style={{ color: T.ink }}>${d.ideal.toFixed(2)}</b>. Si te lo pagan, mejor — pero está calibrada para POP ~70% y sobre-exige a los nombres tranquilos: por eso en POP alta nunca llena.</div>
+                  <div><b style={{ color: T.red }}>El aviso.</b> Al cobrar el mínimo, una rotura borra ≈ <b style={{ color: T.red }}>{ratioLoss} ganadores</b>. El colchón de 10 pts existe para cubrir que la POP real de una muestra corta puede ser peor que la medida. Por debajo del mínimo NO se vende: se pasa al siguiente (categoría B — no malvender).</div>
+                </div>
+                <button type="button" onClick={() => setMinInfo(null)} style={{ marginTop: 16, width: "100%", border: "none", cursor: "pointer", borderRadius: 14, padding: "13px 0", fontSize: 13.5, fontWeight: 800, background: T.dark, color: "#fff" }}>Cerrar</button>
+              </div>
+            </div>
+          );
+        })()}
         {emOk && (
           /* v3.64 (Victor): selector de estrategia bajo spot/EM. IC = todo el panel de siempre; Credit
              spread = lado PUT/CALL + colocación ATM/Δ30 con strikes automáticos. El Δ30 se ESTIMA del EM
@@ -7784,7 +7807,6 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           const shortK = pf(st.spSAbs) > 0 ? pf(st.spSAbs) : roundStrike(place === "ATM" ? spot : side === "P" ? spot - 0.65 * emD : spot + 0.65 * emD, spot) + sOff * stp; /* v3.69: escrito a mano manda */
           const longK = pf(st.spLAbs) > 0 ? pf(st.spLAbs) : roundStrike(side === "P" ? shortK - emD : shortK + emD, spot) + lOff * stp;
           const width = Math.abs(shortK - longK);
-          const minC = width * (place === "ATM" ? 0.5 : 1 / 3);
           const sPct = (shortK - spot) / spot * 100, lPct = (longK - spot) / spot * 100;
           const distPct = side === "P" ? -sPct : sPct; /* colchón hasta la corta, en % positivo */
           const tkrU = String(st.tkr || "").trim().toUpperCase();
@@ -7794,6 +7816,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           const nCloseUp = xsT ? xsT.evs.filter((e) => Number(e.close) > 0).length : 0;
           const resp = xsT ? xsT.evs.filter((e) => { const o = Number(e.open); return Number.isFinite(o) && (side === "P" ? o > -distPct : o < distPct); }).length : 0;
           const dirFav = side === "P" ? nOpenUp : Mh - nOpenUp, dirFavC = side === "P" ? nCloseUp : Mh - nCloseUp;
+          /* v3.75: mismo mínimo dinámico que el IC, pero con la probabilidad QUE MANDA en un spread —
+             ATM: la direccional suavizada (abre a favor del lado); Δ30: la Δ empírica suavizada (opens
+             que respetaron la corta). mín = ancho × (1 − (P − 0.10)), suelo 15% del ancho; el estático
+             (50% / ⅓) queda como IDEAL de referencia. Sin histórico, manda el estático. */
+          const idealC = width * (place === "ATM" ? 0.5 : 1 / 3);
+          const Pd = Mh > 0 ? popSmooth(Mh, Mh - (place === "D30" ? resp : dirFav)) : NaN;
+          const minC = isFinite(Pd) ? Math.max(width * (1 - (Pd - 0.10)), width * 0.15) : idealC;
           const c = pf(st.spCredit), okC = isFinite(c) && c > 0;
           return (
             <div style={{ background: T.tile, borderRadius: 18, padding: "14px 14px 12px", display: "grid", gap: 10 }}>
@@ -7808,7 +7837,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               {place === "D30" && <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>Δ30 estimada del EM (sin greeks): corta a 0.65 × EM del spot. Contrasta con la delta real del bróker antes de abrir.</div>}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                 <div style={{ background: T.card, borderRadius: 12, padding: "9px 6px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{fmtK(width)}</div><div style={{ fontSize: 9.5, color: T.sub, marginTop: 2, fontWeight: 600 }}>Ancho</div></div>
-                <div style={{ background: T.card, borderRadius: 12, padding: "9px 6px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: T.gold, fontVariantNumeric: "tabular-nums" }}>≥ ${minC.toFixed(2)}</div><div style={{ fontSize: 9.5, color: T.sub, marginTop: 2, fontWeight: 600 }}>Crédito mín · {place === "ATM" ? "50%" : "⅓"} del ancho</div></div>
+                <div style={{ background: T.card, borderRadius: 12, padding: "9px 6px", textAlign: "center", position: "relative" }}><div style={{ fontSize: 14, fontWeight: 800, color: T.gold, fontVariantNumeric: "tabular-nums", display: "inline-flex", alignItems: "center", gap: 4 }}>≥ ${minC.toFixed(2)} <InfoDot onClick={() => setMinInfo({ t: "sp", d: { w: width, ideal: idealC, dyn: minC, pop: Pd, place, side, M: Mh, fav: place === "D30" ? resp : dirFav } })} /></div><div style={{ fontSize: 9.5, color: T.sub, marginTop: 2, fontWeight: 600 }}>mín sugerido · ideal {place === "ATM" ? "50%" : "⅓"}: ${idealC.toFixed(2)}</div></div>
                 <WizInput label="Crédito $" value={st.spCredit} onChange={set("spCredit")} inputMode="decimal" placeholder={minC.toFixed(2)} />
               </div>
               {okC && (
@@ -7867,21 +7896,27 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           if (!isFinite(wN) || wN <= 0) return null;
           const c = pf(st.credit);
           const minC = wN / 3;
+          /* v3.75 (Victor, caso AXP): mínimo DINÁMICO — el tercio fijo sobre-exige a los nombres de POP
+             alta (AXP POP suavizada 92% pedía $0.83 y el mercado paga ~$0.45). Regla: colchón fijo de
+             10 pts entre la POP suavizada y el win rate mínimo → mín = ancho × (1 − (POPs − 0.10)), con
+             SUELO del 15% del ancho. El tercio queda como IDEAL de referencia (si lo pagan, mejor). Sin
+             POP en el histórico, el mínimo sigue siendo el tercio. */
+          const dynMin = isFinite(popOpenS) ? Math.max(wN * (1 - (popOpenS - 0.10)), wN * 0.15) : minC;
           const okC = isFinite(c) && c > 0;
           const mlPC = okC ? Math.max(wN - c, 0) * 100 : NaN;
           const ratio = okC ? c / wN : NaN;
           const bw = okC && mlPC > 0 ? mlPC / (mlPC + c * 100) : NaN;
           const evW = okC && isFinite(popOpenS) ? popOpenS * c * 100 - (1 - popOpenS) * mlPC : NaN;
           const cts = okC && mlPC > 0 && isFinite(obj) && obj > 0 ? Math.floor(obj / mlPC) : null;
-          const col = !okC ? T.sub : ratio >= 1 / 3 ? T.green : ratio >= 0.25 ? T.gold : T.red;
-          const bg = !okC ? T.tile : ratio >= 1 / 3 ? T.tileGreen : ratio >= 0.25 ? T.tileAmber : T.tileRed;
+          const col = !okC ? T.sub : c >= dynMin ? T.green : c >= dynMin * 0.85 ? T.gold : T.red;
+          const bg = !okC ? T.tile : c >= dynMin ? T.tileGreen : c >= dynMin * 0.85 ? T.tileAmber : T.tileRed;
           const added = (Array.isArray(st.wings) ? st.wings : []).some((x) => Math.abs(Number(x.w) - wN) < 1e-9 && Math.abs(Number(x.c) - c) < 1e-9);
           return (
             <div style={{ background: bg, borderRadius: 14, padding: "10px 12px", display: "grid", gap: 7 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: col, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Ala de {wN.toLocaleString("en-US", { maximumFractionDigits: 2 })} pt</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: col, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>Ala de {wN.toLocaleString("en-US", { maximumFractionDigits: 2 })} pt <InfoDot onClick={() => setMinInfo({ t: "ic", d: { w: wN, ideal: minC, dyn: dynMin, pop: popOpenS } })} /></span>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 800, color: col }}>{okC ? "crédito = " + (ratio * 100).toFixed(0) + "% del ancho" : "crédito mín ⅓ = $" + minC.toFixed(2)}</span>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: col }}>{okC ? "crédito = " + (ratio * 100).toFixed(0) + "% · mín $" + dynMin.toFixed(2) : "mín $" + dynMin.toFixed(2) + " · ideal ⅓ $" + minC.toFixed(2)}</span>
                   {/* v1.62: con el crédito puesto, el "+" congela este ancho en el comparador. Cambia de ala,
                       apunta su crédito, vuelve a pulsar "+", y abajo se deciden solos. */}
                   {okC && (
@@ -8095,11 +8130,11 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 <Tile label="Colchón (POP open − mínimo)" value={isFinite(edge) ? ((edge >= 0 ? "+" : "") + (edge * 100).toFixed(0) + " pts") : "—"} tone={isFinite(edge) ? (edge >= 0.05 ? "green" : edge >= 0 ? "amber" : "red") : "default"} />
               </div>
             )}
-            {r.ratio != null && (
-              <div style={{ background: r.ratio >= 1 / 3 ? T.tileGreen : r.ratio >= 0.25 ? T.tileAmber : T.tileRed, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: r.ratio >= 1 / 3 ? T.green : r.ratio >= 0.25 ? T.gold : T.red, lineHeight: 1.4 }}>
-                Crédito = {(r.ratio * 100).toFixed(0)}% del ancho · {((r.credit * 100 / r.maxLossPC) * 100).toFixed(0)}% sobre riesgo {r.ratio >= 1 / 3 ? "· ≥⅓, calidad" : r.ratio >= 0.25 ? "· ¼–⅓, justa" : "· <¼, paga poco"}
+            {r.ratio != null && (() => { const dynS = isFinite(popOpenS) ? Math.max(r.width * (1 - (popOpenS - 0.10)), r.width * 0.15) : r.width / 3; const okD = r.credit >= dynS / 1; return (
+              <div style={{ background: okD ? T.tileGreen : r.credit >= dynS * 0.85 ? T.tileAmber : T.tileRed, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: okD ? T.green : r.credit >= dynS * 0.85 ? T.gold : T.red, lineHeight: 1.4 }}>
+                Crédito = {(r.ratio * 100).toFixed(0)}% del ancho · {((r.credit * 100 / r.maxLossPC) * 100).toFixed(0)}% sobre riesgo · mín dinámico ${dynS.toFixed(2)} {okD ? "· ≥ mín, calidad" : r.credit >= dynS * 0.85 ? "· roza el mín" : "· por debajo del mín — no malvender"} {/* v3.75 */}
               </div>
-            )}
+            ); })()}
             {verdict && (
               <div style={{ background: verdict.bg, borderRadius: 15, padding: "12px 14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
