@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.65"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.67"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1946,6 +1946,40 @@ function blockTone(p, blk) {
 function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalPnl, totalRiesgo, nPos,
   elNlv, elMrgn, leverage, dayChg, broker, brokers, accounts, setAccField, accOpen, setAccOpen, onOpenInfo }) {
   const chgCol = !dayChg ? T.sub : dayChg.abs >= 0 ? T.green : T.red;
+  /* v3.66 (Victor: "¿no se va a liar mucho todo?" → versión ligera): selector USD/EUR SOLO DE
+     VISUALIZACIÓN para el valor de cuenta y MKT VL. Nada se guarda ni se calcula en euros — el motor
+     sigue 100% USD; aquí solo se traduce lo que ves. Tipo de referencia del BCE vía Frankfurter
+     (api.frankfurter.app, sin key, sin CORS), cacheado un día en localStorage. Defecto: USD. */
+  const [showEur, setShowEur] = useState(() => { try { return localStorage.getItem("bloques_showEur") === "1"; } catch (e) { return false; } });
+  const [fx, setFx] = useState(() => { try { return JSON.parse(localStorage.getItem("bloques_fxEur") || "null"); } catch (e) { return null; } });
+  useEffect(() => {
+    if (!showEur) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (fx && fx.day === today && Number.isFinite(fx.rate)) return;
+    /* v3.67 ("no ha funcionado"): Frankfurter migró a frankfurter.dev — cascada de 3 fuentes sin key,
+       aptas para navegador; la primera que devuelva un número gana. Si fallan las 3, se marca err
+       para que la leyenda lo diga en claro. */
+    const srcs = [
+      ["https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR", "BCE"],
+      ["https://api.frankfurter.app/latest?from=USD&to=EUR", "BCE"],
+      ["https://open.er-api.com/v6/latest/USD", "ER-API"],
+    ];
+    (async () => {
+      for (const [url, src] of srcs) {
+        try {
+          const r = await fetch(url); if (!r.ok) continue;
+          const j = await r.json();
+          const rate = j && j.rates && Number(j.rates.EUR);
+          if (Number.isFinite(rate) && rate > 0) { const rec = { rate, day: today, ecbDate: (j && j.date) || today, src }; setFx(rec); try { localStorage.setItem("bloques_fxEur", JSON.stringify(rec)); } catch (e) {} return; }
+        } catch (e) {}
+      }
+      setFx((f) => (f && Number.isFinite(f.rate) ? f : { rate: NaN, day: today, err: true }));
+    })();
+  }, [showEur]);
+  const fxOk = showEur && fx && Number.isFinite(fx.rate) && fx.rate > 0;
+  const cv = (x) => (fxOk ? x * fx.rate : x); /* convierte para MOSTRAR */
+  const sym = fxOk ? "€" : "$";
+  const toggleEur = () => setShowEur((v) => { const nv = !v; try { localStorage.setItem("bloques_showEur", nv ? "1" : "0"); } catch (e) {} return nv; });
   return (
     <div style={{ marginBottom: 14 }}>
       {/* HERO: NLV + cambio del día + P&L, con el estado de cuenta plegado dentro */}
@@ -1954,17 +1988,26 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.6, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span>Valor de la cuenta</span>
+              <span onClick={(e) => { e.stopPropagation(); toggleEur(); }} style={{ cursor: "pointer", fontSize: 9.5, fontWeight: 800, borderRadius: 7, overflow: "hidden", display: "inline-flex", letterSpacing: 0, textTransform: "none" }}>
+                <span style={{ padding: "2px 7px", background: !showEur ? T.dark : T.tile, color: !showEur ? "#fff" : T.sub }}>USD</span>
+                <span style={{ padding: "2px 7px", background: showEur ? T.dark : T.tile, color: showEur ? "#fff" : T.sub }}>EUR</span>
+              </span>
               {!margin && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "2px 7px", textTransform: "none", letterSpacing: 0 }}>falta margen</span>}
             </div>
             <div style={{ fontSize: 28, fontWeight: 800, color: nlv >= 0 ? T.ink : T.red, letterSpacing: -0.9, lineHeight: 1.15, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-              {(nlv < 0 ? "-$" : "$") + money(Math.abs(nlv))}
+              {(nlv < 0 ? "-" + sym : sym) + money(Math.abs(cv(nlv)))}
             </div>
+            {showEur && (
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: fxOk ? T.sub : T.gold, marginTop: 2 }}>
+                {fxOk ? "1 USD = " + fx.rate.toFixed(4) + " € · " + (fx.src || "BCE") + " " + fx.ecbDate : fx && fx.err ? "sin conexión con las fuentes de cambio — mostrando USD (reintenta con el toggle)" : "obteniendo tipo de cambio…"}
+              </div>
+            )}
             {/* v1.43: cambio desde la medianoche del día anterior — el cierre del último día con
                snapshot. Sin texto: solo importe y %, en verde o rojo. Sin referencia, no se pinta
                nada (la app no inventa cifras). */}
             {dayChg && (
               <div style={{ fontSize: 14, fontWeight: 800, color: chgCol, marginTop: 3, display: "flex", alignItems: "baseline", gap: 6, fontVariantNumeric: "tabular-nums" }}>
-                <span>{signMoney(dayChg.abs)}</span>
+                <span>{(dayChg.abs >= 0 ? "+" : "−") + sym + money(Math.abs(cv(dayChg.abs)))}</span>
                 <span>{signPct(dayChg.pct, 2)}</span>
               </div>
             )}
@@ -1975,8 +2018,9 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
-          {/* v1.45: orden pedido por Victor — Riesgo · MKT VL · Posiciones · Liquidez */}
-          {[["Riesgo", "$" + money(totalRiesgo)], ["MKT VL", "$" + money(mktvl)], ["Pos.", String(nPos)], ["Liquidez", nlv > 0 ? pct(cash / nlv, 0) : "—"]].map(([l, v]) => (
+          {/* v1.45: orden pedido por Victor — Riesgo · MKT VL · Posiciones · Liquidez. v3.66: MKT VL
+              respeta el selector USD/EUR; Riesgo se queda en USD (es métrica de sizing, no de valor). */}
+          {[["Riesgo", "$" + money(totalRiesgo)], ["MKT VL", sym + money(cv(mktvl))], ["Pos.", String(nPos)], ["Liquidez", nlv > 0 ? pct(cash / nlv, 0) : "—"]].map(([l, v]) => (
             <div key={l} style={{ background: T.tile, borderRadius: 13, padding: "9px 3px", textAlign: "center", minWidth: 0, overflow: "hidden" }}>
               <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 2 }}>{l}</div>
