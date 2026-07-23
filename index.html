@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.72"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.73"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6426,6 +6426,27 @@ function ErMiniChart({ evs, field, nextEm, title }) {
     </div>
   );
 }
+function StrikeTile({ side, k, pct, em, onNudge, raw, onType }) {
+  /* v3.73: a nivel de módulo (antes vivía dentro de EarningsToolContent y cada re-render lo remontaba,
+     cerrando el teclado por tecla en los strikes manuales v3.69). em llega como prop. */
+  const inside = Math.abs(pct) < em; // dentro del EM → más expuesto que lo pedido
+  const bt = { border: "none", cursor: "pointer", width: 30, height: 30, borderRadius: 9, background: T.card, color: T.ink, fontSize: 16, fontWeight: 800, lineHeight: 1, padding: 0, flex: "none" };
+  return (
+    <div style={{ background: inside ? T.tileAmber : T.tileGreen, borderRadius: 15, padding: "10px 8px", textAlign: "center", minWidth: 0 }}>
+      <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>{side}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 3 }}>
+        {/* v1.66: −/+ mueven el corto un escalón del bróker. v3.69: el número es EDITABLE — escribir un
+            strike activa el modo manual (raw); borrar el campo vuelve al automático. */}
+        <button type="button" style={bt} onClick={() => onNudge(-1)} aria-label="Strike abajo">−</button>
+        <input inputMode="decimal" value={raw != null && raw !== "" ? raw : Number.isFinite(k) ? String(k) : ""} onChange={(e) => onType(e.target.value)}
+          style={{ width: 72, textAlign: "center", fontSize: 19, fontWeight: 800, color: T.ink, letterSpacing: -0.3, background: "transparent", border: "none", borderBottom: "1.5px dashed " + (raw ? T.gold : T.line), outline: "none", padding: 0, fontVariantNumeric: "tabular-nums" }} />
+        <button type="button" style={bt} onClick={() => onNudge(1)} aria-label="Strike arriba">+</button>
+      </div>
+      <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2, color: inside ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>{sgn(pct) + Math.abs(pct).toFixed(2) + "%"}</div>
+      <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2, lineHeight: 1.2 }}>margen real · EM {Number.isFinite(em) ? em.toFixed(2) : "—"}%</div>
+    </div>
+  );
+}
 function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   /* v3.10 (Victor: "al pulsar una tarjeta que aparezcan más datos — pre/post, IV crush, EM, Ø EM,
      Ø actual, POP open/high/low/close — y un botón de añadir a Earnings"): las tarjetas del screener
@@ -7476,25 +7497,10 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     </div>
   );
   const Dot = ({ c }) => <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 4, background: c, marginRight: 4 }} />;
-  const StrikeTile = ({ side, k, pct, onNudge, raw, onType }) => {
-    const inside = Math.abs(pct) < em; // dentro del EM → más expuesto que lo pedido
-    const bt = { border: "none", cursor: "pointer", width: 30, height: 30, borderRadius: 9, background: T.card, color: T.ink, fontSize: 16, fontWeight: 800, lineHeight: 1, padding: 0, flex: "none" };
-    return (
-      <div style={{ background: inside ? T.tileAmber : T.tileGreen, borderRadius: 15, padding: "10px 8px", textAlign: "center", minWidth: 0 }}>
-        <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>{side}</div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 3 }}>
-          {/* v1.66: −/+ mueven el corto un escalón del bróker. v3.69 (Victor): el número es EDITABLE —
-              escribir un strike activa el modo manual (raw); borrar el campo vuelve al automático. */}
-          <button type="button" style={bt} onClick={() => onNudge(-1)} aria-label="Strike abajo">−</button>
-          <input inputMode="decimal" value={raw != null && raw !== "" ? raw : Number.isFinite(k) ? String(k) : ""} onChange={(e) => onType(e.target.value)}
-            style={{ width: 72, textAlign: "center", fontSize: 19, fontWeight: 800, color: T.ink, letterSpacing: -0.3, background: "transparent", border: "none", borderBottom: "1.5px dashed " + (raw ? T.gold : T.line), outline: "none", padding: 0, fontVariantNumeric: "tabular-nums" }} />
-          <button type="button" style={bt} onClick={() => onNudge(1)} aria-label="Strike arriba">+</button>
-        </div>
-        <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2, color: inside ? T.gold : T.green, fontVariantNumeric: "tabular-nums" }}>{sgn(pct) + Math.abs(pct).toFixed(2) + "%"}</div>
-        <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2, lineHeight: 1.2 }}>margen real · EM {em.toFixed(2)}%</div>
-      </div>
-    );
-  };
+  /* v3.73 (Victor: "cada tecla cierra el teclado"): StrikeTile estaba definido AQUÍ DENTRO — cada
+     re-render creaba un tipo de componente nuevo, React remontaba el input y el foco (y el teclado de
+     iOS) se perdía por tecla. Movido a nivel de módulo (StrikeTile, antes del componente) con em como
+     prop. Regla para el futuro: ningún componente con inputs se define dentro de otro componente. */
 
   return (
     <div style={{ background: T.card, borderRadius: 24, padding: 18, marginBottom: 16, boxShadow: T.shadow }}>
@@ -7796,8 +7802,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 <label><div style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Colocación de la corta</div><Pill options={["ATM", "Δ30"]} value={place === "D30" ? "Δ30" : "ATM"} onChange={(v) => setMany({ spPlace: v, spSOff: "0", spLOff: "0", spSAbs: "", spLAbs: "" })} size="sm" /></label>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <StrikeTile side={"Short " + (side === "P" ? "put" : "call") + (place === "D30" ? " · ≈Δ30" : " · ATM")} k={shortK} pct={sPct} onNudge={(d) => (pf(st.spSAbs) > 0 ? set("spSAbs")(String(shortK + d * stp)) : set("spSOff")(String(sOff + d)))} raw={st.spSAbs || ""} onType={set("spSAbs")} />
-                <StrikeTile side={"Long " + (side === "P" ? "put" : "call") + " · 1 EM"} k={longK} pct={lPct} onNudge={(d) => (pf(st.spLAbs) > 0 ? set("spLAbs")(String(longK + d * stp)) : set("spLOff")(String(lOff + d)))} raw={st.spLAbs || ""} onType={set("spLAbs")} />
+                <StrikeTile em={em} side={"Short " + (side === "P" ? "put" : "call") + (place === "D30" ? " · ≈Δ30" : " · ATM")} k={shortK} pct={sPct} onNudge={(d) => (pf(st.spSAbs) > 0 ? set("spSAbs")(String(shortK + d * stp)) : set("spSOff")(String(sOff + d)))} raw={st.spSAbs || ""} onType={set("spSAbs")} />
+                <StrikeTile em={em} side={"Long " + (side === "P" ? "put" : "call") + " · 1 EM"} k={longK} pct={lPct} onNudge={(d) => (pf(st.spLAbs) > 0 ? set("spLAbs")(String(longK + d * stp)) : set("spLOff")(String(lOff + d)))} raw={st.spLAbs || ""} onType={set("spLAbs")} />
               </div>
               {place === "D30" && <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>Δ30 estimada del EM (sin greeks): corta a 0.65 × EM del spot. Contrasta con la delta real del bróker antes de abrir.</div>}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
@@ -7822,8 +7828,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         {icMode && (<>
         {emOk && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <StrikeTile side="Short put" k={shortPut} pct={putPct} onNudge={nudge("putOff")} raw={st.putAbs || ""} onType={typeAbs("putAbs")} />
-            <StrikeTile side="Short call" k={shortCall} pct={callPct} onNudge={nudge("callOff")} raw={st.callAbs || ""} onType={typeAbs("callAbs")} />
+            <StrikeTile em={em} side="Short put" k={shortPut} pct={putPct} onNudge={nudge("putOff")} raw={st.putAbs || ""} onType={typeAbs("putAbs")} />
+            <StrikeTile em={em} side="Short call" k={shortCall} pct={callPct} onNudge={nudge("callOff")} raw={st.callAbs || ""} onType={typeAbs("callAbs")} />
           </div>
         )}
         {emOk && Math.abs(asym) >= 0.2 && (
