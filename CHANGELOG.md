@@ -1,5 +1,91 @@
 # CHANGELOG — Bloques
 
+## # Bloques — CHANGELOG v3.79 → v3.81
+
+## v3.81 (25-jul-2026) — Avisos de calidad de la serie de snapshots
+
+Dos cosas distintas que la app calculaba pero no enseñaba, y que importan
+porque el pico que fija el Máx DD puede estar apoyado justo en un punto así.
+
+### 1. Snapshots reconstruidos
+
+Los que llevan `nlvEstimated: true` no son fotos de la cuenta: su NLV sale de un
+cálculo hacia atrás (`nlvMethod`, p. ej. `backsolve_from_2026-03` con el income
+mensual del Excel). Razonable, pero no medido.
+
+### 2. Snapshots con la fecha corrida
+
+Cuando `sourceSnapshotDate ≠ date`, el valor es de otro día del que dice la
+etiqueta — el del 31-may guarda el del 26-may, el del 30-jun el del 26-jun. El
+tramo que el TWR mide como "un mes" no lo es, y quedan días de mercado entre
+medias que no se miden nunca.
+
+### Cómo se ve
+
+- **Resumen ámbar** sobre la lista de snapshots, solo si hay algo que avisar:
+  cuántos están reconstruidos, hasta qué fecha, cuántos llevan la fecha corrida
+  y un ejemplo concreto. En la serie actual: 12 de 28 reconstruidos y 3 con la
+  fecha corrida.
+- **Distintivos por fila** al desplegar la lista: `del 26 may` (ámbar) y
+  `≈ reconstr.` (gris). Las filas de datos reales salen limpias.
+
+Ningún cálculo cambia. Es información sobre el dato, no una corrección del dato.
+
+---
+
+## v3.80 (25-jul-2026) — Máx drawdown + actual, y las tarjetas dicen de qué periodo son
+
+El Máx DD se queda con el peor de toda la historia, y así debe seguir: es el que
+alimenta el MAR. Pero solo con ese número, un −40% ya recuperado hace un año
+taparía el −20% que estás pasando hoy — que es el dato con el que se decide.
+
+La tarjeta enseña ahora **dos**:
+
+- **Máx drawdown** — el peor de la vida de la cuenta. Sin cambios.
+- Debajo, en pequeño:
+  - `= en curso · N d` cuando el peor de la historia es el que se está viviendo.
+    **Es el caso hoy: −31,7%, 55 días desde el pico del 31-may.**
+  - `actual −X%` cuando el máximo ya se recuperó y hay una caída menor abierta.
+  - `en máximos` en verde cuando el último punto es el techo.
+
+Y bajo las tres tarjetas: *"Vida de la cuenta · desde AAAA-MM-DD (N d) — no
+siguen al filtro de abajo"*. Estaban encima del selector de periodo y parecían
+suyas; no lo son y no deben serlo (anualizar 7 días convierte un 2% en un CAGR
+de +181%, y un Máx DD re-basado al mes esconde el techo de verdad).
+
+---
+
+## v3.79 (25-jul-2026) — Alertas: persistencia reforzada
+
+Las alertas ya viajaban en el backup. El problema estaba en de dónde salían.
+
+1. **Eran el único dato de usuario que vivía solo en localStorage.** Todo lo
+   demás (posiciones, snapshots, aportaciones) se escribe también en IndexedDB.
+   Perdido el localStorage por un desalojo de Safari, se perdían las alertas *y*
+   el siguiente backup se exportaba vacío — un borrado temporal convertido en
+   permanente. Ahora `saveAlerts` escribe también en IDB, y al arrancar se
+   rehidrata localStorage desde IDB si viene vacío.
+2. **La herramienta abierta podía deshacer una restauración.** Leía las alertas
+   solo al montarse. Ahora cada escritura emite `bloques-alerts-changed` y la
+   vista se resincroniza con ese evento y al volver a la app.
+3. `saveAlerts` con un valor no válido guarda `[]` en vez de romper.
+
+---
+
+## Verificación (v3.81)
+
+- Babel: 1 bloque, 0 errores. Montaje jsdom: 0 errores.
+- SSR de `RendimientoCard`, 19 comprobaciones: datos reales del backup del
+  25-jul (CAGR +38,3%, DD −31,7%, MAR 1,21, "en curso · 55 d", 12 de 28
+  reconstruidos, 3 con fecha corrida, ejemplo "26 jun"), escenario con el peor
+  drawdown ya recuperado, escenario en máximos, serie limpia sin avisos, y las
+  guardas de <60 días, 1 snapshot y 0 snapshots.
+- Test interactivo jsdom: despliega la lista y comprueba los distintivos por
+  fila, incluido que las filas de datos reales salen sin marcas.
+- Regresión de las 11 pruebas de alertas de la v3.79.
+
+`APP_VERSION` 3.78 → **3.81**.
+
 ## v3.77 — rediseño de la barra de navegación inferior (pedido por Victor)
 Tres males, tres arreglos:
 	1.	COLOR: fuera el gris-azulado con acento #4C9AF5 ajeno a la paleta. La barra
