@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.81"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.83"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2856,22 +2856,6 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
     const ddLive = curDD < -0.0005 && Math.abs(curDD - maxDD) < 0.0005;
     return { days, short: false, cagr, maxDD, mar, curDD, ddDays, ddLive, from: firstT.date };
   })();
-  /* v3.80: resumen de calidad de la serie. Solo aparece si hay algo que avisar. */
-  const qualityNote = (() => {
-    if (!asc.length) return null;
-    const est = asc.filter((s) => snapQuality(s).est);
-    const shifted = asc.filter((s) => snapQuality(s).shifted);
-    const parts = [];
-    if (est.length) {
-      const lastEst = est[est.length - 1].date;
-      parts.push(est.length + " de " + asc.length + " snapshots están reconstruidos, no medidos (hasta " + shortDate(lastEst) + "): su NLV sale de un cálculo hacia atrás, no de una foto de la cuenta.");
-    }
-    if (shifted.length) {
-      const ej = shifted[shifted.length - 1];
-      parts.push(shifted.length + (shifted.length === 1 ? " lleva" : " llevan") + " la fecha corrida — el de " + shortDate(ej.date) + " guarda el valor del " + shortDate(snapQuality(ej).shifted) + " —, así que ese tramo no cubre los días que dice y el TWR se lo salta.");
-    }
-    return parts.length ? parts.join(" ") : null;
-  })();
   /* Rent. real: re-basar el índice TWR al inicio del rango visible, para que tanto la cifra como la curva
      reflejen el periodo seleccionado (antes mostraba siempre el acumulado desde el primer snapshot). */
   if (metric === "Rent. real" && series.length) {
@@ -2906,9 +2890,12 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
         </div>
       ) : (
         <>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 5 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 14 }}>
           <div style={{ background: T.tile, borderRadius: 12, padding: "9px 6px", textAlign: "center", minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: marStats.cagr >= 0 ? T.green : T.red, fontVariantNumeric: "tabular-nums" }}>{(marStats.cagr >= 0 ? "+" : "") + (marStats.cagr * 100).toFixed(1) + "%"}</div>
+            {/* v3.83: la tarjeta vuelve a un solo número. El CAGR es el acumulado ANUALIZADO; el
+                número grande bajo el selector es el acumulado sin anualizar — Victor ya lo tiene claro
+                y no quiere el recordatorio aquí dentro. */}
             <div style={{ fontSize: 9, fontWeight: 600, color: T.sub, marginTop: 1 }}>CAGR (TWR)</div>
           </div>
           <div onClick={() => setMetric("Drawdown")} style={{ background: T.tile, borderRadius: 12, padding: "9px 6px", textAlign: "center", minWidth: 0, cursor: "pointer" }}>
@@ -2929,13 +2916,6 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
             <div style={{ fontSize: 15, fontWeight: 800, color: marStats.mar == null ? T.sub : marStats.mar >= 1 ? T.green : marStats.mar >= 0.5 ? T.gold : T.red, fontVariantNumeric: "tabular-nums" }}>{marStats.mar == null ? "—" : marStats.mar.toFixed(2)}</div>
             <div style={{ fontSize: 9, fontWeight: 600, color: T.sub, marginTop: 1 }}>{marStats.mar == null ? "MAR · sin DD aún" : "MAR"}</div>
           </div>
-        </div>
-        {/* v3.80 (Victor: "no entiendo mucho lo de las tarjetas"): estaban justo encima del selector de
-            periodo y parecían suyas. No lo son y NO deben serlo — anualizar 7 días da un CAGR de +181%
-            por un 2%, y un Máx DD re-basado al mes esconde el techo de verdad. Se calculan sobre la vida
-            entera de la cuenta; ahora lo pone. */}
-        <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, textAlign: "center", marginBottom: 14 }}>
-          Vida de la cuenta · desde {marStats.from} ({marStats.days} d) — no siguen al filtro de abajo
         </div>
         </>
       ))}
@@ -2984,12 +2964,6 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
           ) : (
             <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500 }}>{metric === "Aportado" ? "Registra aportaciones en la pestaña 💶 Aportaciones para ver el acumulado." : "Guarda un segundo snapshot para ver la evolución."}</div>
           )}
-        </div>
-      )}
-
-      {snapshots.length >= 1 && qualityNote && (
-        <div style={{ background: T.tileAmber, borderRadius: 12, padding: "9px 11px", marginBottom: 8, fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5 }}>
-          <span style={{ color: T.gold, fontWeight: 800 }}>Calidad de la serie · </span>{qualityNote}
         </div>
       )}
 
