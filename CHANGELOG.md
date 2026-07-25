@@ -2,6 +2,24 @@
 
 ## # Bloques — CHANGELOG v3.79 → v3.81
 
+## ## v3.83 (25-jul-2026)
+La tarjeta **CAGR (TWR)** vuelve a un solo número. Fuera la línea
+`total +41,5% · 390 d` de la v3.82.
+
+Estado de la fila de tarjetas:
+
+| Tarjeta | Número | Segunda línea |
+|---|---|---|
+| CAGR (TWR) | +38,3% | — |
+| Máx drawdown ▸ | −31,7% | `= en curso · 55 d` |
+| MAR | 1,21 | — |
+
+## v3.82
+Eliminados el caption "Vida de la cuenta…" bajo las tarjetas y el cuadro ámbar
+"Calidad de la serie". Los distintivos por fila de la lista de snapshots
+(`del 26 may`, `≈ reconstr.`) se mantienen.
+
+
 ## v3.81 (25-jul-2026) — Avisos de calidad de la serie de snapshots
 
 Dos cosas distintas que la app calculaba pero no enseñaba, y que importan
