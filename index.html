@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.78"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.81"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1162,7 +1162,20 @@ const optionDetail = (p) => {
    best-effort con la app abierta (Notification API; iOS la ignora fuera de PWA instalada) — el registro
    fiable es el de dentro de la app. */
 const loadAlerts = () => { try { const j = JSON.parse(localStorage.getItem(KEY_ALERTS) || "[]"); return Array.isArray(j) ? j : []; } catch (e) { return []; } };
-const saveAlerts = (a) => { try { localStorage.setItem(KEY_ALERTS, JSON.stringify(a)); } catch (e) {} };
+/* v3.79 (Victor: "que se guarden las alertas de la herramienta de alertas en el backup"): las alertas SÍ
+   viajaban en el JSON y se restauraban, pero eran el ÚNICO dato de usuario que vivía solo en localStorage
+   — que iOS/Safari desaloja tras días sin abrir la app, y que el backup automático por versión lee del
+   mismo sitio. Ahora se escriben también en IndexedDB (como posiciones/snapshots/aportaciones), se
+   rehidratan desde IDB al arrancar si localStorage viene vacío, y cada escritura avisa a las vistas
+   abiertas para que ninguna se quede con una copia vieja y la vuelva a guardar encima. */
+const ALERTS_EVT = "bloques-alerts-changed";
+const saveAlerts = (a) => {
+  const arr = Array.isArray(a) ? a : [];
+  const raw = JSON.stringify(arr);
+  try { localStorage.setItem(KEY_ALERTS, raw); } catch (e) {}
+  try { idbSet(KEY_ALERTS, raw); } catch (e) {}
+  try { window.dispatchEvent(new CustomEvent(ALERTS_EVT)); } catch (e) {}
+};
 const alertHit = (a, q) => {
   const last = q && n(q.price), high = q && n(q.h), dp = q && q.dp != null ? n(q.dp) : NaN;
   if (!isFinite(last) || last <= 0) return null;
@@ -2729,6 +2742,17 @@ function MetricChart({ points, color, axisFmt, valueFmt, dateFmt }) {
 }
 
 /* ---------- rendimiento: snapshots fechados con variación ---------- */
+/* v3.80: CALIDAD DEL DATO DE CADA SNAPSHOT. Dos cosas distintas, y ninguna se veía en la app:
+   · reconstruido — nlvEstimated:true. El NLV no es una foto de la cuenta, sale de un backsolve
+     (nlvMethod, p.ej. backsolve_from_2026-03 con el income mensual del Excel). Razonable, pero no medido.
+   · fecha corrida — sourceSnapshotDate ≠ date. El valor es de otro día del que dice la etiqueta
+     (el 31-may guarda el del 26-may), así que el tramo que el TWR mide como "un mes" no lo es, y hay
+     días de mercado entre medias que no se miden nunca.
+   Importa porque el pico que fija el Máx DD puede estar apoyado en un punto de estos. */
+const snapQuality = (s) => ({
+  est: s && s.nlvEstimated === true,
+  shifted: s && s.sourceSnapshotDate && s.sourceSnapshotDate !== s.date ? s.sourceSnapshotDate : null,
+});
 const METRICS = {
   "NLV": { get: (s) => s.nlv, fmt: (v) => "$" + money(v), axis: (v) => "$" + kFmt(v), color: T.green },
   "MKT VL": { get: (s) => s.mktvl, fmt: (v) => "$" + money(v), axis: (v) => "$" + kFmt(v), color: T.green },
@@ -2819,10 +2843,34 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
     const days = daysBetween(firstT.date, lastT.date);
     if (!isFinite(days) || days < 60) return { days: isFinite(days) ? days : 0, short: true };
     const cagr = Math.pow(lastT.v / firstT.v, 365 / days) - 1;
-    let peak = -Infinity, maxDD = 0;
-    twrSeries.forEach((pt) => { peak = Math.max(peak, pt.v); if (peak > 0) maxDD = Math.min(maxDD, pt.v / peak - 1); });
+    let peak = -Infinity, maxDD = 0, peakDate = firstT.date;
+    twrSeries.forEach((pt) => { if (pt.v > peak) { peak = pt.v; peakDate = pt.date; } if (peak > 0) maxDD = Math.min(maxDD, pt.v / peak - 1); });
     const mar = maxDD < 0 ? cagr / Math.abs(maxDD) : null; /* sin drawdown aún, el MAR no está definido */
-    return { days, short: false, cagr, maxDD, mar };
+    /* v3.80 (Victor: "pero el drawdown siempre cogerá el peor, no?"): sí — y por eso hacen falta DOS
+       números. El Máx DD se queda con el peor de toda la historia (es el que alimenta el MAR y no se
+       toca). El ACTUAL dice a cuánto estás del máximo histórico HOY, que es el dato que sirve para
+       decidir: con un −40% ya recuperado hace un año, la tarjeta sola te escondería el −20% que estás
+       pasando ahora. Cuando coinciden, el peor drawdown de tu historia es el que estás viviendo. */
+    const curDD = peak > 0 ? lastT.v / peak - 1 : 0;
+    const ddDays = curDD < -0.0005 ? daysBetween(peakDate, lastT.date) : 0;
+    const ddLive = curDD < -0.0005 && Math.abs(curDD - maxDD) < 0.0005;
+    return { days, short: false, cagr, maxDD, mar, curDD, ddDays, ddLive, from: firstT.date };
+  })();
+  /* v3.80: resumen de calidad de la serie. Solo aparece si hay algo que avisar. */
+  const qualityNote = (() => {
+    if (!asc.length) return null;
+    const est = asc.filter((s) => snapQuality(s).est);
+    const shifted = asc.filter((s) => snapQuality(s).shifted);
+    const parts = [];
+    if (est.length) {
+      const lastEst = est[est.length - 1].date;
+      parts.push(est.length + " de " + asc.length + " snapshots están reconstruidos, no medidos (hasta " + shortDate(lastEst) + "): su NLV sale de un cálculo hacia atrás, no de una foto de la cuenta.");
+    }
+    if (shifted.length) {
+      const ej = shifted[shifted.length - 1];
+      parts.push(shifted.length + (shifted.length === 1 ? " lleva" : " llevan") + " la fecha corrida — el de " + shortDate(ej.date) + " guarda el valor del " + shortDate(snapQuality(ej).shifted) + " —, así que ese tramo no cubre los días que dice y el TWR se lo salta.");
+    }
+    return parts.length ? parts.join(" ") : null;
   })();
   /* Rent. real: re-basar el índice TWR al inicio del rango visible, para que tanto la cifra como la curva
      reflejen el periodo seleccionado (antes mostraba siempre el acumulado desde el primer snapshot). */
@@ -2857,7 +2905,8 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
           CAGR · Máx DD · MAR llegan con ≥60 días de historial ({marStats.days} hasta ahora) — anualizar menos es inventar.
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 14 }}>
+        <>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 5 }}>
           <div style={{ background: T.tile, borderRadius: 12, padding: "9px 6px", textAlign: "center", minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: marStats.cagr >= 0 ? T.green : T.red, fontVariantNumeric: "tabular-nums" }}>{(marStats.cagr >= 0 ? "+" : "") + (marStats.cagr * 100).toFixed(1) + "%"}</div>
             <div style={{ fontSize: 9, fontWeight: 600, color: T.sub, marginTop: 1 }}>CAGR (TWR)</div>
@@ -2865,12 +2914,30 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
           <div onClick={() => setMetric("Drawdown")} style={{ background: T.tile, borderRadius: 12, padding: "9px 6px", textAlign: "center", minWidth: 0, cursor: "pointer" }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: T.red, fontVariantNumeric: "tabular-nums" }}>{(marStats.maxDD * 100).toFixed(1) + "%"}</div>
             <div style={{ fontSize: 9, fontWeight: 600, color: T.sub, marginTop: 1 }}>Máx drawdown ▸</div>
+            {/* v3.80: el segundo número. Si el peor de la historia es el que estás viviendo lo dice
+                ("= en curso"); si no, enseña a cuánto estás del máximo hoy — o "en máximos" si has
+                vuelto arriba. */}
+            <div style={{ fontSize: 9, fontWeight: 700, color: marStats.curDD < -0.0005 ? T.red : T.green, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+              {marStats.curDD >= -0.0005
+                ? "en máximos"
+                : marStats.ddLive
+                  ? "= en curso · " + marStats.ddDays + " d"
+                  : "actual " + (marStats.curDD * 100).toFixed(1) + "%"}
+            </div>
           </div>
           <div style={{ background: T.tile, borderRadius: 12, padding: "9px 6px", textAlign: "center", minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: marStats.mar == null ? T.sub : marStats.mar >= 1 ? T.green : marStats.mar >= 0.5 ? T.gold : T.red, fontVariantNumeric: "tabular-nums" }}>{marStats.mar == null ? "—" : marStats.mar.toFixed(2)}</div>
             <div style={{ fontSize: 9, fontWeight: 600, color: T.sub, marginTop: 1 }}>{marStats.mar == null ? "MAR · sin DD aún" : "MAR"}</div>
           </div>
         </div>
+        {/* v3.80 (Victor: "no entiendo mucho lo de las tarjetas"): estaban justo encima del selector de
+            periodo y parecían suyas. No lo son y NO deben serlo — anualizar 7 días da un CAGR de +181%
+            por un 2%, y un Máx DD re-basado al mes esconde el techo de verdad. Se calculan sobre la vida
+            entera de la cuenta; ahora lo pone. */}
+        <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, textAlign: "center", marginBottom: 14 }}>
+          Vida de la cuenta · desde {marStats.from} ({marStats.days} d) — no siguen al filtro de abajo
+        </div>
+        </>
       ))}
 
       {snapshots.length === 0 && (
@@ -2920,6 +2987,12 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
         </div>
       )}
 
+      {snapshots.length >= 1 && qualityNote && (
+        <div style={{ background: T.tileAmber, borderRadius: 12, padding: "9px 11px", marginBottom: 8, fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5 }}>
+          <span style={{ color: T.gold, fontWeight: 800 }}>Calidad de la serie · </span>{qualityNote}
+        </div>
+      )}
+
       {snapshots.length >= 1 && (
         <button onClick={() => setShowSnaps((v) => !v)} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 12, padding: "10px 0", fontSize: 12.5, fontWeight: 700, color: T.sub, cursor: "pointer", marginBottom: showSnaps ? 6 : 0 }}>
           {showSnaps ? "▲ Ocultar snapshots" : "▼ Ver snapshots (" + snapshots.length + ")"}
@@ -2952,7 +3025,11 @@ function RendimientoCard({ snapshots, flows, onSave, onDelete }) {
           <div key={s.date} style={{ borderTop: `1px solid ${T.line}`, padding: "10px 0" }}>
             <div onClick={() => prev && setExpanded(isOpen ? null : s.date)} style={{ cursor: prev ? "pointer" : "default" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>{new Date(s.date + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })} {prev && <span style={{ fontSize: 10, color: T.sub, fontWeight: 700 }}>{isOpen ? "▲" : "▼"}</span>}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>{new Date(s.date + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })} {prev && <span style={{ fontSize: 10, color: T.sub, fontWeight: 700 }}>{isOpen ? "▲" : "▼"}</span>}
+                  {/* v3.80: distintivos de calidad — el dato de la fila dice de dónde sale */}
+                  {snapQuality(s).shifted && <span title={"Valor real del " + snapQuality(s).shifted} style={{ marginLeft: 5, fontSize: 8.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 6, padding: "2px 5px", whiteSpace: "nowrap" }}>del {shortDate(snapQuality(s).shifted)}</span>}
+                  {snapQuality(s).est && <span title="NLV reconstruido, no medido" style={{ marginLeft: 5, fontSize: 8.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px", whiteSpace: "nowrap" }}>≈ reconstr.</span>}
+                </span>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                   <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>${money(s.nlv)}</span>
                   <span style={{ fontSize: 10, color: T.sub, fontWeight: 700 }}>NLV</span>
@@ -6822,6 +6899,16 @@ function AlertsToolContent({ apiKey }) {
   const [msg, setMsg] = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
   const persist = (next) => { setAlerts(next); saveAlerts(next); };
+  /* v3.79: la herramienta leía las alertas SOLO al montarse. Si mientras estaba abierta llegaba una
+     escritura de fuera (restaurar un backup, o el 🔄 Precios marcando disparos y refrescando el último
+     spot), esta vista seguía con la copia vieja — y el siguiente añadir/borrar la guardaba encima,
+     deshaciendo lo restaurado. Ahora se resincroniza con cada escritura y al volver a la app. */
+  useEffect(() => {
+    const sync = () => setAlerts(loadAlerts());
+    const onVis = () => { if (typeof document === "undefined" || document.visibilityState === "visible") sync(); };
+    try { window.addEventListener(ALERTS_EVT, sync); window.addEventListener("focus", onVis); document.addEventListener("visibilitychange", onVis); } catch (e) {}
+    return () => { try { window.removeEventListener(ALERTS_EVT, sync); window.removeEventListener("focus", onVis); document.removeEventListener("visibilitychange", onVis); } catch (e) {} };
+  }, []);
   const add = () => {
     const t = tkr.trim().toUpperCase(), lv = pf(level);
     if (!t || !isFinite(lv) || lv <= 0) return;
@@ -8808,6 +8895,18 @@ function App() {
       try { const s = await idbGet(KEY_SNAP); if (s != null) { const arr = JSON.parse(s); if (Array.isArray(arr)) setSnapshots(arr); } } catch (e) {}
       try { const fl = await idbGet(KEY_FLOWS); if (fl != null) { const arr = JSON.parse(fl); if (Array.isArray(arr)) setFlows(arr); } } catch (e) {}
       try { const br = await idbGet(KEY_BROKERS); if (br != null) { const arr = JSON.parse(br); if (Array.isArray(arr) && arr.length) setBrokers(arr); } } catch (e) {}
+      /* v3.79: alertas — IDB es el respaldo. Si localStorage se ha vaciado (desalojo de Safari) y en IDB
+         hay alertas, se devuelven a localStorage, que es de donde leen loadAlerts/evalAlerts/el backup. */
+      try {
+        const al = await idbGet(KEY_ALERTS);
+        if (al != null) {
+          const arr = JSON.parse(al);
+          if (Array.isArray(arr) && arr.length && loadAlerts().length === 0) {
+            try { localStorage.setItem(KEY_ALERTS, al); } catch (e) {}
+            try { window.dispatchEvent(new CustomEvent(ALERTS_EVT)); } catch (e) {}
+          }
+        }
+      } catch (e) {}
       if (!haveAcc || !havePos) {
         try {
           const aOld = localStorage.getItem(KEY_ACC_OLD);
