@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.83"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.84"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -841,6 +841,27 @@ const saveErHist = (h) => { try { localStorage.setItem(KEY_ERHIST, JSON.stringif
    POP/EM/edge de la reconstrucción en cuanto existe, sin borrar el histórico de moomoo (que sigue sirviendo
    de contraste en el Screener). */
 const erEvents = (h) => h && Array.isArray(h.mdEvents) && h.mdEvents.length ? h.mdEvents : (h && Array.isArray(h.events) ? h.events : []);
+/* v3.84 (Victor: "los earnings están ordenados al revés, debería ser de más antiguo a más reciente"):
+   el ALMACÉN guarda los eventos con el más reciente primero (ver mergeErEvents) y así se queda — hay
+   consumidores que dependen de ese orden, p.ej. rec6 = "últimos 6" = primeras 6 filas. Lo que estaba mal
+   era la LECTURA para pintar: los mini-gráficos recibían la serie descendente, así que el eje iba de
+   reciente a antiguo y la columna "próx." quedaba después del evento MÁS VIEJO. Este comparador da una
+   copia en orden cronológico ascendente para todo lo que se dibuja o dice "los últimos N". Ordena por
+   date ISO y, si falta, por periodo AAAA/Qn. */
+const erChrono = (a, b) => {
+  const key = (e) => {
+    const d = e && typeof e.date === "string" ? e.date.trim() : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const m = String((e && e.periodo) || "").match(/(\d{4})\D*Q?([1-4])/);
+    return m ? m[1] + "-Q" + m[2] : "";
+  };
+  const ka = key(a), kb = key(b);
+  if (!ka && !kb) return 0;
+  if (!ka) return 1;   /* los que no se pueden fechar, al final */
+  if (!kb) return -1;
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+};
+const erEvsAsc = (evs) => (Array.isArray(evs) ? evs.slice().sort(erChrono) : []);
 /* merge por periodo: una relectura actualiza el trimestre en vez de duplicarlo (p.ej. el próximo ER
    pasa de solo-EM a fila completa cuando salen los resultados). Orden: más reciente primero. */
 function mergeErEvents(oldEvs, newEvs) {
@@ -6422,7 +6443,10 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
    pre/post-5d solo aparece si el agente añade pre5/post5 (%) a cada evento del JSON. */
 function erExtraStats(h) {
   try {
-    const evs = (erEvents(h) || []).filter((e) => e && Number(e.em) > 0 && e.open != null && isFinite(Number(e.open)));
+    /* v3.84: ascendente. Arregla de golpe los dos mini-gráficos (que se pintaban del más reciente al
+       más antiguo, con la columna "próx." pegada al evento más viejo) y el lastP5 de abajo, que con
+       la serie descendente cogía los 4 post-5d MÁS ANTIGUOS creyendo que eran los últimos 4. */
+    const evs = erEvsAsc((erEvents(h) || []).filter((e) => e && Number(e.em) > 0 && e.open != null && isFinite(Number(e.open))));
     const N = (a) => a.filter((x) => Number.isFinite(x));
     const opensA = N(evs.map((e) => Math.abs(Number(e.open))));
     const sorted = opensA.slice().sort((a, b) => a - b);
@@ -7446,14 +7470,17 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
      ligeramente en contra. Es una aproximación conservadora del lado bueno, no un número inventado. */
   const histEvsAll = (() => {
     const h = hist[String(st.tkr || "").trim().toUpperCase()];
-    return erEvents(h).filter((e) => e && Number(e.em) > 0 && e.open != null && isFinite(Number(e.open)));
+    /* v3.84: ascendente y explícito. Antes se confiaba en que el almacén viniera con el más reciente
+       primero para que rec6 = slice(0,6) fueran "los últimos 6"; si una fuente devolvía el orden
+       contrario, ese contraste se calculaba con los 6 MÁS ANTIGUOS sin avisar. */
+    return erEvsAsc(erEvents(h).filter((e) => e && Number(e.em) > 0 && e.open != null && isFinite(Number(e.open))));
   })();
   const histOpens = histEvsAll.map((e) => Number(e.open));
   /* v1.66 (Victor: "¿le darías más peso a los últimos 6? o al menos poner el dato"): se PONE EL DATO, sin
      ponderar el modelo. Con 6 puntos una ponderación mete más ruido que señal — pero si el ticker ha
      cambiado de régimen (crecimiento→maduro, nuevo CEO, re-rating), los últimos 6 lo delatan y eso sí hay
-     que verlo. La tabla lista lo más reciente arriba, así que últimos 6 = primeras 6 filas con open. */
-  const rec6 = histEvsAll.slice(0, 6);
+     que verlo. v3.84: la serie va ahora en orden cronológico, así que últimos 6 = las 6 últimas. */
+  const rec6 = histEvsAll.slice(-6);
   const rec6Stats = rec6.length >= 3 ? (() => {
     const breaks = rec6.filter((e) => Math.abs(Number(e.open)) > Number(e.em)).length;
     const absOpen = rec6.reduce((t, e) => t + Math.abs(Number(e.open)), 0) / rec6.length;
