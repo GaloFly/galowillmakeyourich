@@ -1,5 +1,59 @@
 # CHANGELOG — Bloques
 
+## Bloques — CHANGELOG v3.84 (26-jul-2026)
+
+## Los mini-gráficos de earnings iban al revés
+
+El almacén guarda los eventos **con el más reciente primero** (ver
+`mergeErEvents`), y así se queda: hay consumidores que dependen de ese orden.
+Lo que estaba mal era la **lectura para pintar** — `ErMiniChart` recibía la
+serie tal cual, así que el eje iba de reciente a antiguo y la columna `próx.`
+quedaba pegada al evento **más viejo** en vez de al más nuevo.
+
+Con tus datos de NEM/AXP:
+
+```
+almacén :  2026/Q1 2025/Q4 2025/Q3 … 2023/Q4 2023/Q3   (+ 2026/Q2 al final)
+antes   :  2026/Q1 2025/Q4 2025/Q3 … 2023/Q4 2023/Q3  próx.   ← al revés
+ahora   :  2023/Q3 2023/Q4 2024/Q1 … 2025/Q4 2026/Q1  próx.   ✓
+```
+
+Nuevo `erChrono` / `erEvsAsc` a nivel de módulo: devuelve una copia en orden
+cronológico ascendente, por `date` ISO y, si falta, por `periodo` AAAA/Qn. Los
+eventos sin fecha van al final. No muta el array original ni toca el almacén.
+
+## Dos bugs que salieron con el mismo hilo
+
+Los dos venían de código que decía "los últimos N" sobre una serie descendente,
+así que cogía **los más antiguos**:
+
+- **`lastP5`** (`erExtraStats`) — el `slice(-4)` que alimenta *post5Red* estaba
+  tomando los 4 post-5d más viejos creyendo que eran los 4 últimos.
+- **`rec6`** — el contraste "últimos 6 vs histórico" que usas para detectar
+  cambio de régimen funcionaba de casualidad: dependía en silencio de que el
+  almacén viniera descendente. Ahora la serie va en orden cronológico y
+  `rec6 = slice(-6)`, explícito y a prueba de que una fuente cambie el orden.
+
+También queda arreglado el `slice(-12)` del gráfico: con la serie descendente
+tomaba los 12 **más antiguos** de un histórico largo. Con 11 eventos no se
+notaba; con 20 sí.
+
+## Verificación
+
+- Babel 0 errores, montaje jsdom 0 errores.
+- 16 comprobaciones sobre los datos reales de NEM y AXP (incluido el evento
+  pendiente `2026/Q2` que el almacén guarda al final y que el filtro descarta
+  por no tener `open`): serie ascendente por fecha, primero el más antiguo,
+  último el más reciente con datos, ningún evento perdido ni duplicado, y las
+  etiquetas del SVG en ese mismo orden con `próx.` al final.
+- Comparador: `date` ISO, fallback a `periodo`, sin fecha al final, no muta el
+  original, tolera vacío/no-array, y `slice(-12)` sobre 20 eventos devuelve los
+  12 más recientes.
+- Regresión de las pruebas de rendimiento, alertas y distintivos.
+
+`APP_VERSION` 3.83 → **3.84**.
+
+
 ## # Bloques — CHANGELOG v3.79 → v3.81
 
 ## ## v3.83 (25-jul-2026)
