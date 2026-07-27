@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+## Bloques — CHANGELOG v3.88 (27-jul-2026)
+
+## El selector de cristal, también en Movimientos y Herramientas
+
+Los dos eran el mismo patrón que la barra inferior (fila de botones, el activo
+con fondo `T.dark`), así que en vez de copiar el efecto dos veces vive ahora en
+un componente único, **`GlassSegmented`**, que usan los dos:
+
+- **Movimientos** — Primas · MTM · Rendimiento · Histórico
+- **Herramientas** — Puts · Earnings · Screener · Alertas
+
+Mismo comportamiento que la barra de abajo desde la v3.87: en reposo el pill
+sólido de siempre; al arrastrar, lente esférica que crece, se redondea,
+desenfoca el fondo y aumenta la pestaña de debajo; sigue al dedo en posición
+continua —si paras entre dos, se queda ahí— e imanta solo al soltar; y el
+estirón depende de la velocidad, relajándose al frenar.
+
+### Dos diferencias deliberadas con la barra inferior
+
+Estos selectores viven **dentro de la página**, no fijos al viewport:
+
+- **`touch-action: pan-y`** en vez de `none`. Con `none`, empezar un scroll
+  vertical con el dedo sobre el selector se habría quedado muerto — el gesto
+  vertical sigue siendo del scroll y solo el horizontal es nuestro.
+- **Crecimiento algo menor** (1,08 × 1,30 frente a 1,10 × 1,38) porque la fila es
+  más baja que la barra de navegación.
+
+`GlassSegmented` va **a nivel de módulo** (lección de la v3.73): definido dentro
+de otro componente se remontaría en cada render.
+
+## Verificación
+
+- Babel 0 errores, montaje jsdom 0 errores.
+- 14 comprobaciones sobre el componente: reposo sólido y en la pestaña activa;
+  `touch-action` que no bloquea el scroll; al arrastrar redonda, crecida, con
+  blur y sin halo de color, sin animar el transform, con la lupa aumentando la de
+  debajo y encogiendo a las vecinas; **no** selecciona hasta soltar; parada entre
+  dos se queda en la posición 1,50 y deja de estirarse; al soltar imanta a la más
+  cercana; y el tap simple sigue seleccionando.
+- SSR de `MovimientosView` con los datos reales del backup: las 4 pestañas
+  siguen ahí, usa el selector nuevo y la burbuja parte en la activa.
+- Render de `HerramientasView`: sus 4 pestañas sobre el mismo componente.
+- Regresión de barra inferior, rendimiento, alertas, distintivos y orden de
+  earnings.
+
+`APP_VERSION` 3.87 → **3.88**.
+
+
 ## Bloques — CHANGELOG v3.87 (27-jul-2026)
 
 ## 1. Fuera el halo de color
