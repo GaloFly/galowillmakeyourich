@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.84"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.87"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8761,7 +8761,19 @@ function App() {
     try { const j = JSON.parse(localStorage.getItem(KEY_DAYPCT) || "null"); return j && j.date === new Date().toISOString().slice(0, 10) && j.pc ? j.pc : {}; } catch (e) { return {}; }
   });
   const navBarRef = useRef(null);
-  const [navHover, setNavHover] = useState(null); // índice de pestaña bajo el dedo al deslizar por el menú inferior
+  /* v3.87 (Victor: "que siga el deslizamiento — si paras entre dos selecciones que se quede ahí"):
+     navHover deja de ser un ÍNDICE de celda y pasa a ser una POSICIÓN CONTINUA (2.37 = entre la 2 y
+     la 3). La burbuja va donde va el dedo, sin imantarse a la celda más cercana; al soltar es cuando
+     salta a la pestaña más próxima. navPosRef guarda la posición anterior para medir la velocidad. */
+  const [navHover, setNavHover] = useState(null);
+  const navPosRef = useRef(null);
+  /* v3.85 (Victor: "el selector de abajo como una burbuja transparente al moverlo, como WhatsApp"):
+     mientras el dedo arrastra, el pill deja de ser sólido y pasa a cristal — se ve la barra a través —
+     y se estira en la dirección del viaje, aplastándose un poco, como una gota. navStretch guarda
+     cuánto estirar (0 = en reposo) y se relaja solo con un temporizador tras cada salto de celda. */
+  const [navStretch, setNavStretch] = useState(0);
+  const navStretchTmr = useRef(null);
+  useEffect(() => () => { if (navStretchTmr.current) clearTimeout(navStretchTmr.current); }, []);
   const [activeTab, setActiveTab] = useState("resumen"); // v1.41: Portfolio abre en el resumen ejecutivo
   const [chartScope, setChartScope] = useState("Bloque");
   const [selectedSlice, setSelectedSlice] = useState(null);
@@ -11520,15 +11532,49 @@ function App() {
     {!wizOpen && (() => {
       const NAV = [["bloques", "portfolio", "Portfolio"], ["movimientos", "movimientos", "Movimientos"], ["vencimientos", "vencimientos", "Vencimientos"], ["comparador", "comparador", "Herramientas"], ["ajustes", "ajustes", "Ajustes"]];
       const activeIdx = Math.max(0, NAV.findIndex(([id]) => id === view));
-      /* deslizar el dedo por la barra: el pill sigue el dedo (navHover) y al soltar selecciona esa pestaña.
-         El índice se calcula por la posición X del dedo dentro de la zona de pestañas (descontando el padding). */
-      const idxFromX = (clientX) => {
+      /* v3.87: posición CONTINUA del dedo dentro de la barra, en unidades de celda (2.37 = entre la 2
+         y la 3). Antes esto era Math.floor(...) y por eso la burbuja se imantaba a la celda; ahora la
+         sigue de verdad y se queda donde la dejes. El centro de la burbuja va bajo el dedo, con tope en
+         los extremos para que no se salga de la barra. */
+      const posFromX = (clientX) => {
         const el = navBarRef.current; if (!el) return null;
         const r = el.getBoundingClientRect();
-        const innerLeft = r.left + 8, innerW = r.width - 16;
-        return Math.max(0, Math.min(NAV.length - 1, Math.floor(((clientX - innerLeft) / innerW) * NAV.length)));
+        const innerLeft = r.left + 9, innerW = r.width - 18, cellW = innerW / NAV.length;
+        if (!(cellW > 0)) return null;
+        return Math.max(0, Math.min(NAV.length - 1, (clientX - innerLeft - cellW / 2) / cellW));
       };
-      const shownIdx = navHover != null ? navHover : activeIdx;
+      const dragging = navHover != null;
+      const shownPos = dragging ? navHover : activeIdx;      /* posición real de la burbuja (puede ser 2.37) */
+      const shownIdx = Math.round(shownPos);                  /* la pestaña que queda debajo, para la lupa */
+      /* v3.87: el estirón ya no se dispara al cruzar de celda, sino con la VELOCIDAD del dedo — cuanto
+         más rápido se mueve, más se alarga la gota; al frenar se relaja sola. Es lo que hace que parar
+         a medio camino se vea quieto y redondo en vez de estirado. */
+      const goTo = (nextPos) => {
+        if (nextPos == null) return;
+        const prev = navPosRef.current;
+        if (prev != null) {
+          const v = Math.abs(nextPos - prev);
+          if (v > 0.004) {
+            setNavStretch(Math.min(0.30, v * 0.85));
+            if (navStretchTmr.current) clearTimeout(navStretchTmr.current);
+            navStretchTmr.current = setTimeout(() => setNavStretch(0), 140);
+          }
+        }
+        navPosRef.current = nextPos;
+        setNavHover(nextPos);
+      };
+      const endDrag = () => {
+        if (navStretchTmr.current) clearTimeout(navStretchTmr.current);
+        setNavStretch(0);
+        /* al soltar SÍ se imanta: la pestaña más cercana a donde quedó la burbuja */
+        if (navHover != null) selectView(NAV[Math.max(0, Math.min(NAV.length - 1, Math.round(navHover)))][0]);
+        navPosRef.current = null;
+        setNavHover(null);
+      };
+      const cancelDrag = () => {
+        if (navStretchTmr.current) clearTimeout(navStretchTmr.current);
+        setNavStretch(0); navPosRef.current = null; setNavHover(null);
+      };
       /* v3.77 (Victor: "el color no cuadra, el círculo queda justo, el deslizamiento no es fluido"):
          rediseño — (1) colores DEL TEMA: fondo crema translúcido (oscuro en tema oscuro) y pill activo
          T.dark con texto blanco, el mismo lenguaje de chips del resto de la app (fuera el azul #4C9AF5);
@@ -11538,20 +11584,71 @@ function App() {
       return (
       <div style={{ position: "fixed", left: 12, right: 12, bottom: 24, display: "flex", justifyContent: "center", zIndex: 40, pointerEvents: "none" }}>
         <div ref={navBarRef}
-          onTouchStart={(e) => setNavHover(idxFromX(e.touches[0].clientX))}
-          onTouchMove={(e) => setNavHover(idxFromX(e.touches[0].clientX))}
-          onTouchEnd={() => { if (navHover != null) selectView(NAV[navHover][0]); setNavHover(null); }}
-          onTouchCancel={() => setNavHover(null)}
+          onTouchStart={(e) => goTo(posFromX(e.touches[0].clientX))}
+          onTouchMove={(e) => goTo(posFromX(e.touches[0].clientX))}
+          onTouchEnd={endDrag}
+          onTouchCancel={cancelDrag}
           style={{ position: "relative", display: "flex", width: "100%", maxWidth: 540, background: barBg, backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)", borderRadius: 28, padding: "8px 9px", boxShadow: DARK ? "0 12px 34px rgba(0,0,0,0.45)" : "0 10px 30px rgba(30,30,40,0.16)", border: "0.5px solid " + (DARK ? "rgba(255,255,255,0.08)" : "rgba(20,20,25,0.07)"), pointerEvents: "auto", touchAction: "none" }}>
-          {/* pill deslizante: fijo en la primera celda, viaja con translateX(idx·100%) — GPU, sin layout */}
-          <div style={{ position: "absolute", top: 5, bottom: 5, left: 9, width: `calc((100% - 18px) / ${NAV.length})`, transform: `translateX(${shownIdx * 100}%)`, background: T.dark, opacity: navHover != null ? 0.88 : 1, borderRadius: 22, transition: "transform 0.32s cubic-bezier(0.3,1.12,0.35,1), opacity 0.15s", willChange: "transform", boxShadow: "0 4px 14px rgba(20,20,30,0.25)", pointerEvents: "none" }} />
+          {/* v3.86 (Victor, con foto ampliada de WhatsApp: "no es lo mismo, parece más tipo lupa y se
+              vuelve borroso al deslizar, y se hace más grande el selector"): la v3.85 era cristal PLANO.
+              Lo de WhatsApp es una LENTE ESFÉRICA. Cuatro cosas la definen, y aquí están las cuatro:
+                1. CRECE y se vuelve redonda al arrastrar — se sale por arriba y por abajo de la barra.
+                2. AUMENTA lo que tiene debajo (el efecto lupa): el icono y la etiqueta de la pestaña
+                   bajo la burbuja se escalan. Es lo que de verdad vende la lente, porque el backdrop
+                   real no se puede magnificar con CSS.
+                3. DISPERSIÓN CROMÁTICA en el borde: los halos cian y magenta enfrentados del anillo son
+                   la aberración que hace que parezca vidrio y no plástico.
+                4. DESENFOCA al deslizar: el blur del backdrop sube mucho mientras el dedo se mueve.
+              Todo el crecimiento va en scale() dentro del mismo transform que el translateX — sigue
+              siendo una sola composición en GPU. */}
+          <div style={{
+            position: "absolute", top: 5, bottom: 5, left: 9,
+            width: `calc((100% - 18px) / ${NAV.length})`,
+            transform: `translateX(${(shownPos * 100).toFixed(2)}%) scale(${dragging ? 1.10 + navStretch : 1}, ${dragging ? 1.38 - navStretch * 0.5 : 1})`,
+            transformOrigin: "center",
+            borderRadius: dragging ? "50%" : 22,
+            background: dragging
+              ? (DARK
+                ? "radial-gradient(120% 120% at 32% 22%, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.10) 42%, rgba(255,255,255,0.05) 72%, rgba(255,255,255,0.14) 100%)"
+                : "radial-gradient(120% 120% at 32% 22%, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.42) 42%, rgba(255,255,255,0.22) 72%, rgba(255,255,255,0.50) 100%)")
+              : T.dark,
+            /* la lente: aumenta el brillo y el contraste de lo que hay detrás, y lo desenfoca al moverse */
+            backdropFilter: dragging ? `blur(${(6 + navStretch * 26).toFixed(1)}px) saturate(190%) brightness(1.07) contrast(1.05)` : "none",
+            WebkitBackdropFilter: dragging ? `blur(${(6 + navStretch * 26).toFixed(1)}px) saturate(190%) brightness(1.07) contrast(1.05)` : "none",
+            border: "0.5px solid " + (dragging ? (DARK ? "rgba(255,255,255,0.40)" : "rgba(255,255,255,0.90)") : "transparent"),
+            /* v3.87: fuera el halo cian/magenta. Queda el relieve en blanco — especular arriba, rebote
+               abajo y un aro interior tenue — que da el volumen de esfera sin teñir nada. */
+            boxShadow: dragging
+              ? [
+                  "inset 0 1.5px 1px rgba(255,255,255,0.75)",      /* brillo especular de arriba */
+                  "inset 0 -2px 3px rgba(255,255,255,0.30)",       /* rebote de abajo */
+                  "inset 0 0 10px rgba(255,255,255,0.22)",         /* aro interior: grosor del vidrio */
+                  "0 10px 26px rgba(0,0,0,0.30)",
+                ].join(", ")
+              : "0 4px 14px rgba(20,20,30,0.25)",
+            /* v3.87: mientras el dedo arrastra NO se anima el transform — la burbuja va pegada al dedo,
+               fotograma a fotograma. La curva con sobreimpulso se reserva para el imantado al soltar. */
+            transition: dragging
+              ? "background 0.22s, box-shadow 0.22s, border-color 0.22s, border-radius 0.22s"
+              : "transform 0.30s cubic-bezier(0.3,1.12,0.35,1), background 0.22s, box-shadow 0.22s, border-color 0.22s, border-radius 0.22s",
+            willChange: "transform",
+            pointerEvents: "none",
+          }} />
           {NAV.map(([id, icon, label], i) => {
             const on = shownIdx === i;
             return (
               <button key={id} onClick={() => selectView(id)} style={{
                 position: "relative", zIndex: 1, flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3.5, border: "none", cursor: "pointer",
                 background: "transparent", borderRadius: 22, padding: "8px 3px 7px",
-                color: on ? "#fff" : T.sub, transition: "color 0.18s",
+                color: on ? (dragging ? T.ink : "#fff") : T.sub,
+                /* v3.86 — LA LUPA. El backdrop real no se puede magnificar con CSS, pero agrandar el
+                   icono y la etiqueta que quedan DEBAJO de la burbuja produce exactamente la lectura de
+                   lente aumentando su contenido. Los vecinos se encogen un pelo, que es lo que hace que
+                   el aumento se note de verdad. */
+                transform: dragging ? (on ? "scale(1.20)" : "scale(0.94)") : "scale(1)",
+                transformOrigin: "center",
+                transition: "color 0.18s, transform 0.22s cubic-bezier(0.3,1.1,0.35,1)",
+                willChange: dragging ? "transform" : "auto",
               }}>{/* v3.78 (Victor, con captura): "Vencimientos" a 10px llenaba la celda — tocaba el pill y
                    a los vecinos. Etiquetas a 9px sin tracking + 3px de margen lateral + clip de seguridad. */}
                 <span style={{ position: "relative", display: "inline-flex" }}>
