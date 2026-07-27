@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+## Bloques — CHANGELOG v3.87 (27-jul-2026)
+
+## 1. Fuera el halo de color
+
+Los `inset` cian y magenta del borde, eliminados. Se queda el relieve en blanco
+—especular arriba, rebote abajo y un aro interior tenue— que es lo que da el
+volumen de esfera sin teñir nada.
+
+## 2. La burbuja sigue el dedo de verdad
+
+Antes se imantaba: `navHover` guardaba un **índice de celda** (`Math.floor` de la
+posición del dedo), así que la burbuja solo podía estar en una de las cinco
+posiciones. Si parabas a medio camino, saltaba a la más cercana.
+
+Ahora `navHover` es una **posición continua** — 2,37 significa entre la celda 2 y
+la 3 — y la burbuja va exactamente donde está el dedo. **Si paras entre dos
+pestañas, se queda ahí.** El imantado ocurre solo al soltar, saltando a la
+pestaña más próxima.
+
+Tres cambios que van con esto:
+
+- **`posFromX`** sustituye a `idxFromX`: devuelve la posición en unidades de
+  celda con decimales, con el centro de la burbuja bajo el dedo y tope en los
+  extremos para que no se salga de la barra.
+- **El `transform` no se anima mientras arrastras.** Antes tenía una curva de
+  0,30 s con sobreimpulso, que con seguimiento continuo se traduce en la burbuja
+  yendo por detrás del dedo. Ahora va fotograma a fotograma, y la curva se
+  reserva para el imantado al soltar — que es donde sí se quiere ver.
+- **El estirón pasa a depender de la velocidad**, no del cruce de celda. Cuanto
+  más rápido mueves el dedo más se alarga la gota; al frenar se relaja sola. Es
+  lo que hace que parar a medio camino se vea quieto y redondo en vez de
+  estirado.
+
+La lupa sigue igual: la pestaña bajo la burbuja (la más cercana a la posición
+continua) se agranda y los vecinos se encogen.
+
+## Verificación
+
+- Babel 0 errores, montaje jsdom 0 errores.
+- 20 comprobaciones simulando el arrastre, con el caso que pediste medido
+  explícitamente: dedo parado justo entre la pestaña 2 y la 3 → la burbuja se
+  queda en la posición 2,50 sin imantarse, deja de estirarse al frenar
+  (sx 1,40 → 1,10) y sigue siendo lente; al soltar salta a la 3, vuelve a pill
+  sólido y rectangular, y el transform recupera su animación.
+- Comprobado que ya no queda rastro de cian ni magenta en el borde.
+- Regresión de rendimiento, alertas, distintivos y orden de earnings.
+
+`APP_VERSION` 3.86 → **3.87**.
+
+
 ## Bloques — CHANGELOG v3.84 (26-jul-2026)
 
 ## Los mini-gráficos de earnings iban al revés
