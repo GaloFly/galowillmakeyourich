@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.87"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.88"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5336,18 +5336,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
 
   return (
     <>
-      <div style={{ display: "flex", gap: 6, background: T.card, borderRadius: 18, padding: 6, marginBottom: 14, boxShadow: T.shadow }}>
-        {[["primas", "Primas"], ["mtm", "MTM"], ["rendimiento", "Rendimiento"], ["estrategias", "Histórico"]].map(([id, label]) => (
-          <button key={id} onClick={() => { setSub(id); setBlockFilter("all"); }} style={{
-            flex: 1, border: "none", cursor: "pointer", borderRadius: 13, padding: "8px 0 7px", fontSize: 12, fontWeight: 700,
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-            background: sub === id ? T.dark : "transparent", color: sub === id ? "#fff" : T.sub,
-          }}>
-            <NavIcon name={id} />
-            <span>{label}</span>
-          </button>
-        ))}
-      </div>
+      {/* v3.88: mismo selector de cristal que la barra inferior */}
+      <GlassSegmented
+        items={[{ id: "primas", label: "Primas" }, { id: "mtm", label: "MTM" }, { id: "rendimiento", label: "Rendimiento" }, { id: "estrategias", label: "Histórico" }]}
+        value={sub} onChange={(id) => { setSub(id); setBlockFilter("all"); }} renderIcon={(it) => <NavIcon name={it.id} />} />
 
       {sub === "rendimiento" ? (
         <RendimientoCard snapshots={snapshots} flows={flows} onSave={saveSnapshot} onDelete={deleteSnapshot} />
@@ -6400,23 +6392,114 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
 
 /* ---------- COMPARADOR: contenido de la vista (la cuenta base viene de Portfolio) ---------- */
 /* v1.21: Herramientas — contenedor con selector Puts | Earnings (estilo Movimientos) */
+/* ---------- v3.88: SELECTOR DE CRISTAL reutilizable ----------
+   Victor: "¿haces lo mismo para los selectores de movimientos y herramientas?". Los dos eran el mismo
+   patrón (fila de botones, el activo con fondo T.dark), así que en vez de copiar el efecto dos veces
+   vive aquí y lo usan ambos. Mismo comportamiento que la barra inferior desde la v3.87:
+     · en reposo, el pill sólido de siempre;
+     · al arrastrar, lente esférica — crece, se redondea, desenfoca el fondo y aumenta lo que hay debajo;
+     · sigue al dedo en posición CONTINUA (si paras entre dos, se queda ahí) e imanta solo al soltar;
+     · el estirón depende de la velocidad y se relaja al frenar.
+   Dos diferencias deliberadas con la barra inferior, por vivir dentro de la página y no fija al viewport:
+     · touchAction "pan-y" en vez de "none" — si no, arrancar un scroll vertical sobre el selector se
+       quedaría muerto;
+     · crecimiento algo menor (1,08 × 1,30 frente a 1,10 × 1,38) porque la fila es más baja.
+   A NIVEL DE MÓDULO a propósito (lección v3.73): definido dentro de otro componente se remontaría en
+   cada render. */
+function GlassSegmented({ items, value, onChange, renderIcon }) {
+  const barRef = useRef(null);
+  const [pos, setPos] = useState(null);       /* posición continua del dedo, en celdas; null = en reposo */
+  const [stretch, setStretch] = useState(0);
+  const prevRef = useRef(null), tmrRef = useRef(null);
+  useEffect(() => () => { if (tmrRef.current) clearTimeout(tmrRef.current); }, []);
+  const N = items.length;
+  const activeIdx = Math.max(0, items.findIndex((it) => it.id === value));
+  const dragging = pos != null;
+  const shownPos = dragging ? pos : activeIdx;
+  const shownIdx = Math.round(shownPos);
+  const posFromX = (clientX) => {
+    const el = barRef.current; if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const innerLeft = r.left + 6, innerW = r.width - 12, cellW = innerW / N;
+    if (!(cellW > 0)) return null;
+    return Math.max(0, Math.min(N - 1, (clientX - innerLeft - cellW / 2) / cellW));
+  };
+  const goTo = (next) => {
+    if (next == null) return;
+    const prev = prevRef.current;
+    if (prev != null) {
+      const v = Math.abs(next - prev);
+      if (v > 0.004) {
+        setStretch(Math.min(0.26, v * 0.8));
+        if (tmrRef.current) clearTimeout(tmrRef.current);
+        tmrRef.current = setTimeout(() => setStretch(0), 140);
+      }
+    }
+    prevRef.current = next; setPos(next);
+  };
+  const reset = () => { if (tmrRef.current) clearTimeout(tmrRef.current); setStretch(0); prevRef.current = null; setPos(null); };
+  const endDrag = () => { if (pos != null) onChange(items[Math.max(0, Math.min(N - 1, Math.round(pos)))].id); reset(); };
+  const lens = "blur(" + (5 + stretch * 24).toFixed(1) + "px) saturate(190%) brightness(1.07) contrast(1.05)";
+  return (
+    <div ref={barRef}
+      onTouchStart={(e) => goTo(posFromX(e.touches[0].clientX))}
+      onTouchMove={(e) => goTo(posFromX(e.touches[0].clientX))}
+      onTouchEnd={endDrag}
+      onTouchCancel={reset}
+      style={{ position: "relative", display: "flex", gap: 0, background: T.card, borderRadius: 18, padding: 6, marginBottom: 14, boxShadow: T.shadow, touchAction: "pan-y" }}>
+      <div style={{
+        position: "absolute", top: 6, bottom: 6, left: 6,
+        width: `calc((100% - 12px) / ${N})`,
+        transform: `translateX(${(shownPos * 100).toFixed(2)}%) scale(${dragging ? 1.08 + stretch : 1}, ${dragging ? 1.30 - stretch * 0.45 : 1})`,
+        transformOrigin: "center",
+        borderRadius: dragging ? "50%" : 13,
+        background: dragging
+          ? (DARK
+            ? "radial-gradient(120% 120% at 32% 22%, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.10) 42%, rgba(255,255,255,0.05) 72%, rgba(255,255,255,0.14) 100%)"
+            : "radial-gradient(120% 120% at 32% 22%, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.42) 42%, rgba(255,255,255,0.22) 72%, rgba(255,255,255,0.50) 100%)")
+          : T.dark,
+        backdropFilter: dragging ? lens : "none",
+        WebkitBackdropFilter: dragging ? lens : "none",
+        border: "0.5px solid " + (dragging ? (DARK ? "rgba(255,255,255,0.40)" : "rgba(255,255,255,0.90)") : "transparent"),
+        boxShadow: dragging
+          ? "inset 0 1.5px 1px rgba(255,255,255,0.75), inset 0 -2px 3px rgba(255,255,255,0.30), inset 0 0 10px rgba(255,255,255,0.22), 0 8px 20px rgba(0,0,0,0.24)"
+          : "none",
+        transition: dragging
+          ? "background 0.22s, box-shadow 0.22s, border-color 0.22s, border-radius 0.22s"
+          : "transform 0.30s cubic-bezier(0.3,1.12,0.35,1), background 0.22s, box-shadow 0.22s, border-color 0.22s, border-radius 0.22s",
+        willChange: "transform", pointerEvents: "none",
+      }} />
+      {items.map((it, i) => {
+        const on = shownIdx === i;
+        return (
+          <button key={it.id} onClick={() => onChange(it.id)} style={{
+            position: "relative", zIndex: 1, flex: 1, minWidth: 0, border: "none", cursor: "pointer",
+            background: "transparent", borderRadius: 13, padding: "8px 0 7px", fontSize: 12, fontWeight: 700,
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+            color: on ? (dragging ? T.ink : "#fff") : T.sub,
+            transform: dragging ? (on ? "scale(1.18)" : "scale(0.95)") : "scale(1)",
+            transformOrigin: "center",
+            transition: "color 0.18s, transform 0.22s cubic-bezier(0.3,1.1,0.35,1)",
+            willChange: dragging ? "transform" : "auto",
+          }}>
+            {renderIcon(it)}
+            <span style={{ whiteSpace: "nowrap" }}>{it.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis }) {
   const [sub, setSub] = useState(() => { try { const v = localStorage.getItem(KEY_TOOLSUB); return v === "earnings" || v === "alerts" || v === "screener" ? v : "puts"; } catch (e) { return "puts"; } });
   const pick = (id) => { setSub(id); try { localStorage.setItem(KEY_TOOLSUB, id); } catch (e) {} };
   return (
     <>
-      <div style={{ display: "flex", gap: 6, background: T.card, borderRadius: 18, padding: 6, marginBottom: 14, boxShadow: T.shadow }}>
-        {[["puts", "puts", "Puts"], ["calc", "earnings", "Earnings"], ["filter", "screener", "Screener"], ["bolt", "alerts", "Alertas"]].map(([icon, id, label]) => (
-          <button key={id} onClick={() => pick(id)} style={{
-            flex: 1, border: "none", cursor: "pointer", borderRadius: 13, padding: "8px 0 7px", fontSize: 12, fontWeight: 700,
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-            background: sub === id ? T.dark : "transparent", color: sub === id ? "#fff" : T.sub,
-          }}>
-            <ActIcon name={icon} size={22} />
-            <span>{label}</span>
-          </button>
-        ))}
-      </div>
+      {/* v3.88: mismo selector de cristal que la barra inferior */}
+      <GlassSegmented
+        items={[{ id: "puts", label: "Puts", icon: "puts" }, { id: "earnings", label: "Earnings", icon: "calc" }, { id: "screener", label: "Screener", icon: "filter" }, { id: "alerts", label: "Alertas", icon: "bolt" }]}
+        value={sub} onChange={pick} renderIcon={(it) => <ActIcon name={it.icon} size={22} />} />
       {sub === "puts" ? (
         <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} />
       ) : sub === "alerts" ? (
