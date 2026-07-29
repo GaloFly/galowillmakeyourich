@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.94"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.95"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6646,6 +6646,12 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   const [minPop, setMinPop] = useState(() => { try { const v = parseFloat(localStorage.getItem(KEY_SCRMINPOP) || ""); return Number.isFinite(v) && v >= 0 ? v : 0; } catch (e) { return 0; } }); /* v3.24: POP (open) mínima del filtro, fracción 0–1 */
   const [dayF, setDayF] = useState("all");
   const [sesF, setSesF] = useState("all");
+  /* v3.95 (Victor: "los días del screener que se puedan colapsar"): días plegados por fecha. Se guarda
+     la lista de PLEGADOS (no de abiertos), así un día nuevo del próximo barrido llega abierto por
+     defecto en vez de aparecer escondido. */
+  const KEY_SCRFOLD = "bloques_screener_folded_v1";
+  const [folded, setFolded] = useState(() => { try { const j = JSON.parse(localStorage.getItem(KEY_SCRFOLD) || "[]"); return Array.isArray(j) ? j : []; } catch (e) { return []; } });
+  const toggleFold = (d) => setFolded((p) => { const nx = p.indexOf(d) >= 0 ? p.filter((x) => x !== d) : [...p, d]; try { localStorage.setItem(KEY_SCRFOLD, JSON.stringify(nx)); } catch (e) {} return nx; });
 
   const lock = useRef(false);
   const load = async () => {
@@ -6845,6 +6851,15 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
       ) : null}
 
       {/* tarjetas agrupadas por día — tocar despliega el detalle */}
+      {/* v3.95: plegar/desplegar TODOS de una vez — con 4-5 días en pantalla, ir uno a uno cansa */}
+      {groupDays.length > 1 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <button type="button" onClick={() => { const all = groupDays.every((x) => folded.indexOf(x) >= 0); const nx = all ? [] : groupDays.slice(); setFolded(nx); try { localStorage.setItem(KEY_SCRFOLD, JSON.stringify(nx)); } catch (e) {} }}
+            style={{ border: "none", cursor: "pointer", borderRadius: 10, padding: "6px 11px", fontSize: 10.5, fontWeight: 800, background: T.tile, color: T.sub }}>
+            {groupDays.every((x) => folded.indexOf(x) >= 0) ? "Desplegar todos" : "Plegar todos"}
+          </button>
+        </div>
+      )}
       {groupDays.map((d) => (
         <div key={d} style={{ marginBottom: 14 }}>
           {/* v3.94 (Victor: "en el día que tenga un botón de añadir todo el día al calendario de
@@ -6853,7 +6868,17 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               quitarlos del calendario, igual que el toggle de cada ticker. Sin doble toque: añadir no
               destruye nada, y quitar se deshace con otro toque. */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "2px 2px 8px" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, textTransform: "capitalize" }}>{fmtDay(d)} <span style={{ color: T.sub, fontWeight: 600 }}>· {groups[d].length}</span></div>
+            {/* v3.95: la fecha es el botón de plegar/desplegar — el chevron gira y, plegado, la
+                cuenta de cuántos de ese día están ya en el calendario se ve sin abrirlo */}
+            <button type="button" onClick={() => toggleFold(d)}
+              style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 7, textAlign: "left" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, transform: folded.indexOf(d) >= 0 ? "rotate(-90deg)" : "none", transition: "transform .15s", flex: "none" }}>▾</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: T.ink, textTransform: "capitalize", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fmtDay(d)} <span style={{ color: T.sub, fontWeight: 600 }}>· {groups[d].length}</span></span>
+              {(() => {
+                const n = groups[d].filter((it) => it && it.ticker && erHistAll[it.ticker]).length;
+                return n ? <span style={{ flex: "none", fontSize: 9, fontWeight: 800, borderRadius: 7, padding: "2px 7px", background: T.tileGreen, color: T.green, whiteSpace: "nowrap" }}>{n} en calendario</span> : null;
+              })()}
+            </button>
             {(() => {
               const addables = groups[d].filter((it) => it && it.ticker && Array.isArray(it.events) && it.events.length);
               if (!addables.length) return null;
@@ -6880,7 +6905,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               );
             })()}
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: folded.indexOf(d) >= 0 ? "none" : "grid", gap: 8 }}>
             {groups[d].slice().sort((a, b) => (Number(b.marketCapB) || 0) - (Number(a.marketCapB) || 0)).map((it) => {
               const lq = liqOf(it.optVolume);
               const pOpen = popOf(it.ticker); /* v3.26: POP open visible en la cabecera, no solo al desplegar */
