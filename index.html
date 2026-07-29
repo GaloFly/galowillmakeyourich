@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.96"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.98"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6726,6 +6726,11 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   /* v3.24: POP (open) por ticker — servidor primero, histórico local si el ticker ya está en Earnings */
   const [erHistTick, setErHistTick] = useState(0); /* v3.92: re-render tras añadir/quitar in situ */
   const erHistAll = (() => { try { return loadErHist(); } catch (e) { return {}; } })();
+  /* v3.98 (Victor, cerrando la duda de la v3.97): la POP que se FILTRA y se MUESTRA es la CRUDA
+     (1 − X/M) — "quiero filtrar por POP actual cruda al open". La v3.97 había unificado hacia la
+     suavizada; se revierte y en su lugar se lleva la CRUDA al calendario, que era el otro extremo del
+     desajuste. La suavizada (Laplace) sigue viva donde debe: EV, veredicto GO/CAUTION y la fila
+     "crudo → usada" de Earnings, que es donde se explica la diferencia. */
   const popOf = (tkr) => { try { const h = srvHist[tkr] || erHistAll[tkr]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
   const filtered = items.filter((it) => {
     if (!(Number(it.marketCapB) >= minCap)) return false;
@@ -6835,7 +6840,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               {days.map((d) => <button key={d} type="button" onClick={() => setDayF(d)} style={chip(dayF === d)}>{fmtDay(d)}</button>)}
             </div>
           ) : null}
-          <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros{minPop > 0 ? " · POP open ≥ " + Math.round(minPop * 100) + "% (los tickers sin histórico no puntúan)" : ""}{(() => { const caps = items.map((it) => Number(it.marketCapB)).filter((v) => Number.isFinite(v)); return caps.length ? " · el barrido trae desde $" + Math.round(Math.min(...caps)) + "B" : ""; })()}</div>
+          <div style={{ fontSize: 11, color: T.sub, marginTop: 8, fontWeight: 600 }}>{filtered.length} de {items.length} tickers pasan los filtros{minPop > 0 ? " · POP open cruda ≥ " + Math.round(minPop * 100) + "% (la misma del calendario; los tickers sin histórico no puntúan)" : ""}{(() => { const caps = items.map((it) => Number(it.marketCapB)).filter((v) => Number.isFinite(v)); return caps.length ? " · el barrido trae desde $" + Math.round(Math.min(...caps)) + "B" : ""; })()}</div>
           {/* v3.34 (Victor): añadir de golpe TODOS los resultados que pasan el filtro. Es una acción
              explícita suya —no un volcado automático como el que se quitó en v3.33—, así que respeta la
              regla de "solo lo que yo elija". Solo entran los que traen histórico del servidor. */}
@@ -6991,6 +6996,15 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                               <div key={lb} style={detTile(popBg(p))}><div style={{ ...detVal, color: popCol(p) }}>{popPct(p)}</div><div style={detLbl}>{lb}{s.M ? " · " + k + "/" + s.M : ""}</div></div>
                             ))}
                           </div>
+                          {/* v3.97: estas 4 son CRUDAS (el hecho histórico: X de N). La del filtro, del
+                              mini-tile de la cabecera y del calendario es la SUAVIZADA — se enseñan las
+                              dos juntas para que la diferencia no vuelva a parecer un error. */}
+                          {Number.isFinite(s.popOpenS) && (
+                            <div style={{ background: T.tile, borderRadius: 10, padding: "7px 10px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>Filtro y calendario usan la cruda · suavizada (la del EV/veredicto)</span>
+                              <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: popCol(s.popOpenS), flex: "none" }}>{popPct(s.popOpenS)}</span>
+                            </div>
+                          )}
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                             <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{Number.isFinite(s.nextEm) ? "±" + s.nextEm.toFixed(1) + "%" : "—"}</div><div style={detLbl}>EM próximo</div></div>
                             <div style={detTile()}><div style={{ ...detVal, color: T.ink }}>{pct1(s.emAvg)}</div><div style={detLbl}>Ø EM</div></div>
@@ -7913,7 +7927,10 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                   <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, padding: "0 6px 8px" }}>Ø edge = ØEM − Ø|open| (el "Avg P&L" de moomoo). Próx = fecha del próximo earnings · pre/post. Tocar fila carga el ticker abajo.</div>
                   {/* v3.23: filtro por POP (Dentro EM) mínima */}
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", padding: "0 6px 10px" }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: T.sub, letterSpacing: 0.3 }}>POP ≥</span>
+                    {/* v3.97: aquí la columna "Dentro EM" y este filtro van en CRUDO a propósito — este
+                        cuadro existe para cotejar con moomoo, que también da el crudo. La suavizada es la
+                        del calendario y el veredicto; por eso el rótulo lo dice. */}
+                    <span style={{ fontSize: 10, fontWeight: 800, color: T.sub, letterSpacing: 0.3 }}>POP cruda ≥</span>
                     {popChips.map(([v, l]) => (
                       <button key={l} type="button" onClick={() => setErSumMinPop(v)}
                         style={{ border: "none", cursor: "pointer", borderRadius: 9, padding: "5px 10px", fontSize: 11, fontWeight: 800, background: erSumMinPop === v ? T.ink : T.card, color: erSumMinPop === v ? T.card : T.sub }}>{l}</button>
@@ -7973,7 +7990,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                 const s = h ? erStats(erEvents(h)) : null;
                 const f = rec ? liveForm(rec) : null;
                 const d = f ? erIdeaDerive(f) : null;
-                const pop = d && isFinite(d.pop) ? d.pop : s && isFinite(s.popOpenS) ? s.popOpenS : NaN; /* v1.62: suavizada, igual que el veredicto */
+                const pop = s && isFinite(s.popOpen) ? s.popOpen : NaN; /* v3.98: CRUDA, la misma del chip y del filtro (la suavizada sigue mandando en EV/veredicto vía erIdeaDerive) */
                 const vCol = d && d.verdict === "GO" ? T.green : d && d.verdict === "CAUTION" ? T.gold : d && d.verdict === "NO-GO" ? T.red : T.sub;
                 const vBg = d && d.verdict === "GO" ? T.tileGreen : d && d.verdict === "CAUTION" ? T.tileAmber : d && d.verdict === "NO-GO" ? T.tileRed : T.tile;
                 const chip = d && d.verdict ? d.verdict : rec ? "A MEDIAS" : "SOLO TABLA";
@@ -8010,7 +8027,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                     {isFinite(pop) && (
                       <div>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                          <span>POP open</span><span style={{ color: barCol }}>{(pop * 100).toFixed(0)}%</span>
+                          <span>POP open · cruda</span><span style={{ color: barCol }}>{(pop * 100).toFixed(0)}%</span>
                         </div>
                         <div style={{ height: 8, background: T.line, borderRadius: 4, overflow: "hidden", marginTop: 4 }}>
                           <div style={{ width: (pop * 100).toFixed(0) + "%", height: "100%", background: barCol, borderRadius: 4, transition: "width 0.3s" }} />
@@ -8111,10 +8128,13 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                                cada chip lleva su ✕ de dos toques (reutiliza dropCard: quita idea + tabla,
                                o sea, desaparece del calendario hasta que se re-añada desde el Screener) */
                             const dNum = day !== NO_DATE && h2.calDate ? String(Number(h2.calDate.slice(8, 10))) : "";
-                            const rec2 = ideasSorted.find((r) => String(r.tkr) === sym) || null;
-                            const d2 = rec2 ? erIdeaDerive(liveForm(rec2)) : null;
-                            const s2 = hist[sym] ? erStats(erEvents(hist[sym])) : null;
-                            const pop2 = d2 && isFinite(d2.pop) ? d2.pop : s2 && isFinite(s2.popOpenS) ? s2.popOpenS : NaN;
+                            const s2 = histOf(sym) ? erStats(erEvents(histOf(sym))) : null;
+                            /* v3.98 (Victor: "prefiero que sea cruda, pero entonces en el calendario que
+                               aparezca lo mismo, que sea consistente"): el chip enseña la POP CRUDA al
+                               open — la misma cifra con la que filtras en el Screener. Ya no se usa la
+                               pop de la idea (que viene suavizada) para que no dependa de si el ticker
+                               tiene idea guardada o no. La suavizada sigue en el EV y el veredicto. */
+                            const pop2 = s2 && isFinite(s2.popOpen) ? s2.popOpen : NaN;
                             const popC = !isFinite(pop2) ? T.sub : pop2 >= 0.7 ? T.green : pop2 >= 0.5 ? T.gold : T.red;
                             const on = expSym === sym;
                             return (
