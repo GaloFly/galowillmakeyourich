@@ -1,5 +1,16 @@
 # CHANGELOG — Bloques
 
+## Bloques v3.95 — Días colapsables en el Screener
+
+- **La fecha es el botón**: tocar la cabecera de un día pliega o despliega su lista de tickers. El chevron gira para indicar el estado.
+- **Plegado plegado, cuenta a la vista**: con el día cerrado, la cabecera muestra un chip verde "N en calendario" — sabes cuántos de ese día ya has añadido sin abrirlo. El botón "＋ Añadir el día" sigue accesible con el día plegado.
+- **Plegar / desplegar todos** (arriba a la derecha, solo si hay más de un día), para no ir uno a uno cuando el barrido trae cuatro o cinco.
+- **Persistente**: se guarda la lista de días *plegados*, no de abiertos — así un día nuevo del siguiente barrido llega abierto en vez de aparecer escondido sin que te enteres.
+
+## Verificado (jsdom, 11 comprobaciones)
+Cabecera pulsable · plegar oculta solo ese día · el resto sigue visible · persiste en localStorage · desplegar restaura · "Plegar todos" alterna a "Desplegar todos" · el botón de añadir el día funciona plegado · aparece el chip "N en calendario" · al reabrir la app respeta lo guardado y el día nuevo llega abierto.
+
+
 ## Bloques v3.94 — Arreglado el gráfico desaparecido + botón de día en el Screener
 
 ## El gráfico y los cuadros (arreglo)
