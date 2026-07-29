@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.89"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.90"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7214,6 +7214,41 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
       return ka.date < kb.date ? -1 : ka.date > kb.date ? 1 : ka.hour - kb.hour || a.localeCompare(b);
     });
   })();
+  /* v3.90 (Victor: "un calendario donde ponga por días las posiciones que hay que abrir... el miércoles
+     29 estarían las del miércoles AMC y las del jueves BMO"): el carrusel de tarjetas se sustituye por
+     un CALENDARIO DE APERTURAS deslizable por días. La clave de agrupación es el DÍA DE APERTURA del
+     trade (15:30-16:00 del día antes del gap), no el día del earnings: AMC → se abre ese mismo día;
+     BMO / en sesión / sesión desconocida → se abre la tarde HÁBIL anterior (sáb/dom retroceden a
+     viernes; con sesión desconocida se asume la tarde antes, que cubre ambos casos). Cada día lleva
+     recuadros compactos ticker + AMC/BMO; tocar uno despliega la tarjeta completa BAJO ese día (la
+     misma tarjeta de siempre, ahora renderizada por erCard). Sin fecha futura → grupo "Sin fecha". */
+  const NO_DATE = "9999-99-99";
+  const openDayOf = (sym) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const h = hist[sym] || {};
+    if (!(h.calDate && h.calDate >= today)) return NO_DATE;
+    if (h.calHour === "amc") return h.calDate;
+    const d = new Date(h.calDate + "T12:00:00");
+    d.setDate(d.getDate() - 1);
+    if (d.getDay() === 0) d.setDate(d.getDate() - 2); /* dom → viernes */
+    else if (d.getDay() === 6) d.setDate(d.getDate() - 1); /* sáb → viernes */
+    return d.toISOString().slice(0, 10);
+  };
+  const calGroups = (() => {
+    const g = {};
+    unionSyms.forEach((sym) => { const day = openDayOf(sym); (g[day] = g[day] || []).push(sym); });
+    return g;
+  })();
+  const calDayKeys = Object.keys(calGroups).sort(); /* NO_DATE ("9999-...") queda solo al final */
+  const [calDay, setCalDay] = useState(null); /* día visible del calendario (deslizar) */
+  const [calExp, setCalExp] = useState(null); /* ticker con la tarjeta desplegada bajo su día */
+  /* cargar un ticker desde el resumen, el formulario o el salto del Screener navega el calendario
+     a su día y despliega su tarjeta — hereda la sincronía que tenía el carrusel */
+  useEffect(() => {
+    if (!syncTkr || unionSyms.indexOf(syncTkr) < 0) return;
+    setCalExp(syncTkr);
+    setCalDay(openDayOf(syncTkr));
+  }, [syncTkr]);
   const [st, setSt] = useState(() => {
     /* v1.62: wings = anchos añadidos al comparador, [{ w, c }] — se guardan con el resto del formulario
        (y por tanto también dentro de una idea). Solo se guarda ancho + crédito: strikes, sizing y EV se
@@ -7798,14 +7833,16 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         {unionSyms.length > 0 && (
           <>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <div style={{ flex: 1, minWidth: 0 }}><WizSection>▸ Earnings por ticker ({unionSyms.length})</WizSection></div>
+              <div style={{ flex: 1, minWidth: 0 }}><WizSection>▸ Calendario de aperturas ({unionSyms.length})</WizSection></div>
               <button type="button" onClick={clearAllErCards} title="Vaciar todas las tarjetas de earnings (histórico e ideas)"
                 style={{ background: confirmClearEr ? T.red : T.tile, border: "none", borderRadius: 12, padding: confirmClearEr ? "8px 13px" : "8px 11px", fontSize: 12.5, fontWeight: 800, color: confirmClearEr ? "#fff" : T.sub, cursor: "pointer", flexShrink: 0 }}>
                 {confirmClearEr ? "¿Vaciar todo?" : "🗑️"}
               </button>
             </div>
-            <SnapCarousel keys={unionSyms} activeKey={syncTkr} onActiveKey={setSyncTkr}>
-              {unionSyms.map((sym) => {
+            {(() => {
+              /* v3.90: la tarjeta del antiguo carrusel, intacta, ahora como función — se pinta
+                 desplegada bajo el día del calendario cuyo recuadro se toca */
+              const erCard = (sym) => {
                 const rec = ideasSorted.find((r) => String(r.tkr) === sym) || null;
                 const h = hist[sym] || null;
                 const s = h ? erStats(erEvents(h)) : null;
@@ -7916,8 +7953,51 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                     )}
                   </div>
                 );
-              })}
-            </SnapCarousel>
+              };
+              const DOWS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+              const MONS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+              const dayLbl = (day) => { if (day === NO_DATE) return "Sin fecha"; const d = new Date(day + "T12:00:00"); return isNaN(d.getTime()) ? day : DOWS[d.getDay()] + " " + d.getDate() + " " + MONS[d.getMonth()]; };
+              const sesBadge = (hr) => hr === "bmo" ? { t: "BMO", bg: T.tileAmber, c: T.gold } : hr === "amc" ? { t: "AMC", bg: T.tileGreen, c: T.green } : hr === "dmh" ? { t: "SES", bg: T.tile, c: T.sub } : { t: "S/D", bg: T.tile, c: T.sub };
+              const today0 = new Date().toISOString().slice(0, 10);
+              return (
+                <SnapCarousel keys={calDayKeys} activeKey={calDay} onActiveKey={setCalDay}>
+                  {calDayKeys.map((day) => {
+                    const syms = calGroups[day];
+                    const expSym = calExp && syms.indexOf(calExp) >= 0 ? calExp : null;
+                    return (
+                      <div key={day} style={{ background: T.tile, borderRadius: 18, padding: "13px 14px", width: "100%", minWidth: 0, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 10, alignSelf: "flex-start" }}>
+                        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                            <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, letterSpacing: -0.2, whiteSpace: "nowrap" }}>{dayLbl(day)}</span>
+                            {day === today0 && <span style={{ fontSize: 9.5, fontWeight: 800, borderRadius: 7, padding: "2px 7px", background: T.tileGreen, color: T.green }}>HOY</span>}
+                          </span>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>
+                            {day === NO_DATE ? syms.length + " sin earnings próximo" : "abrir 15:30–16:00 ET · " + syms.length}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {syms.map((sym) => {
+                            const h2 = hist[sym] || {};
+                            const b = sesBadge(day === NO_DATE ? null : h2.calHour);
+                            const on = expSym === sym;
+                            return (
+                              <button key={sym} type="button" onClick={() => setCalExp(on ? null : sym)}
+                                style={{ border: "none", cursor: "pointer", borderRadius: 12, padding: "8px 11px", display: "inline-flex", alignItems: "center", gap: 7, background: on ? T.dark : T.card, boxShadow: "none" }}>
+                                <span style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: -0.2, color: on ? "#fff" : T.ink }}>{sym}</span>
+                                {day !== NO_DATE && (
+                                  <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3 }}>{b.t}</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {expSym && erCard(expSym)}
+                      </div>
+                    );
+                  })}
+                </SnapCarousel>
+              );
+            })()}
           </>
         )}
         <WizSection>▸ Subyacente y expected move</WizSection>
