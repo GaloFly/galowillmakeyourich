@@ -1,5 +1,27 @@
 # CHANGELOG — Bloques
 
+## Bloques v3.92 — Selección manual in situ, chips refinados y Probabilidad arriba
+
+## Fuera la auto-alta (revierte v3.91)
+Actualizar el screener **ya no toca el calendario**: los borrados no reaparecen en cada carga. La selección vuelve a ser manual, pero sin fricción:
+
+## "Añadir" sin cambiar de pantalla
+- El botón del detalle del screener añade el ticker al calendario **y te quedas en el Screener** para encadenar el siguiente.
+- El mismo botón hace de indicador y de quitar: "＋ Añadir al calendario de Earnings" ⇄ "✓ En el calendario · tocar para quitar".
+- Guarda fecha y sesión del JSON, así el ticker cae directo en su día.
+- Si el ticker no trae histórico del servidor, se mantiene el salto clásico "Añadir a Earnings →" para subir su tabla a mano.
+
+## Recuadros del calendario
+- **POP antes que la fecha**: `ADP · 85% · 29·BMO`.
+- Van en **columna** y la tarjeta se despliega **justo debajo del recuadro pulsado**, no al final del panel.
+- Cada recuadro lleva su **✕** (dos toques: ✕ → "¿Quitar?") que lo saca del calendario — hasta que lo re-añadas desde el Screener con un toque.
+
+## Probabilidad · histórico sube
+La sección entera (las 4 POP, la direccional, el gráfico de barras con banda EM, crudo→usada, últimos 6) pasa a estar **justo debajo de Subyacente y expected move**: cargas el ticker y ves el gráfico antes de obtener el spot. Estructura, Sizing y Plan B siguen después.
+
+## Verificado (jsdom)
+Cargar screener no auto-añade · añadir in situ guarda calDate/calHour y no navega · botón pasa a "quitar" · chip con POP antes de la fecha · tarjeta justo debajo del chip · ✕ arma y el segundo toque borra · orden de secciones Subyacente → Probabilidad → Estructura.
+
 ## # Bloques v3.91 — Chips con fecha·sesión + POP, y auto-alta desde el screener
 
 ## Recuadros del calendario
