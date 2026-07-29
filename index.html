@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.91"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.92"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6659,43 +6659,16 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
       if (!j || !Array.isArray(j.items)) throw new Error("el JSON no tiene lista de tickers");
       setData(j);
       try { localStorage.setItem(KEY_SCREEN, JSON.stringify(j)); } catch (e) {}
-      /* v3.91 (Victor: "que se metan todas a la vez en el calendario después de actualizar el
-         screener, así me salto un paso"): al cargar/actualizar, los tickers que PASAN LOS FILTROS
-         vigentes (cap, volumen, POP, día, sesión) se añaden solos a Earnings con su calDate/calHour
-         del propio JSON → caen directos en el calendario de aperturas sin pulsar "Añadir a Earnings".
-         OJO no contradice la v3.33: aquella quitó el volcado INDISCRIMINADO de los 164; aquí la
-         selección son los filtros. Solo entran los que traen events; no se borra nada de lo que ya
-         estaba (el 🗑️ de Earnings sigue siendo la escoba). */
-      try {
-        const srvH = {}; for (const it of j.items) if (it && it.ticker && Array.isArray(it.events) && it.events.length) srvH[it.ticker] = { events: it.events };
-        const histL = loadErHist();
-        const popOfJ = (t) => { try { const h = srvH[t] || histL[t]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
-        const pass = (it) => Number(it.marketCapB) >= minCap
-          && (minVol <= 0 || (Number(it.optVolume) || 0) >= minVol)
-          && (dayF === "all" || it.date === dayF)
-          && (sesF === "all" || it.session === sesF)
-          && (minPop <= 0 || (() => { const p = popOfJ(it.ticker); return Number.isFinite(p) && p >= minPop; })());
-        let added = 0, updated = 0;
-        for (const it of j.items) {
-          if (!(it && it.ticker && Array.isArray(it.events) && it.events.length)) continue;
-          if (!pass(it)) continue;
-          const had = !!histL[it.ticker];
-          const merged = { ...(histL[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
-          if (it.date) { merged.calDate = it.date; merged.calHour = it.session === "BMO" ? "bmo" : it.session === "AMC" ? "amc" : (merged.calHour || null); }
-          if (merged.mdEvents) delete merged.mdEvents;
-          histL[it.ticker] = merged;
-          had ? updated++ : added++;
-        }
-        if (added || updated) saveErHist(histL);
-        setMsg("📅 Al calendario de Earnings: " + added + " nuevo" + (added === 1 ? "" : "s") + " · " + updated + " actualizado" + (updated === 1 ? "" : "s") + " (según filtros vigentes)");
-      } catch (e) {}
+      /* v3.92 (Victor: "si voy borrando tickers del calendario, cada vez que actualice me van a
+         salir"): FUERA la auto-alta de la v3.91 — duró un día. Actualizar el screener NO toca el
+         calendario: la selección vuelve a ser manual, botón a botón, pero ahora IN SITU (el botón
+         del detalle añade/quita sin saltar de pantalla, ver v3.92 más abajo). */
       /* v3.33 (Victor: "en Earnings hay muchas tarjetas, solo quiero las seleccionadas manualmente"):
          la v3.20 volcaba el histórico de TODOS los tickers del screener (164) a KEY_ERHIST en cada carga,
          y de ahí salían decenas de tarjetas que él no había pedido. Ya NO se vuelca nada aquí: el detalle
          del Screener lee los events del propio JSON (srvHist, en memoria) y solo "Añadir a Earnings"
          guarda el ticker en el histórico local. Así las tarjetas de Earnings son exactamente las elegidas.
-         v3.91 lo matiza: SÍ se vuelca al cargar, pero solo lo que pasa los FILTROS (ver bloque de arriba)
-         — la selección deja de ser botón a botón y pasa a ser el filtro. */
+         (La v3.91 probó a volcar lo filtrado en cada carga; la v3.92 lo retiró: re-aparecían los borrados.) */
     } catch (e) { setMsg("No se pudo cargar: " + (e && e.message ? e.message : String(e))); }
     setBusy(false); lock.current = false;
   };
@@ -6744,6 +6717,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
     return m;
   })();
   /* v3.24: POP (open) por ticker — servidor primero, histórico local si el ticker ya está en Earnings */
+  const [erHistTick, setErHistTick] = useState(0); /* v3.92: re-render tras añadir/quitar in situ */
   const erHistAll = (() => { try { return loadErHist(); } catch (e) { return {}; } })();
   const popOf = (tkr) => { try { const h = srvHist[tkr] || erHistAll[tkr]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
   const filtered = items.filter((it) => {
@@ -6974,25 +6948,47 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                         </div>
                       )}
 
+                      {Array.isArray(it.events) && it.events.length ? (
+                        /* v3.92 (Victor: "que cada vez que pongas uno no te lleve a la pantalla, sino
+                           que ponga añadir a earnings solamente y puedas añadir otro seguido"): el botón
+                           deja de saltar a Earnings — añade AQUÍ (con calDate/calHour del JSON, así cae
+                           en su día del calendario) y te quedas en el Screener para encadenar el
+                           siguiente. Si ya está, el mismo botón lo QUITA (un toque: re-añadir es otro
+                           toque, no hace falta armar). erHistTick fuerza el re-render para que el
+                           estado del botón cambie al instante. */
+                        (() => {
+                          const inCal = !!erHistAll[it.ticker];
+                          return (
+                            <button type="button" onClick={() => {
+                              try {
+                                const hist = loadErHist();
+                                if (hist[it.ticker]) { delete hist[it.ticker]; }
+                                else {
+                                  const merged = { events: it.events, updated: Date.now(), src: "server" };
+                                  if (it.date) { merged.calDate = it.date; merged.calHour = it.session === "BMO" ? "bmo" : it.session === "AMC" ? "amc" : null; }
+                                  hist[it.ticker] = merged;
+                                }
+                                saveErHist(hist);
+                              } catch (e) {}
+                              setErHistTick((n) => n + 1);
+                            }}
+                              style={{ marginTop: 10, width: "100%", border: "none", borderRadius: 11, padding: "10px 14px", fontSize: 13, fontWeight: 800, background: inCal ? T.tileGreen : T.dark, color: inCal ? T.green : "#fff" }}>
+                              {inCal ? "✓ En el calendario · tocar para quitar" : "＋ Añadir al calendario de Earnings"}
+                            </button>
+                          );
+                        })()
+                      ) : (
                       <button type="button" onClick={() => {
                         /* v3.33: ESTE botón es la selección manual — solo aquí se guarda el ticker en el
                            histórico local (KEY_ERHIST), así que en Earnings solo hay tarjetas de tickers
                            que Victor eligió. Los events salen del screener.json; si no los trae, se salta
                            y la calculadora se abre igual (podrá subir la tabla a mano). */
-                        try {
-                          if (Array.isArray(it.events) && it.events.length) {
-                            const hist = loadErHist();
-                            const merged = { ...(hist[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
-                            if (merged.mdEvents) delete merged.mdEvents;
-                            hist[it.ticker] = merged;
-                            saveErHist(hist);
-                          }
-                        } catch (e) {}
                         onOpenEarnings({ tkr: it.ticker, spot: it.price ? String(it.price) : undefined });
                       }}
                         style={{ marginTop: 10, width: "100%", border: "none", borderRadius: 11, padding: "10px 14px", fontSize: 13, fontWeight: 800, background: T.dark, color: "#fff" }}>
                         Añadir a Earnings →
                       </button>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -8009,14 +8005,14 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                             {day === NO_DATE ? syms.length + " sin earnings próximo" : "abrir 15:30–16:00 ET · " + syms.length}
                           </span>
                         </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                           {syms.map((sym) => {
                             const h2 = hist[sym] || {};
                             const b = sesBadge(day === NO_DATE ? null : h2.calHour);
-                            /* v3.91 (Victor: "que pusiera el POP del Open y el día tipo 29·AMC, 30·BMO"):
-                               el badge lleva el DÍA DEL EARNINGS (que en los BMO no es el del panel: en el
-                               panel del mié 29 conviven 29·AMC y 30·BMO) y el chip enseña la POP open —
-                               la misma que la tarjeta: la de la idea si existe, si no la suavizada del histórico */
+                            /* v3.91→v3.92 (Victor): POP ANTES que la fecha; los chips van en columna y la
+                               tarjeta se despliega JUSTO DEBAJO del chip pulsado (no al final del panel);
+                               cada chip lleva su ✕ de dos toques (reutiliza dropCard: quita idea + tabla,
+                               o sea, desaparece del calendario hasta que se re-añada desde el Screener) */
                             const dNum = day !== NO_DATE && h2.calDate ? String(Number(h2.calDate.slice(8, 10))) : "";
                             const rec2 = ideasSorted.find((r) => String(r.tkr) === sym) || null;
                             const d2 = rec2 ? erIdeaDerive(liveForm(rec2)) : null;
@@ -8025,20 +8021,28 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                             const popC = !isFinite(pop2) ? T.sub : pop2 >= 0.7 ? T.green : pop2 >= 0.5 ? T.gold : T.red;
                             const on = expSym === sym;
                             return (
-                              <button key={sym} type="button" onClick={() => setCalExp(on ? null : sym)}
-                                style={{ border: "none", cursor: "pointer", borderRadius: 12, padding: "8px 11px", display: "inline-flex", alignItems: "center", gap: 7, background: on ? T.dark : T.card, boxShadow: "none" }}>
-                                <span style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: -0.2, color: on ? "#fff" : T.ink }}>{sym}</span>
-                                {day !== NO_DATE && (
-                                  <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{dNum ? dNum + "·" + b.t : b.t}</span>
-                                )}
-                                {isFinite(pop2) && (
-                                  <span style={{ fontSize: 11, fontWeight: 800, color: popC, fontVariantNumeric: "tabular-nums" }}>{Math.round(pop2 * 100)}%</span>
-                                )}
-                              </button>
+                              <React.Fragment key={sym}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                                  <button type="button" onClick={() => setCalExp(on ? null : sym)}
+                                    style={{ flex: 1, minWidth: 0, border: "none", cursor: "pointer", borderRadius: 12, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8, background: on ? T.dark : T.card, boxShadow: "none", textAlign: "left" }}>
+                                    <span style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: -0.2, color: on ? "#fff" : T.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sym}</span>
+                                    {isFinite(pop2) && (
+                                      <span style={{ fontSize: 12, fontWeight: 800, color: popC, fontVariantNumeric: "tabular-nums", flex: "none" }}>{Math.round(pop2 * 100)}%</span>
+                                    )}
+                                    {day !== NO_DATE && (
+                                      <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flex: "none", marginLeft: "auto" }}>{dNum ? dNum + "·" + b.t : b.t}</span>
+                                    )}
+                                  </button>
+                                  <button type="button" aria-label={"Quitar " + sym + " del calendario"} onClick={() => dropCard(sym)}
+                                    style={{ flex: "none", border: "none", cursor: "pointer", borderRadius: 10, padding: delArm === sym ? "8px 10px" : "8px 10px", fontSize: 10.5, fontWeight: 800, background: delArm === sym ? T.red : T.card, color: delArm === sym ? "#fff" : T.sub }}>
+                                    {delArm === sym ? "¿Quitar?" : "✕"}
+                                  </button>
+                                </div>
+                                {on && erCard(sym)}
+                              </React.Fragment>
                             );
                           })}
                         </div>
-                        {expSym && erCard(expSym)}
                       </div>
                     );
                   })}
@@ -8076,6 +8080,102 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               </span>
             </div>
           )
+        )}
+        <WizSection>▸ Probabilidad · histórico</WizSection>
+        {/* v3.65 (Victor): las ESTADÍSTICAS (histórico a mano, 4 POP, suavizada, últimos 6) quedan FUERA
+           del modo — se ven igual con IC que con spread; solo strikes/ala/comparador y sizing son de IC. */}
+        {/* v1.73 (Victor: "toda la parte de abajo es un poco confusa"): el lector se va ARRIBA del todo
+           (subir ideas es el primer gesto, no el último) y los campos M/X/U se pliegan — casi siempre los
+           rellena el lector; a mano solo cuando no hay tabla. Lo que queda a la vista es lo que se LEE:
+           las 4 POP, la suavizada, los últimos 6 y la recomendación. */}
+        {/* v3.76 (Victor): FUERA el "Editar histórico a mano" (M/X/U) — ya no tiene sentido: esos campos
+           los rellenan las tarjetas, la reconstrucción y el screener.json; siguen en el estado (applyHist)
+           pero sin editor en pantalla. */}
+        {scen.some((s) => isFinite(s.pop)) && (
+          /* v3.70: las 4 POP son ahora un SELECTOR — tocar una pinta debajo el gráfico de esa serie
+             (barras por earnings + banda ±EM + columna del EM próximo, el mismo chart del screener).
+             Open por defecto: es la serie de su salida. High/Low sirven para el "aguanta o cierra":
+             enseñan hasta dónde llegó el susto intradía aunque cerrase dentro. */
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
+            {/* v3.71 (Victor, con captura): las 4 tiles pasan a markup propio IDÉNTICO — mismo alto
+               (estiran a la celda del grid) y el borde de selección va DENTRO, transparente cuando no
+               está activa, para que el tamaño no cambie al seleccionar. */}
+            {scen.map((s) => { const fld = { xOpen: "open", xClose: "close", xHigh: "high", xLow: "low" }[s.k];
+              const tn = !isFinite(s.pop) ? [T.tile, T.sub] : s.k === "xOpen" ? (s.pop >= 0.7 ? [T.tileGreen, T.green] : s.pop >= 0.5 ? [T.tileAmber, T.gold] : [T.tileRed, T.red]) : [T.tile, T.ink];
+              return (
+                <div key={s.k} onClick={() => setChartSel(fld)} style={{ cursor: "pointer", background: tn[0], borderRadius: 15, padding: "8px 5px", textAlign: "center", minWidth: 0, border: "2.5px solid " + (chartSel === fld ? T.ink : "transparent"), boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: tn[1], letterSpacing: -0.3 }}>{isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}</div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, marginTop: 3, lineHeight: 1.25 }}>{"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")}</div>
+                </div>
+              ); })}
+          </div>
+        )}
+        {scen.some((s) => isFinite(s.pop)) && (() => {
+          const tC = String(st.tkr || "").trim().toUpperCase();
+          const xsC = tC && hist[tC] ? erExtraStats(hist[tC]) : null;
+          if (!xsC || xsC.evs.length < 3) return null;
+          const tit = { open: "APERTURA (gap) vs cierre previo", close: "CIERRE del día de reacción", high: "HIGH intradía de la reacción", low: "LOW intradía de la reacción" }[chartSel];
+          /* v3.72 (Victor): al tocar Open o Close, la probabilidad DIRECCIONAL de esa serie — verde vs
+             rojo. Es la dimensión que la POP no cuenta (permanencia en el EM ≠ dirección), y la que
+             manda si el trade fuera un spread en vez del cóndor. */
+          const Mh = xsC.evs.length;
+          const up = chartSel === "open" ? xsC.nOpenUp : chartSel === "close" ? xsC.evs.filter((e) => Number(e.close) > 0).length : null;
+          /* v3.76 (Victor): en CADA serie, su MAYOR movimiento (magnitud máxima, con signo y periodo) */
+          let mxV = NaN, mxP = null;
+          xsC.evs.forEach((e) => { const v = Number(e[chartSel]); if (Number.isFinite(v) && (!Number.isFinite(mxV) || Math.abs(v) > Math.abs(mxV))) { mxV = v; mxP = e.periodo || null; } });
+          const serieLbl = { open: "Open", close: "Close", high: "High", low: "Low" }[chartSel];
+          return (
+            <div>
+              {Mh > 0 && (
+                <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
+                  {up != null ? (
+                    <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{chartSel === "open" ? "Abre en " : "Cierra en "}</span>
+                      <span style={{ color: T.green }}>verde {up}/{Mh} ({(up / Mh * 100).toFixed(0)}%)</span>
+                      <span style={{ color: T.sub }}> · </span>
+                      <span style={{ color: T.red }}>rojo {Mh - up}/{Mh} ({((Mh - up) / Mh * 100).toFixed(0)}%)</span>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>Serie {serieLbl}</span>
+                  )}
+                  {Number.isFinite(mxV) && (
+                    <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: mxV >= 0 ? T.green : T.red }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>mayor </span>{(mxV >= 0 ? "+" : "") + mxV.toFixed(0)}%{mxP ? <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}> ({mxP})</span> : null}
+                    </span>
+                  )}
+                </div>
+              )}
+              <ErMiniChart evs={xsC.evs} field={chartSel} nextEm={emOk ? em : NaN} title={tit + " · banda = EM · toca otra POP para cambiar"} />
+            </div>
+          );
+        })()}
+        {isFinite(popOpenS) && (
+          <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>POP open · crudo → usada</span>
+            <span style={{ fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: T.sub }}>
+              {isFinite(popOpen) ? (popOpen * 100).toFixed(0) + "%" : "—"} <span style={{ opacity: 0.5 }}>→</span> <span style={{ fontSize: 16, color: popOpenS >= 0.7 ? T.green : popOpenS >= 0.5 ? T.gold : T.red }}>{(popOpenS * 100).toFixed(0)}%</span>
+            </span>
+          </div>
+        )}
+        {rec6Stats && (
+          <div style={{ background: rec6Stats.diverge ? T.tileAmber : T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: rec6Stats.diverge ? T.gold : T.sub }}>
+              {rec6Stats.diverge ? "Últimos " + rec6Stats.n + " ≠ histórico" : "Últimos " + rec6Stats.n + " earnings"}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: rec6Stats.diverge ? T.gold : T.ink, fontVariantNumeric: "tabular-nums" }}>
+              {rec6Stats.breaks}/{rec6Stats.n} fuera · |open| {rec6Stats.absOpen.toFixed(1)}% (total {rec6Stats.absAll.toFixed(1)}%)
+            </span>
+          </div>
+        )}
+        {rec6Stats && rec6Stats.diverge && (
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+            Las roturas recientes superan la tasa histórica: el ticker puede haber cambiado de régimen y la POP del histórico largo te engaña al alza. Pondera a mano — la app no reescribe el modelo con 6 puntos.
+          </div>
+        )}
+        {scen.some((s) => isFinite(s.pop)) && (
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
+            Manda <b>Open</b> (sales al abrir). <b>High/Low</b> = extremos del día; con <b>Close</b> alimentan el plan B.
+          </div>
         )}
         {reco && (
           /* v3.65 (Victor): la sugerencia del histórico se lee ANTES de elegir — informa la elección */
@@ -8332,103 +8432,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           <WizInput label="Crédito neto $/acc" value={st.credit} onChange={set("credit")} inputMode="decimal" placeholder="1.50" />
           <WizInput label="Riesgo objetivo $ / op" value={st.obj} onChange={set("obj")} inputMode="decimal" placeholder="500" />
         </div>
-        <WizSection>▸ Probabilidad · histórico</WizSection>
+        {/* v3.92 (Victor): "▸ Probabilidad · histórico" SUBE entera justo bajo Subyacente y expected
+           move — el gráfico y las 4 POP se ven nada más cargar el ticker, antes de obtener el spot. */}
         </>)}
-        {/* v3.65 (Victor): las ESTADÍSTICAS (histórico a mano, 4 POP, suavizada, últimos 6) quedan FUERA
-           del modo — se ven igual con IC que con spread; solo strikes/ala/comparador y sizing son de IC. */}
-        {/* v1.73 (Victor: "toda la parte de abajo es un poco confusa"): el lector se va ARRIBA del todo
-           (subir ideas es el primer gesto, no el último) y los campos M/X/U se pliegan — casi siempre los
-           rellena el lector; a mano solo cuando no hay tabla. Lo que queda a la vista es lo que se LEE:
-           las 4 POP, la suavizada, los últimos 6 y la recomendación. */}
-        {/* v3.76 (Victor): FUERA el "Editar histórico a mano" (M/X/U) — ya no tiene sentido: esos campos
-           los rellenan las tarjetas, la reconstrucción y el screener.json; siguen en el estado (applyHist)
-           pero sin editor en pantalla. */}
-        {scen.some((s) => isFinite(s.pop)) && (
-          /* v3.70: las 4 POP son ahora un SELECTOR — tocar una pinta debajo el gráfico de esa serie
-             (barras por earnings + banda ±EM + columna del EM próximo, el mismo chart del screener).
-             Open por defecto: es la serie de su salida. High/Low sirven para el "aguanta o cierra":
-             enseñan hasta dónde llegó el susto intradía aunque cerrase dentro. */
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
-            {/* v3.71 (Victor, con captura): las 4 tiles pasan a markup propio IDÉNTICO — mismo alto
-               (estiran a la celda del grid) y el borde de selección va DENTRO, transparente cuando no
-               está activa, para que el tamaño no cambie al seleccionar. */}
-            {scen.map((s) => { const fld = { xOpen: "open", xClose: "close", xHigh: "high", xLow: "low" }[s.k];
-              const tn = !isFinite(s.pop) ? [T.tile, T.sub] : s.k === "xOpen" ? (s.pop >= 0.7 ? [T.tileGreen, T.green] : s.pop >= 0.5 ? [T.tileAmber, T.gold] : [T.tileRed, T.red]) : [T.tile, T.ink];
-              return (
-                <div key={s.k} onClick={() => setChartSel(fld)} style={{ cursor: "pointer", background: tn[0], borderRadius: 15, padding: "8px 5px", textAlign: "center", minWidth: 0, border: "2.5px solid " + (chartSel === fld ? T.ink : "transparent"), boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: tn[1], letterSpacing: -0.3 }}>{isFinite(s.pop) ? (s.pop * 100).toFixed(0) + "%" : "—"}</div>
-                  <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, marginTop: 3, lineHeight: 1.25 }}>{"POP " + s.lbl + (s.k === "xOpen" ? " · tu salida" : "")}</div>
-                </div>
-              ); })}
-          </div>
-        )}
-        {scen.some((s) => isFinite(s.pop)) && (() => {
-          const tC = String(st.tkr || "").trim().toUpperCase();
-          const xsC = tC && hist[tC] ? erExtraStats(hist[tC]) : null;
-          if (!xsC || xsC.evs.length < 3) return null;
-          const tit = { open: "APERTURA (gap) vs cierre previo", close: "CIERRE del día de reacción", high: "HIGH intradía de la reacción", low: "LOW intradía de la reacción" }[chartSel];
-          /* v3.72 (Victor): al tocar Open o Close, la probabilidad DIRECCIONAL de esa serie — verde vs
-             rojo. Es la dimensión que la POP no cuenta (permanencia en el EM ≠ dirección), y la que
-             manda si el trade fuera un spread en vez del cóndor. */
-          const Mh = xsC.evs.length;
-          const up = chartSel === "open" ? xsC.nOpenUp : chartSel === "close" ? xsC.evs.filter((e) => Number(e.close) > 0).length : null;
-          /* v3.76 (Victor): en CADA serie, su MAYOR movimiento (magnitud máxima, con signo y periodo) */
-          let mxV = NaN, mxP = null;
-          xsC.evs.forEach((e) => { const v = Number(e[chartSel]); if (Number.isFinite(v) && (!Number.isFinite(mxV) || Math.abs(v) > Math.abs(mxV))) { mxV = v; mxP = e.periodo || null; } });
-          const serieLbl = { open: "Open", close: "Close", high: "High", low: "Low" }[chartSel];
-          return (
-            <div>
-              {Mh > 0 && (
-                <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
-                  {up != null ? (
-                    <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{chartSel === "open" ? "Abre en " : "Cierra en "}</span>
-                      <span style={{ color: T.green }}>verde {up}/{Mh} ({(up / Mh * 100).toFixed(0)}%)</span>
-                      <span style={{ color: T.sub }}> · </span>
-                      <span style={{ color: T.red }}>rojo {Mh - up}/{Mh} ({((Mh - up) / Mh * 100).toFixed(0)}%)</span>
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>Serie {serieLbl}</span>
-                  )}
-                  {Number.isFinite(mxV) && (
-                    <span style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: mxV >= 0 ? T.green : T.red }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>mayor </span>{(mxV >= 0 ? "+" : "") + mxV.toFixed(0)}%{mxP ? <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}> ({mxP})</span> : null}
-                    </span>
-                  )}
-                </div>
-              )}
-              <ErMiniChart evs={xsC.evs} field={chartSel} nextEm={emOk ? em : NaN} title={tit + " · banda = EM · toca otra POP para cambiar"} />
-            </div>
-          );
-        })()}
-        {isFinite(popOpenS) && (
-          <div style={{ background: T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>POP open · crudo → usada</span>
-            <span style={{ fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: T.sub }}>
-              {isFinite(popOpen) ? (popOpen * 100).toFixed(0) + "%" : "—"} <span style={{ opacity: 0.5 }}>→</span> <span style={{ fontSize: 16, color: popOpenS >= 0.7 ? T.green : popOpenS >= 0.5 ? T.gold : T.red }}>{(popOpenS * 100).toFixed(0)}%</span>
-            </span>
-          </div>
-        )}
-        {rec6Stats && (
-          <div style={{ background: rec6Stats.diverge ? T.tileAmber : T.tile, borderRadius: 12, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: rec6Stats.diverge ? T.gold : T.sub }}>
-              {rec6Stats.diverge ? "Últimos " + rec6Stats.n + " ≠ histórico" : "Últimos " + rec6Stats.n + " earnings"}
-            </span>
-            <span style={{ fontSize: 12, fontWeight: 800, color: rec6Stats.diverge ? T.gold : T.ink, fontVariantNumeric: "tabular-nums" }}>
-              {rec6Stats.breaks}/{rec6Stats.n} fuera · |open| {rec6Stats.absOpen.toFixed(1)}% (total {rec6Stats.absAll.toFixed(1)}%)
-            </span>
-          </div>
-        )}
-        {rec6Stats && rec6Stats.diverge && (
-          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
-            Las roturas recientes superan la tasa histórica: el ticker puede haber cambiado de régimen y la POP del histórico largo te engaña al alza. Pondera a mano — la app no reescribe el modelo con 6 puntos.
-          </div>
-        )}
-        {scen.some((s) => isFinite(s.pop)) && (
-          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 2px" }}>
-            Manda <b>Open</b> (sales al abrir). <b>High/Low</b> = extremos del día; con <b>Close</b> alimentan el plan B.
-          </div>
-        )}
         {/* v3.65: la recomendación de estrategia sube ANTES del selector (petición de Victor) */}
         {icMode && (<>
         {r && r.maxLossPC > 0 && (
