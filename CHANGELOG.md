@@ -1,5 +1,24 @@
 # CHANGELOG — Bloques
 
+## Bloques v3.98 — Todo en POP cruda al open: filtro, chip y tarjeta
+
+Revierte la decisión de la v3.97 (que unificó hacia la suavizada) y unifica hacia el otro lado, el que querías: **la cifra visible es la POP CRUDA al open** (1 − roturas/N), la misma con la que filtras.
+
+- **Screener**: filtra y muestra la cruda. Rótulo: "POP open cruda ≥ N% (la misma del calendario)".
+- **Chip del calendario**: la cruda. Ya no depende de si el ticker tiene idea guardada (esa venía suavizada), así el número no cambia según el estado del ticker.
+- **Tarjeta**: la barra dice "POP open · cruda" y muestra la misma cifra que el chip.
+- **La suavizada (Laplace) sigue viva donde toca**: el EV, el veredicto GO/CAUTION y la fila "POP open · crudo → usada" de Earnings, que es el sitio donde se explica la diferencia. Ese es el punto: la usas para decidir tamaño y veredicto, pero ya no aparece como cifra suelta que contradiga a otra.
+
+En el detalle del Screener las 4 POP por serie siguen crudas con su X/N, y la línea de debajo aclara "Filtro y calendario usan la cruda · suavizada (la del EV/veredicto)".
+
+## Verificado (jsdom)
+Ticker borde (82% cruda / 77% suavizada) y limpio (100% / 92%):
+- El corte del filtro cae en la **cruda**: con 80% el borde ENTRA (82 ≥ 80), con 85% queda fuera.
+- Screener muestra 82% y en ningún sitio aparece 77% como cifra principal.
+- Chip 82%, barra de la tarjeta "POP open · cruda 82%", detalle con "POP open · 9/11".
+- La fila "crudo → usada" sigue enseñando 82% → 77% al cargar el ticker.
+
+
 ## Bloques v3.96 — Cuenta compacta y quitar un día ya no se dispara por error
 
 ## El número, formateado
