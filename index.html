@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.92"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.93"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7935,7 +7935,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                       </div>
                     )}
                     {s && s.M > 0 && (
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                      /* v3.93 (Victor: "las medias de open y EM no entran bien en el formato"): la celda
+                         de Ø|open| / ØEM es más ancha que las otras dos — valor y etiqueta en una línea */
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.45fr", gap: 6 }}>
                         {[["Ø IV crush", isFinite(s.ivCrush) ? s.ivCrush.toFixed(1) + "%" : "—", T.ink],
                           ["Peor gap", isFinite(s.worst) ? (s.worst > 0 ? "+" : "") + s.worst.toFixed(1) + "%" : "—", isFinite(s.worst) && isFinite(s.emAvg) && Math.abs(s.worst) > s.emAvg ? T.red : T.ink],
                           ["Ø|open| / ØEM", isFinite(s.absOpen) && isFinite(s.emAvg) ? s.absOpen.toFixed(1) + " / " + s.emAvg.toFixed(1) : "—", T.ink]].map(([l, v, c]) => (
@@ -8025,12 +8027,14 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                                 <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
                                   <button type="button" onClick={() => setCalExp(on ? null : sym)}
                                     style={{ flex: 1, minWidth: 0, border: "none", cursor: "pointer", borderRadius: 12, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8, background: on ? T.dark : T.card, boxShadow: "none", textAlign: "left" }}>
-                                    <span style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: -0.2, color: on ? "#fff" : T.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sym}</span>
-                                    {isFinite(pop2) && (
-                                      <span style={{ fontSize: 12, fontWeight: 800, color: popC, fontVariantNumeric: "tabular-nums", flex: "none" }}>{Math.round(pop2 * 100)}%</span>
-                                    )}
+                                    <span style={{ flex: "1 1 auto", fontSize: 13.5, fontWeight: 800, letterSpacing: -0.2, color: on ? "#fff" : T.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sym}</span>
+                                    {/* v3.93 (Victor: "el pop centrado para que no quede un formato aleatorio según el
+                                       nombre"): la POP va en COLUMNA FIJA centrada — todos los % alineados en vertical,
+                                       independientemente de lo largo del ticker; el ticker empuja con flex y la fecha
+                                       cierra a la derecha */}
+                                    <span style={{ flex: "none", width: 52, textAlign: "center", fontSize: 12, fontWeight: 800, color: popC, fontVariantNumeric: "tabular-nums" }}>{isFinite(pop2) ? Math.round(pop2 * 100) + "%" : ""}</span>
                                     {day !== NO_DATE && (
-                                      <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flex: "none", marginLeft: "auto" }}>{dNum ? dNum + "·" + b.t : b.t}</span>
+                                      <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flex: "none" }}>{dNum ? dNum + "·" + b.t : b.t}</span>
                                     )}
                                   </button>
                                   <button type="button" aria-label={"Quitar " + sym + " del calendario"} onClick={() => dropCard(sym)}
@@ -8110,6 +8114,42 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
               ); })}
           </div>
         )}
+        {/* v3.93 (Victor: "debería poner el IV crush, la media del gap open y la media del EM, y al
+           lado el EM actual para ver si paga más caro que la media — también en cuadros"): fila de
+           promedios del histórico + EM ACTUAL del formulario. El cuadro del EM actual se tiñe según
+           la comparación: verde = este trimestre pagan MÁS vol que la media (prima más gorda por el
+           mismo riesgo histórico), rojo = pagan menos. */}
+        {(() => {
+          const tC = String(st.tkr || "").trim().toUpperCase();
+          const sH = tC && hist[tC] ? erStats(erEvents(hist[tC])) : null;
+          if (!(sH && sH.M > 0)) return null;
+          const emNow = (() => { const x = pf(st.em); return isFinite(x) && x > 0 ? x : NaN; })(); /* el campo EM a pelo — emOk exige spot y esto se quiere ver ANTES del spot */
+          const cmp = isFinite(emNow) && isFinite(sH.emAvg);
+          const richer = cmp && emNow >= sH.emAvg;
+          const tiles = [
+            ["Ø IV crush", isFinite(sH.ivCrush) ? sH.ivCrush.toFixed(1) + "%" : "—", T.ink, T.tile],
+            ["Ø |open|", isFinite(sH.absOpen) ? sH.absOpen.toFixed(1) + "%" : "—", T.ink, T.tile],
+            ["Ø EM", isFinite(sH.emAvg) ? sH.emAvg.toFixed(1) + "%" : "—", T.ink, T.tile],
+            ["EM actual", isFinite(emNow) ? emNow.toFixed(1) + "%" : "—", !cmp ? T.ink : richer ? T.green : T.red, !cmp ? T.tile : richer ? T.tileGreen : T.tileRed],
+          ];
+          return (
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
+                {tiles.map(([l, v, c, bg]) => (
+                  <div key={l} style={{ background: bg, borderRadius: 15, padding: "9px 4px", textAlign: "center", minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: c, fontVariantNumeric: "tabular-nums", letterSpacing: -0.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.2, marginTop: 3, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {cmp && (
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: richer ? T.green : T.red, padding: "0 2px" }}>
+                  EM actual {richer ? "+" : "−"}{Math.abs(emNow - sH.emAvg).toFixed(1)} pts vs Ø EM — {richer ? "este trimestre te pagan más volatilidad que de costumbre" : "pagan menos vol que la media: prima más fina por el mismo histórico"}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {scen.some((s) => isFinite(s.pop)) && (() => {
           const tC = String(st.tkr || "").trim().toUpperCase();
           const xsC = tC && hist[tC] ? erExtraStats(hist[tC]) : null;
