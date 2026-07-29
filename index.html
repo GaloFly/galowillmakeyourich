@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.90"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.91"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6659,11 +6659,43 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
       if (!j || !Array.isArray(j.items)) throw new Error("el JSON no tiene lista de tickers");
       setData(j);
       try { localStorage.setItem(KEY_SCREEN, JSON.stringify(j)); } catch (e) {}
+      /* v3.91 (Victor: "que se metan todas a la vez en el calendario después de actualizar el
+         screener, así me salto un paso"): al cargar/actualizar, los tickers que PASAN LOS FILTROS
+         vigentes (cap, volumen, POP, día, sesión) se añaden solos a Earnings con su calDate/calHour
+         del propio JSON → caen directos en el calendario de aperturas sin pulsar "Añadir a Earnings".
+         OJO no contradice la v3.33: aquella quitó el volcado INDISCRIMINADO de los 164; aquí la
+         selección son los filtros. Solo entran los que traen events; no se borra nada de lo que ya
+         estaba (el 🗑️ de Earnings sigue siendo la escoba). */
+      try {
+        const srvH = {}; for (const it of j.items) if (it && it.ticker && Array.isArray(it.events) && it.events.length) srvH[it.ticker] = { events: it.events };
+        const histL = loadErHist();
+        const popOfJ = (t) => { try { const h = srvH[t] || histL[t]; if (!h) return NaN; const s = erStats(erEvents(h)); return s && s.M > 0 && Number.isFinite(s.popOpen) ? s.popOpen : NaN; } catch (e) { return NaN; } };
+        const pass = (it) => Number(it.marketCapB) >= minCap
+          && (minVol <= 0 || (Number(it.optVolume) || 0) >= minVol)
+          && (dayF === "all" || it.date === dayF)
+          && (sesF === "all" || it.session === sesF)
+          && (minPop <= 0 || (() => { const p = popOfJ(it.ticker); return Number.isFinite(p) && p >= minPop; })());
+        let added = 0, updated = 0;
+        for (const it of j.items) {
+          if (!(it && it.ticker && Array.isArray(it.events) && it.events.length)) continue;
+          if (!pass(it)) continue;
+          const had = !!histL[it.ticker];
+          const merged = { ...(histL[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
+          if (it.date) { merged.calDate = it.date; merged.calHour = it.session === "BMO" ? "bmo" : it.session === "AMC" ? "amc" : (merged.calHour || null); }
+          if (merged.mdEvents) delete merged.mdEvents;
+          histL[it.ticker] = merged;
+          had ? updated++ : added++;
+        }
+        if (added || updated) saveErHist(histL);
+        setMsg("📅 Al calendario de Earnings: " + added + " nuevo" + (added === 1 ? "" : "s") + " · " + updated + " actualizado" + (updated === 1 ? "" : "s") + " (según filtros vigentes)");
+      } catch (e) {}
       /* v3.33 (Victor: "en Earnings hay muchas tarjetas, solo quiero las seleccionadas manualmente"):
          la v3.20 volcaba el histórico de TODOS los tickers del screener (164) a KEY_ERHIST en cada carga,
          y de ahí salían decenas de tarjetas que él no había pedido. Ya NO se vuelca nada aquí: el detalle
          del Screener lee los events del propio JSON (srvHist, en memoria) y solo "Añadir a Earnings"
-         guarda el ticker en el histórico local. Así las tarjetas de Earnings son exactamente las elegidas. */
+         guarda el ticker en el histórico local. Así las tarjetas de Earnings son exactamente las elegidas.
+         v3.91 lo matiza: SÍ se vuelca al cargar, pero solo lo que pasa los FILTROS (ver bloque de arriba)
+         — la selección deja de ser botón a botón y pasa a ser el filtro. */
     } catch (e) { setMsg("No se pudo cargar: " + (e && e.message ? e.message : String(e))); }
     setBusy(false); lock.current = false;
   };
@@ -6739,6 +6771,8 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
         if (!(Array.isArray(it.events) && it.events.length)) { skipped++; continue; }
         const had = !!hist[it.ticker];
         const merged = { ...(hist[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
+        /* v3.91: fecha y sesión del propio JSON → el ticker cae directo en su día del calendario */
+        if (it.date) { merged.calDate = it.date; merged.calHour = it.session === "BMO" ? "bmo" : it.session === "AMC" ? "amc" : (merged.calHour || null); }
         if (merged.mdEvents) delete merged.mdEvents;
         hist[it.ticker] = merged;
         had ? updated++ : added++;
@@ -7979,13 +8013,26 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                           {syms.map((sym) => {
                             const h2 = hist[sym] || {};
                             const b = sesBadge(day === NO_DATE ? null : h2.calHour);
+                            /* v3.91 (Victor: "que pusiera el POP del Open y el día tipo 29·AMC, 30·BMO"):
+                               el badge lleva el DÍA DEL EARNINGS (que en los BMO no es el del panel: en el
+                               panel del mié 29 conviven 29·AMC y 30·BMO) y el chip enseña la POP open —
+                               la misma que la tarjeta: la de la idea si existe, si no la suavizada del histórico */
+                            const dNum = day !== NO_DATE && h2.calDate ? String(Number(h2.calDate.slice(8, 10))) : "";
+                            const rec2 = ideasSorted.find((r) => String(r.tkr) === sym) || null;
+                            const d2 = rec2 ? erIdeaDerive(liveForm(rec2)) : null;
+                            const s2 = hist[sym] ? erStats(erEvents(hist[sym])) : null;
+                            const pop2 = d2 && isFinite(d2.pop) ? d2.pop : s2 && isFinite(s2.popOpenS) ? s2.popOpenS : NaN;
+                            const popC = !isFinite(pop2) ? T.sub : pop2 >= 0.7 ? T.green : pop2 >= 0.5 ? T.gold : T.red;
                             const on = expSym === sym;
                             return (
                               <button key={sym} type="button" onClick={() => setCalExp(on ? null : sym)}
                                 style={{ border: "none", cursor: "pointer", borderRadius: 12, padding: "8px 11px", display: "inline-flex", alignItems: "center", gap: 7, background: on ? T.dark : T.card, boxShadow: "none" }}>
                                 <span style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: -0.2, color: on ? "#fff" : T.ink }}>{sym}</span>
                                 {day !== NO_DATE && (
-                                  <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3 }}>{b.t}</span>
+                                  <span style={{ fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "2px 6px", background: on ? "rgba(255,255,255,0.16)" : b.bg, color: on ? "#fff" : b.c, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{dNum ? dNum + "·" + b.t : b.t}</span>
+                                )}
+                                {isFinite(pop2) && (
+                                  <span style={{ fontSize: 11, fontWeight: 800, color: popC, fontVariantNumeric: "tabular-nums" }}>{Math.round(pop2 * 100)}%</span>
                                 )}
                               </button>
                             );
