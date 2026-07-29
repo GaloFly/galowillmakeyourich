@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.88"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.89"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -706,8 +706,10 @@ function resizeImageToBase64(file, maxDim) {
 }
 /* Le pedimos a Gemini solo lo que se LEE (ticker, strike, expiry, ask, bid, margen).
    DTE y mid los calculamos en JS después: los LLM fallan en aritmética de fechas. */
-async function extractOptionFromImage(file, apiKey, model) {
+async function extractOptionFromImage(file, apiKey, model, onPhase) {
+  const ph = typeof onPhase === "function" ? onPhase : () => {};
   let b64, mime;
+  ph("prep");
   try {
     b64 = await resizeImageToBase64(file, OCR_MAX_DIM);
     mime = "image/png";
@@ -742,6 +744,7 @@ async function extractOptionFromImage(file, apiKey, model) {
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + (model || GEMINI_MODEL) + ":generateContent?key=" + encodeURIComponent(apiKey);
   const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
+  ph("send");
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) {
     let detail = "HTTP " + r.status;
@@ -762,6 +765,7 @@ async function extractOptionFromImage(file, apiKey, model) {
     if (retryAfterMs != null) err.retryAfterMs = retryAfterMs;
     throw err;
   }
+  ph("read");
   const j = await r.json();
   const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
   const txt = (parts || []).map((p) => p.text || "").join("");
@@ -773,8 +777,16 @@ async function extractOptionFromImage(file, apiKey, model) {
    (persistente, entra en el backup) y de ahí salen M/X/U — la lectura es de una vez por trimestre, no
    de una vez por trade. v1.30: si la captura incluye la cabecera con el ticker (arriba a la izquierda),
    el lector lo extrae y no hace falta teclearlo; el ticker de la captura manda sobre el del campo. */
-async function extractEarningsTableFromImage(file, apiKey, model) {
+/* v3.89 (Victor: "los spinners se quedan fijos en el primer paso"): los pasos del ScanOverlay se
+   marcaban en hitos de CÓDIGO, no de trabajo real — "preparando" duraba 60 ms forzados, "enviando" se
+   quedaba congelado durante TODA la llamada de red (segundos) y los dos últimos pasos se disparaban
+   seguidos justo antes de cerrar. Se veía un parpadeo y luego un paso clavado. Ahora los lectores avisan
+   de sus fases de verdad: prep (redimensionando) → send (petición en vuelo) → read (respuesta recibida,
+   parseando); el paso final "volcando" lo marca quien llama, que es quien vuelca. */
+async function extractEarningsTableFromImage(file, apiKey, model, onPhase) {
+  const ph = typeof onPhase === "function" ? onPhase : () => {};
   let b64, mime;
+  ph("prep");
   try { b64 = await resizeImageToBase64(file, OCR_MAX_DIM); mime = "image/png"; }
   catch (e) { b64 = await fileToBase64(file); mime = file.type && file.type.startsWith("image/") ? file.type : "image/png"; }
   const schema = { type: "object", properties: {
@@ -810,6 +822,7 @@ async function extractEarningsTableFromImage(file, apiKey, model) {
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + (model || GEMINI_MODEL) + ":generateContent?key=" + encodeURIComponent(apiKey);
   const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
+  ph("send");
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) {
     let detail = "HTTP " + r.status;
@@ -818,6 +831,7 @@ async function extractEarningsTableFromImage(file, apiKey, model) {
     if (r.status === 429) detail = "límite diario/por minuto agotado (" + detail + ")";
     const err = new Error(detail); err.status = r.status; throw err;
   }
+  ph("read");
   const j = await r.json();
   const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
   const txt = (parts || []).map((p) => p.text || "").join("");
@@ -949,8 +963,10 @@ function buildTradeFromGemini(data, file) {
    lee una captura de orden/ejecución del bróker con una o varias patas de opción y devuelve cada
    pata (right, strike, expiry, acción compra/venta, cantidad y precio por acción). Comparte la
    fontanería de visión de Gemini con el lector del Comparador pero con esquema de varias patas. */
-async function extractLegsFromImage(file, apiKey, model) {
+async function extractLegsFromImage(file, apiKey, model, onPhase) {
+  const ph = typeof onPhase === "function" ? onPhase : () => {};
   let b64, mime;
+  ph("prep");
   try { b64 = await resizeImageToBase64(file, OCR_MAX_DIM); mime = "image/png"; }
   catch (e) { b64 = await fileToBase64(file); mime = file.type && file.type.startsWith("image/") ? file.type : "image/png"; }
   const schema = { type: "object", properties: {
@@ -983,6 +999,7 @@ async function extractLegsFromImage(file, apiKey, model) {
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + (model || GEMINI_MODEL) + ":generateContent?key=" + encodeURIComponent(apiKey);
   const body = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: schema } };
+  ph("send");
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, body: JSON.stringify(body) });
   if (!r.ok) {
     let detail = "HTTP " + r.status; let retryAfterMs = null;
@@ -999,6 +1016,7 @@ async function extractLegsFromImage(file, apiKey, model) {
     if (r.status === 429) detail = "límite diario/por minuto agotado (" + detail + ")";
     const err = new Error(detail); err.status = r.status; if (retryAfterMs != null) err.retryAfterMs = retryAfterMs; throw err;
   }
+  ph("read");
   const j = await r.json();
   const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
   const txt = (parts || []).map((p) => p.text || "").join("");
@@ -7252,13 +7270,15 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
       const sub = many ? "Captura " + (i + 1) + " de " + list.length : null;
-      /* los pasos se marcan según ocurren de verdad: preparar (resize) → enviar → leer → volcar */
+      /* v3.89: los pasos siguen las FASES REALES del lector (prep → send → read) en vez de hitos de
+         código. Antes "enviando" se quedaba clavado toda la llamada de red y los dos últimos pasos
+         se disparaban seguidos justo antes de cerrar. */
+      const stepOf = { prep: 0, send: 1, read: 2 };
       setScan({ step: 0, sub });
       await new Promise((r) => setTimeout(r, 60)); // deja pintar el overlay antes de bloquear con el resize
-      setScan({ step: 1, sub });
       let data = null, lastErr = null;
       for (const model of GEMINI_MODELS) {
-        try { data = await extractEarningsTableFromImage(f, geminiKey, model); break; }
+        try { data = await extractEarningsTableFromImage(f, geminiKey, model, (ph) => setScan({ step: stepOf[ph] != null ? stepOf[ph] : 1, sub })); break; }
         catch (err) { lastErr = err; if (err.status !== 429) break; }
       }
       setScan({ step: 2, sub });
@@ -8527,7 +8547,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
      (una sola foto o un lote de varias) decide cómo mostrar progreso/errores.
      onWaiting(ms) es opcional: se llama mientras esperamos el cooldown de un 429 para poder avisar en pantalla. */
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-  const readOneScreenshot = async (file, gkey, onWaiting) => {
+  const readOneScreenshot = async (file, gkey, onWaiting, onPhase) => {
     if (!gkey) return { trade: null, message: "añade tu API key de Gemini en Ajustes para leer capturas" };
     let geminiErr = "";
     /* Ante 429 (cupo gratuito agotado): prueba el SIGUIENTE modelo de GEMINI_MODELS — tiene cupo
@@ -8538,7 +8558,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
       for (let mi = 0; mi < GEMINI_MODELS.length; mi++) {
         const model = GEMINI_MODELS[mi];
         try {
-          const data = await extractOptionFromImage(file, gkey, model);
+          const data = await extractOptionFromImage(file, gkey, model, onPhase);
           const trade = buildTradeFromGemini(data, file);
           return { trade, message: summarizeTrade(trade) };
         } catch (err) {
@@ -8583,18 +8603,29 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
     let doneCount = 0;
     /* v1.60: el overlay refleja el progreso real del lote; como las capturas van en paralelo, el paso
        vivo es "leyendo" y el subtítulo lleva la cuenta de las terminadas. */
-    setScan({ step: 1, sub: multi ? "0 de " + list.length + " capturas" : null });
+    /* v3.89: con varias capturas en paralelo no hay una sola fase, así que el paso vivo es el de la
+       captura MÁS ADELANTADA y el subtítulo lleva la cuenta de las terminadas. Antes se quedaba fijo
+       en "enviando" hasta que acababa la primera. */
+    const stepOf = { prep: 0, send: 1, read: 2 };
+    let liveStep = 0;
+    const subTxt = () => (multi ? doneCount + " de " + list.length + " capturas" : null);
+    setScan({ step: 0, sub: multi ? "0 de " + list.length + " capturas" : null });
     setOcrMsg(multi ? `Leyendo ${list.length} capturas… (0/${list.length})` : (gkey ? "Leyendo captura con Gemini…" : "Leyendo captura…"));
     let nextIndex = 0;
     const worker = async () => {
       while (nextIndex < list.length) {
         const i = nextIndex++;
         const onWaiting = (ms) => setOcrMsg(`${multi ? `Captura ${i + 1}/${list.length}: ` : ""}límite de Gemini alcanzado, esperando ${Math.ceil(ms / 1000)}s para reintentar…`);
-        const { trade, message } = await readOneScreenshot(list[i], gkey, onWaiting);
+        const onPhase = (ph) => {
+          const st = stepOf[ph] != null ? stepOf[ph] : 1;
+          if (st > liveStep) { liveStep = st; setScan({ step: st, sub: subTxt() }); }
+        };
+        const { trade, message } = await readOneScreenshot(list[i], gkey, onWaiting, onPhase);
         trades[i] = trade;
         results[i] = multi ? `#${i + 1}: ${message}` : message;
         doneCount++;
-        setScan({ step: doneCount >= list.length ? 3 : 2, sub: multi ? doneCount + " de " + list.length + " capturas" : null });
+        liveStep = doneCount >= list.length ? 3 : Math.max(liveStep, 2);
+        setScan({ step: liveStep, sub: subTxt() });
         if (multi) setOcrMsg(`Leyendo ${list.length} capturas… (${doneCount}/${list.length})`);
       }
     };
@@ -9598,12 +9629,12 @@ function App() {
   };
   /* lee una captura y prueba los modelos de GEMINI_MODELS por si el primero está a 429 (mismo patrón
      que el lector del Comparador). Devuelve { result, message } sin tocar el estado de UI. */
-  const readLegsFallback = async (file, gkey, onWaiting) => {
+  const readLegsFallback = async (file, gkey, onWaiting, onPhase) => {
     let lastErr = "";
     for (let round = 0; round < 2; round++) {
       let rateLimited = false, waitMs = 0;
       for (let mi = 0; mi < GEMINI_MODELS.length; mi++) {
-        try { return { result: await extractLegsFromImage(file, gkey, GEMINI_MODELS[mi]), message: "" }; }
+        try { return { result: await extractLegsFromImage(file, gkey, GEMINI_MODELS[mi], onPhase), message: "" }; }
         catch (err) {
           lastErr = String((err && err.message) || err);
           if (err && err.status === 429) { rateLimited = true; if (err.retryAfterMs) waitMs = Math.max(waitMs, err.retryAfterMs); continue; }
@@ -9622,9 +9653,10 @@ function App() {
     setWizOcrBusy(true); setWizOcrMsg("Leyendo captura…");
     setScan({ step: 0, sub: null });
     await new Promise((r) => setTimeout(r, 60));
-    setScan({ step: 1, sub: null });
     try {
-      const { result, message } = await readLegsFallback(file, gkey, (ms) => setWizOcrMsg("Límite de Gemini alcanzado, esperando " + Math.ceil(ms / 1000) + "s…"));
+      /* v3.89: el paso lo mueve el lector según su fase real, no un setScan a ciegas antes de esperar */
+      const stepOf = { prep: 0, send: 1, read: 2 };
+      const { result, message } = await readLegsFallback(file, gkey, (ms) => setWizOcrMsg("Límite de Gemini alcanzado, esperando " + Math.ceil(ms / 1000) + "s…"), (ph) => setScan({ step: stepOf[ph] != null ? stepOf[ph] : 1, sub: null }));
       if (!result) { setWizOcrMsg(message || "No pude leer la captura."); return; }
       setScan({ step: 2, sub: null });
       const patch = mapLegsToWizForm(result, wizStrat);
@@ -10384,20 +10416,36 @@ function App() {
          cubre la descarga automática del arranque, el pull y el botón. */}
       {(refreshing || refreshOk) && (
         <div style={{ position: "fixed", top: "calc(20px + env(safe-area-inset-top))", right: 14, zIndex: 60, pointerEvents: "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(28,26,32,0.55)", backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)", borderRadius: 16, padding: "5px 10px", boxShadow: "0 6px 18px rgba(0,0,0,0.22)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+          {/* v3.89 (Victor: "el de actualizando precios no está acorde con el resto de app"): era un
+              EMOJI 🔄 girando dentro de una píldora gris oscura fija — el único sitio del app con un
+              emoji haciendo de spinner, y con un fondo que ignoraba el tema. Ahora es el mismo arco SVG
+              del ScanOverlay, con los colores del tema y el mismo cristal que los selectores. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 7,
+            background: DARK ? "rgba(40,38,46,0.62)" : "rgba(255,255,255,0.72)",
+            backdropFilter: "blur(18px) saturate(180%)", WebkitBackdropFilter: "blur(18px) saturate(180%)",
+            borderRadius: 16, padding: "5px 11px",
+            boxShadow: DARK ? "0 6px 18px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.10)" : "0 6px 18px rgba(30,30,40,0.13), inset 0 1px 0 rgba(255,255,255,0.85)",
+            border: "0.5px solid " + (DARK ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.9)") }}>
             {refreshing ? (
-              <span style={{ fontSize: 11, display: "inline-block", animation: "pullSpin 0.8s linear infinite" }}>🔄</span>
+              <svg width="13" height="13" viewBox="0 0 13 13" style={{ display: "block", animation: "scanSpin 0.9s linear infinite" }}>
+                <circle cx="6.5" cy="6.5" r="5" fill="none" stroke={T.line} strokeWidth="2" />
+                <circle cx="6.5" cy="6.5" r="5" fill="none" stroke={T.purple} strokeWidth="2" strokeLinecap="round" strokeDasharray="8 24" />
+              </svg>
             ) : (
-              <span style={{ width: 8, height: 8, borderRadius: 4, background: "#34C759", display: "inline-block", boxShadow: "0 0 6px rgba(52,199,89,0.7)" }} />
+              <span style={{ width: 8, height: 8, borderRadius: 4, background: T.green, display: "inline-block", boxShadow: "0 0 6px " + (DARK ? "rgba(52,199,89,0.7)" : "rgba(52,199,89,0.45)") }} />
             )}
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff" }}>{refreshing ? "Actualizando…" : "Actualizado"}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: T.ink }}>{refreshing ? "Actualizando…" : "Actualizado"}</span>
           </div>
         </div>
       )}
       <ScanOverlay open={!!scan} step={scan ? scan.step : 0} sub={scan ? scan.sub : null} />
       {(view === "bloques" || view === "vencimientos") && pullDist > 0 && !refreshing && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: pullDist, overflow: "hidden", marginBottom: 4 }}>
-          <span style={{ fontSize: 20, display: "inline-block", animation: pullDist >= PULL_THRESHOLD ? "pullSpin 0.8s linear infinite" : "none", opacity: Math.min(pullDist / PULL_THRESHOLD, 1) }}>🔄</span>
+          {/* v3.89: el mismo arco que el chip, en vez del emoji */}
+          <svg width="20" height="20" viewBox="0 0 20 20" style={{ display: "block", opacity: Math.min(pullDist / PULL_THRESHOLD, 1), animation: pullDist >= PULL_THRESHOLD ? "scanSpin 0.9s linear infinite" : "none", transform: pullDist >= PULL_THRESHOLD ? "none" : `rotate(${Math.min(pullDist / PULL_THRESHOLD, 1) * 270}deg)` }}>
+            <circle cx="10" cy="10" r="7.5" fill="none" stroke={T.line} strokeWidth="2.5" />
+            <circle cx="10" cy="10" r="7.5" fill="none" stroke={T.purple} strokeWidth="2.5" strokeLinecap="round" strokeDasharray="12 36" />
+          </svg>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, marginLeft: 8 }}>{pullDist >= PULL_THRESHOLD ? "Suelta para actualizar" : "Tira para actualizar precios"}</span>
         </div>
       )}
