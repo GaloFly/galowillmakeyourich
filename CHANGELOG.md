@@ -1,5 +1,18 @@
 # CHANGELOG — Bloques
 
+## Bloques v3.96 — Cuenta compacta y quitar un día ya no se dispara por error
+
+## El número, formateado
+- Fuera el chip largo "16 en calendario". En su lugar, una **fracción compacta alineada a la derecha**: `✓ 16/18` — cifras tabulares y ancho fijo, así queda en la misma columna en todas las filas en vez de empujar la fecha a una posición distinta según lo largo del número.
+- **Color con significado**: verde si el día está completo, ámbar si va a medias, gris si no has añadido nada. El total ya no se repite dos veces.
+
+## El botón del día
+- **Quitar un día pide confirmación.** Antes borraba N tickers de golpe con un solo toque, y el botón caía pegado a la cabecera del día siguiente: de ahí las deselecciones accidentales. Ahora el primer toque arma ("¿Quitar 2?", en rojo) y el segundo ejecuta, con 3 segundos de ventana tras los cuales se desarma solo. Añadir sigue siendo un toque — no destruye nada.
+- Textos más cortos ("＋ Añadir día", "✓ Añadidos") y **más aire**: cada fila de día tiene su propio padding y, plegada, fondo propio, de modo que el botón de un día no invade el área táctil del siguiente.
+
+## Verificado (jsdom, 13 comprobaciones)
+Chip largo eliminado · añade los 2 del día · fracción "✓ 2/2" · el primer toque en "✓ Añadidos" NO borra · arma con "¿Quitar 2?" · el segundo toque sí borra · el armado caduca a los 3 s y el día sigue intacto · estado parcial muestra "＋ Añadir día (1)" y "✓ 1/2" en ámbar.
+
 ## Bloques v3.95 — Días colapsables en el Screener
 
 - **La fecha es el botón**: tocar la cabecera de un día pliega o despliega su lista de tickers. El chevron gira para indicar el estado.
