@@ -1,5 +1,21 @@
 # CHANGELOG — Bloques
 
+## Bloques v3.93 — Promedios en cuadros con EM actual, celda ancha en la tarjeta y POP alineada
+
+## Probabilidad · histórico
+Nueva fila de cuadros bajo las 4 POP: **Ø IV crush · Ø |open| · Ø EM · EM actual**.
+- El EM actual sale del campo EM (que la tarjeta rellena al cargar), sin esperar al spot.
+- El cuadro del EM actual se tiñe: **verde** si paga más que la media del histórico, **rojo** si paga menos, con una línea debajo tipo "EM actual +1.0 pts vs Ø EM — este trimestre te pagan más volatilidad que de costumbre".
+
+## Tarjeta
+La celda **Ø|open| / ØEM** es más ancha que las otras dos (1fr·1fr·1.45fr): valor y etiqueta entran en su línea sin partirse.
+
+## Calendario
+La **POP va en columna fija centrada**: todos los porcentajes alineados en vertical aunque el ticker sea corto o largo — ticker a la izquierda con elipsis, fecha·sesión cerrando a la derecha.
+
+## Verificado (jsdom)
+POP en columna fija centrada · tarjeta bajo el chip · cuadros nuevos presentes · "EM actual +1.0 pts vs Ø EM" con histórico de ØEM 5.5 y EM próximo 6.5 · celda ensanchada.
+
 ## Bloques v3.92 — Selección manual in situ, chips refinados y Probabilidad arriba
 
 ## Fuera la auto-alta (revierte v3.91)
