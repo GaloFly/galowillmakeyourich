@@ -1,5 +1,21 @@
 # CHANGELOG — Bloques
 
+## # Bloques v3.91 — Chips con fecha·sesión + POP, y auto-alta desde el screener
+
+## Recuadros del calendario
+- Cada recuadro pasa a ser **TICKER · 29·AMC · 77%**: día del earnings + sesión y POP open.
+- El día del badge es el del **earnings**, no el del panel: en el panel del mié 29 conviven `29·AMC` y `30·BMO` — se ve de un vistazo qué reporta esa tarde y qué reporta a la mañana siguiente.
+- La POP es la misma que enseña la tarjeta (la de la idea si existe; si no, la suavizada del histórico), con su color por tramos (≥70% verde, ≥50% ámbar, resto rojo).
+
+## Auto-alta al actualizar el screener
+- Al pulsar **Cargar semana / Actualizar** en el Screener, los tickers que **pasan los filtros vigentes** (cap, volumen, POP, día, sesión) se añaden solos a Earnings — te saltas el paso de "Añadir a Earnings" ticker a ticker.
+- No contradice la v3.33 (que quitó el volcado indiscriminado de los 164): la selección ahora son tus filtros. Solo entran los que traen histórico del servidor, no se borra nada de lo ya añadido, y el 🗑️ de Earnings sigue siendo la escoba.
+- Aviso tras cada carga: "📅 Al calendario de Earnings: N nuevos · M actualizados (según filtros vigentes)".
+- Tanto la auto-alta como el botón "Añadir todos" guardan ahora **calDate/calHour del propio JSON**, así el ticker cae directo en su día del calendario (antes el botón masivo los dejaba sin fecha).
+
+## Verificado (jsdom)
+Carga del screener con fetch simulado: auto-alta respetando filtros (entra CMG y KO, se queda fuera el de cap baja), calDate/calHour bien guardados, aviso visible, un solo panel de día con `30·AMC` y `31·BMO`, y POP en ambos 
+
 ## # Bloques v3.90 — Calendario de aperturas en Earnings
 
 ## Qué cambia
