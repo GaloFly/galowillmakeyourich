@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.93"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.94"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6847,7 +6847,39 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
       {/* tarjetas agrupadas por día — tocar despliega el detalle */}
       {groupDays.map((d) => (
         <div key={d} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, margin: "2px 2px 8px", textTransform: "capitalize" }}>{fmtDay(d)} <span style={{ color: T.sub, fontWeight: 600 }}>· {groups[d].length}</span></div>
+          {/* v3.94 (Victor: "en el día que tenga un botón de añadir todo el día al calendario de
+              aperturas"): añade de golpe los tickers de ESE día que están a la vista (los que pasan
+              los filtros vigentes) y traen histórico del servidor. Si ya están todos, el botón pasa a
+              quitarlos del calendario, igual que el toggle de cada ticker. Sin doble toque: añadir no
+              destruye nada, y quitar se deshace con otro toque. */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "2px 2px 8px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, textTransform: "capitalize" }}>{fmtDay(d)} <span style={{ color: T.sub, fontWeight: 600 }}>· {groups[d].length}</span></div>
+            {(() => {
+              const addables = groups[d].filter((it) => it && it.ticker && Array.isArray(it.events) && it.events.length);
+              if (!addables.length) return null;
+              const inCal = addables.filter((it) => erHistAll[it.ticker]).length;
+              const allIn = inCal === addables.length;
+              return (
+                <button type="button" onClick={() => {
+                  try {
+                    const h = loadErHist();
+                    for (const it of addables) {
+                      if (allIn) { delete h[it.ticker]; continue; }
+                      const merged = { ...(h[it.ticker] || {}), events: it.events, updated: Date.now(), src: "server" };
+                      if (it.date) { merged.calDate = it.date; merged.calHour = it.session === "BMO" ? "bmo" : it.session === "AMC" ? "amc" : (merged.calHour || null); }
+                      if (merged.mdEvents) delete merged.mdEvents;
+                      h[it.ticker] = merged;
+                    }
+                    saveErHist(h);
+                  } catch (e) {}
+                  setErHistTick((n) => n + 1);
+                }}
+                  style={{ flex: "none", border: "none", cursor: "pointer", borderRadius: 10, padding: "6px 11px", fontSize: 10.5, fontWeight: 800, background: allIn ? T.tileGreen : T.dark, color: allIn ? T.green : "#fff", whiteSpace: "nowrap" }}>
+                  {allIn ? "✓ Día en el calendario" : "＋ Añadir el día" + (inCal ? " (" + (addables.length - inCal) + ")" : "")}
+                </button>
+              );
+            })()}
+          </div>
           <div style={{ display: "grid", gap: 8 }}>
             {groups[d].slice().sort((a, b) => (Number(b.marketCapB) || 0) - (Number(a.marketCapB) || 0)).map((it) => {
               const lq = liqOf(it.optVolume);
@@ -6973,7 +7005,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                               setErHistTick((n) => n + 1);
                             }}
                               style={{ marginTop: 10, width: "100%", border: "none", borderRadius: 11, padding: "10px 14px", fontSize: 13, fontWeight: 800, background: inCal ? T.tileGreen : T.dark, color: inCal ? T.green : "#fff" }}>
-                              {inCal ? "✓ En el calendario · tocar para quitar" : "＋ Añadir al calendario de Earnings"}
+                              {inCal ? "✓ En el calendario de aperturas · tocar para quitar" : "＋ Añadir al calendario de aperturas"}
                             </button>
                           );
                         })()
@@ -7468,6 +7500,23 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   const [chartSel, setChartSel] = useState("open"); /* v3.70 (Victor): el gráfico bajo las POP sigue a la tile tocada; Open por defecto (es su salida) */
   const [minInfo, setMinInfo] = useState(null); /* v3.75: hoja ⓘ del crédito mínimo dinámico ({t:"ic"|"sp", d:{...}}) */
   const [infoSym, setInfoSym] = useState(null); /* v1.73: tarjeta con la leyenda Ø desplegada */
+  /* v3.94 (Victor: "me has quitado el gráfico de probabilidad e histórico"): NO estaba quitado — el
+     gráfico y los cuadros de promedios colgaban de hist[ticker], y si el ticker está en el FORMULARIO
+     pero ya no en el histórico local (típico: se quitó del calendario con la ✕, que borra la entrada;
+     los campos M/X/U siguen guardados y por eso las 4 POP seguían pintando), ambos bloques
+     desaparecían sin decir nada. Ahora hay respaldo: histórico local primero y, si no está, los
+     events del propio screener.json que ya está en localStorage. Así el gráfico se ve mientras
+     exista el dato en algún sitio, y si de verdad no hay, se avisa en pantalla en vez de callar. */
+  const histOf = (sym) => {
+    if (!sym) return null;
+    if (hist[sym]) return hist[sym];
+    try {
+      const j = JSON.parse(localStorage.getItem(KEY_SCREEN) || "null");
+      const it = j && Array.isArray(j.items) ? j.items.find((x) => x && x.ticker === sym) : null;
+      if (it && Array.isArray(it.events) && it.events.length) return { events: it.events, src: "screener" };
+    } catch (e) {}
+    return null;
+  };
   /* v1.77 (Victor: "mete que se vea en la tarjeta la fecha y pre/post"): la v1.73 solo guardaba
      calDate/calHour AL LEER una tabla — las tarjetas ya existentes se quedaban sin fecha para siempre.
      BACKFILL al abrir la herramienta: para cada ticker del histórico sin fecha futura se consulta el
@@ -8121,8 +8170,16 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
            mismo riesgo histórico), rojo = pagan menos. */}
         {(() => {
           const tC = String(st.tkr || "").trim().toUpperCase();
-          const sH = tC && hist[tC] ? erStats(erEvents(hist[tC])) : null;
-          if (!(sH && sH.M > 0)) return null;
+          const hC = histOf(tC);
+          const sH = hC ? erStats(erEvents(hC)) : null;
+          if (!(sH && sH.M > 0)) {
+            /* v3.94: antes devolvía null en silencio — ahora dice qué falta y cómo arreglarlo */
+            return tC && scen.some((s) => isFinite(s.pop)) ? (
+              <div style={{ background: T.tileAmber, borderRadius: 12, padding: "9px 12px", fontSize: 11, fontWeight: 700, color: T.gold, lineHeight: 1.45 }}>
+                Sin histórico de <b>{tC}</b> cargado: las POP salen de los campos guardados, pero para los promedios y el gráfico hace falta su tabla. Añádelo al calendario desde el Screener (o vuelve a cargar el screener).
+              </div>
+            ) : null;
+          }
           const emNow = (() => { const x = pf(st.em); return isFinite(x) && x > 0 ? x : NaN; })(); /* el campo EM a pelo — emOk exige spot y esto se quiere ver ANTES del spot */
           const cmp = isFinite(emNow) && isFinite(sH.emAvg);
           const richer = cmp && emNow >= sH.emAvg;
@@ -8152,8 +8209,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
         })()}
         {scen.some((s) => isFinite(s.pop)) && (() => {
           const tC = String(st.tkr || "").trim().toUpperCase();
-          const xsC = tC && hist[tC] ? erExtraStats(hist[tC]) : null;
-          if (!xsC || xsC.evs.length < 3) return null;
+          const hC = histOf(tC); /* v3.94: respaldo en el screener.json */
+          const xsC = hC ? erExtraStats(hC) : null;
+          if (!xsC || xsC.evs.length < 2) return null; /* v3.94: 2 basta para dibujar; antes pedía 3 */
           const tit = { open: "APERTURA (gap) vs cierre previo", close: "CIERRE del día de reacción", high: "HIGH intradía de la reacción", low: "LOW intradía de la reacción" }[chartSel];
           /* v3.72 (Victor): al tocar Open o Close, la probabilidad DIRECCIONAL de esa serie — verde vs
              rojo. Es la dimensión que la POP no cuenta (permanencia en el EM ≠ dirección), y la que
