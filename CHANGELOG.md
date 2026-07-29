@@ -1,5 +1,25 @@
 # CHANGELOG — Bloques
 
+## # Bloques v3.90 — Calendario de aperturas en Earnings
+
+## Qué cambia
+El carrusel de tarjetas "Earnings por ticker" se sustituye por un **calendario de aperturas** deslizable por días (mismo gesto de deslizar, mismos dots).
+
+- **Agrupación por día de APERTURA, no de earnings**: el miércoles 29 contiene los AMC del miércoles **y** los BMO del jueves — responde a "¿qué abro hoy a las 15:30?". BMO / en sesión / sesión desconocida se agrupan en la tarde hábil anterior (lunes BMO → viernes).
+- Cada día es un panel con su fecha, chip **HOY** cuando toca, "abrir 15:30–16:00 ET · N" y los tickers como **recuadros compactos** ticker + AMC (verde) / BMO (ámbar) / SES.
+- **Tocar un recuadro despliega la tarjeta completa bajo ese día** (la tarjeta de siempre: veredicto, POP, crédito/EV/contratos, Ø IV crush, botones Abrir / ⓘ / ✕). Tocar de nuevo la repliega.
+- Los tickers sin earnings próximo van al grupo **"Sin fecha"** al final.
+- La sincronía se hereda: cargar un ticker desde el Resumen por ticker o llegar con el salto del Screener navega el calendario a su día y despliega su tarjeta.
+
+## Sin cambios
+Resumen por ticker, formulario, comparador de anchos, contabilidad y el resto de la app quedan intactos. La tarjeta expandida es byte a byte la del carrusel anterior (ahora función `erCard`).
+
+## Verificado
+- Babel transpila OK (script 931KB).
+- Test node de la agrupación (10 casos: AMC hoy, BMO víspera, salto de fin de semana, sesión desconocida, fecha pasada, sin fecha).
+- Smoke jsdom: montaje, navegación a Herramientas → Earnings, sección visible, badges AMC/BMO, grupo Sin fecha, desplegar y replegar tarjeta.
+
+
 ## Bloques — CHANGELOG v3.88 (27-jul-2026)
 
 ## El selector de cristal, también en Movimientos y Herramientas
