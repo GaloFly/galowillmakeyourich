@@ -1,5 +1,23 @@
 # CHANGELOG — Bloques
 
+## Bloques v3.94 — Arreglado el gráfico desaparecido + botón de día en el Screener
+
+## El gráfico y los cuadros (arreglo)
+No estaban borrados: el gráfico y la fila de promedios colgaban de `hist[ticker]`. Con un ticker cargado en el **formulario** pero sin entrada en el histórico local (lo que pasa, por ejemplo, si lo quitas del calendario con la ✕ — los campos M/X/U siguen guardados, y por eso las 4 POP seguían pintando), ambos bloques desaparecían en silencio. Eso es lo que se veía con RIVN.
+
+- Ahora hay respaldo: **histórico local primero y, si no está, los events del propio screener.json** que ya está en caché. El gráfico se ve mientras el dato exista en algún sitio.
+- Si de verdad no hay histórico en ninguna parte, **se avisa en pantalla** ("Sin histórico de X cargado…") en vez de dejar un hueco mudo.
+- El gráfico se dibuja desde **2 earnings** (antes exigía 3).
+- Los cuadros son los pedidos: **Ø IV crush · Ø |open| · Ø EM · EM actual**, con el EM actual teñido verde/rojo según pague más o menos vol que la media, y la línea "EM actual ±X.X pts vs Ø EM".
+
+## Screener
+- Cada día tiene su botón **"＋ Añadir el día"**: mete de una vez los tickers visibles de ese día (los que pasan tus filtros y traen histórico). Si ya están todos, pasa a "✓ Día en el calendario" y otro toque los quita. Si faltan algunos, el botón lo dice: "＋ Añadir el día (3)".
+- El botón de cada subyacente ahora dice **"＋ Añadir al calendario de aperturas"** / "✓ En el calendario de aperturas · tocar para quitar".
+
+## Verificado (jsdom, tres escenarios)
+A) Formulario con RIVN e histórico vacío pero screener en caché → gráfico, los 4 cuadros y "EM actual +0.8 pts vs Ø EM" presentes. B) Sin dato en ningún sitio → sale el aviso. C) Screener → botón de día añade los 2 con fecha/sesión, alterna a "Día en el calendario", el segundo toque los quita, y el botón por ticker lleva el texto nuevo.
+
+
 ## Bloques v3.93 — Promedios en cuadros con EM actual, celda ancha en la tarjeta y POP alineada
 
 ## Probabilidad · histórico
