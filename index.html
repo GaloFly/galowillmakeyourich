@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.95"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.96"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6651,6 +6651,7 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
      defecto en vez de aparecer escondido. */
   const KEY_SCRFOLD = "bloques_screener_folded_v1";
   const [folded, setFolded] = useState(() => { try { const j = JSON.parse(localStorage.getItem(KEY_SCRFOLD) || "[]"); return Array.isArray(j) ? j : []; } catch (e) { return []; } });
+  const [dayArm, setDayArm] = useState(null); /* v3.96: día armado para quitar del calendario (dos toques) */
   const toggleFold = (d) => setFolded((p) => { const nx = p.indexOf(d) >= 0 ? p.filter((x) => x !== d) : [...p, d]; try { localStorage.setItem(KEY_SCRFOLD, JSON.stringify(nx)); } catch (e) {} return nx; });
 
   const lock = useRef(false);
@@ -6861,22 +6862,34 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
         </div>
       )}
       {groupDays.map((d) => (
-        <div key={d} style={{ marginBottom: 14 }}>
+        <div key={d} style={{ marginBottom: folded.indexOf(d) >= 0 ? 4 : 18 }}>
           {/* v3.94 (Victor: "en el día que tenga un botón de añadir todo el día al calendario de
               aperturas"): añade de golpe los tickers de ESE día que están a la vista (los que pasan
               los filtros vigentes) y traen histórico del servidor. Si ya están todos, el botón pasa a
-              quitarlos del calendario, igual que el toggle de cada ticker. Sin doble toque: añadir no
-              destruye nada, y quitar se deshace con otro toque. */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "2px 2px 8px" }}>
+              quitarlos del calendario, igual que el toggle de cada ticker.
+              v3.96: quitar el día ya NO es un toque — arma y confirma (ver abajo). */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 2px", borderRadius: 12, background: folded.indexOf(d) >= 0 ? T.tile : "transparent" }}>
             {/* v3.95: la fecha es el botón de plegar/desplegar — el chevron gira y, plegado, la
                 cuenta de cuántos de ese día están ya en el calendario se ve sin abrirlo */}
             <button type="button" onClick={() => toggleFold(d)}
               style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 7, textAlign: "left" }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, transform: folded.indexOf(d) >= 0 ? "rotate(-90deg)" : "none", transition: "transform .15s", flex: "none" }}>▾</span>
-              <span style={{ fontSize: 13, fontWeight: 800, color: T.ink, textTransform: "capitalize", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fmtDay(d)} <span style={{ color: T.sub, fontWeight: 600 }}>· {groups[d].length}</span></span>
               {(() => {
+                /* v3.96 (Victor: "el número de cuántos hay en calendario debería estar mejor
+                   formateado"): el chip largo "16 en calendario" se sustituye por una fracción
+                   compacta "✓ 16/18" de ancho fijo y cifras tabulares, así queda alineada entre
+                   filas en vez de empujar la fecha a una posición distinta en cada día. */
+                const tot = groups[d].length;
                 const n = groups[d].filter((it) => it && it.ticker && erHistAll[it.ticker]).length;
-                return n ? <span style={{ flex: "none", fontSize: 9, fontWeight: 800, borderRadius: 7, padding: "2px 7px", background: T.tileGreen, color: T.green, whiteSpace: "nowrap" }}>{n} en calendario</span> : null;
+                const full = n === tot && tot > 0;
+                return (
+                  <>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: T.ink, textTransform: "capitalize", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fmtDay(d)}</span>
+                    <span style={{ flex: "none", marginLeft: "auto", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 4, minWidth: 62, fontSize: 11, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: n ? (full ? T.green : T.gold) : T.sub }}>
+                      {n ? <span style={{ fontSize: 10 }}>✓</span> : null}{n ? n + "/" + tot : tot}
+                    </span>
+                  </>
+                );
               })()}
             </button>
             {(() => {
@@ -6884,8 +6897,15 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
               if (!addables.length) return null;
               const inCal = addables.filter((it) => erHistAll[it.ticker]).length;
               const allIn = inCal === addables.length;
+              /* v3.96 (Victor: "el botón está muy pegado al siguiente y a veces deseleccionas
+                 incorrectamente el seleccionado"): quitar un día entero borraba N tickers con UN
+                 toque, y el botón caía justo encima de la cabecera del día siguiente. Ahora quitar
+                 ARMA primero ("¿Quitar N?") y se confirma con el segundo toque, con 3 s de ventana —
+                 el mismo patrón que la ✕ del calendario y el 🗑️. Añadir sigue a un toque: no destruye. */
+              const armed = dayArm === d;
               return (
                 <button type="button" onClick={() => {
+                  if (allIn && !armed) { setDayArm(d); setTimeout(() => setDayArm((x) => (x === d ? null : x)), 3000); return; }
                   try {
                     const h = loadErHist();
                     for (const it of addables) {
@@ -6897,10 +6917,11 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
                     }
                     saveErHist(h);
                   } catch (e) {}
+                  setDayArm(null);
                   setErHistTick((n) => n + 1);
                 }}
-                  style={{ flex: "none", border: "none", cursor: "pointer", borderRadius: 10, padding: "6px 11px", fontSize: 10.5, fontWeight: 800, background: allIn ? T.tileGreen : T.dark, color: allIn ? T.green : "#fff", whiteSpace: "nowrap" }}>
-                  {allIn ? "✓ Día en el calendario" : "＋ Añadir el día" + (inCal ? " (" + (addables.length - inCal) + ")" : "")}
+                  style={{ flex: "none", border: "none", cursor: "pointer", borderRadius: 10, padding: "7px 12px", fontSize: 10.5, fontWeight: 800, background: armed ? T.red : allIn ? T.tileGreen : T.dark, color: armed ? "#fff" : allIn ? T.green : "#fff", whiteSpace: "nowrap" }}>
+                  {armed ? "¿Quitar " + addables.length + "?" : allIn ? "✓ Añadidos" : "＋ Añadir día" + (inCal ? " (" + (addables.length - inCal) + ")" : "")}
                 </button>
               );
             })()}
