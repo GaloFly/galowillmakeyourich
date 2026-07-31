@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.98"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "3.99"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -11345,8 +11345,13 @@ function App() {
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Estrategia</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {/* v3.99 FIX: el ticker del cash NO es editable (en el paso 3 es un div fijo "CASH"),
+                          así que si la estrategia elegida es de naturaleza CASH hay que sembrar tkr aquí —
+                          si no, wizForm.tkr se queda vacío y "Añadir a Bloque 0" nunca se habilita. Antes
+                          solo lo sembraba el botón "Continuar" del caso sin estrategias, que en B0 no
+                          aparece nunca porque STRATS[0] sí trae "Cash". */}
                       {(STRATS[wizBlock] || []).filter((s) => wizNatOfStrat(s) === wizNat || (isSpreadTipo(s) && wizNat === "DEF")).map((s) => (
-                        <button key={s} onClick={() => { if (s === "Earnings") { setWizErSub((v) => !v); return; } setWizErSub(false); setWizForm((f) => ({ ...f, er: "" })); setWizStrat(s); setWizSub(1); setWizStep(3); }} style={{ background: s === "Earnings" && wizErSub ? T.dark : T.tile, border: "none", borderRadius: 20, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: s === "Earnings" && wizErSub ? "#fff" : T.ink, cursor: "pointer" }}>{s}</button>
+                        <button key={s} onClick={() => { if (s === "Earnings") { setWizErSub((v) => !v); return; } setWizErSub(false); setWizForm((f) => ({ ...f, er: "", ...(natFromStrat(s) === "CASH" ? { tkr: "CASH" } : {}) })); setWizStrat(s); setWizSub(1); setWizStep(3); }} style={{ background: s === "Earnings" && wizErSub ? T.dark : T.tile, border: "none", borderRadius: 20, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: s === "Earnings" && wizErSub ? "#fff" : T.ink, cursor: "pointer" }}>{s}</button>
                       ))}
                       {/* v3.64 (Victor): Earnings abre submenu — Iron Condor (el calco de siempre, tipo
                           "Earnings") o Spread (el MISMO flujo del wizard de spreads, tipo "Spread" con la
@@ -11941,7 +11946,15 @@ function App() {
                   {DCDD_STRATS.has(wizStrat) && wizSub === 3 && (
                     <button onClick={() => setWizSub(2)} style={{ background: T.tile, border: "none", borderRadius: 14, padding: "15px 18px", fontSize: 15, fontWeight: 800, color: T.ink, cursor: "pointer", flexShrink: 0 }}>‹ Atrás</button>
                   )}
-                  <button onClick={wizSave} disabled={!(wizForm.tkr || "").trim()} style={{ flex: 1, background: (wizForm.tkr || "").trim() ? T.green : T.tile, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, color: (wizForm.tkr || "").trim() ? "#fff" : T.sub, cursor: "pointer" }}>Añadir a Bloque {wizBlock}</button>
+                  {/* v3.99: el cash no tiene ticker que teclear — wizSave ya lo guarda como "CASH".
+                      Cinturón y tirantes: aunque el sembrado del paso 2 fallara, el botón sigue vivo. */}
+                  {(() => {
+                    const isCashW = wizNat === "CASH" || natFromStrat(wizStrat) === "CASH";
+                    const ready = isCashW || !!(wizForm.tkr || "").trim();
+                    return (
+                      <button onClick={wizSave} disabled={!ready} style={{ flex: 1, background: ready ? T.green : T.tile, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, color: ready ? "#fff" : T.sub, cursor: "pointer" }}>Añadir a Bloque {wizBlock}</button>
+                    );
+                  })()}
                 </div>
                 </>
                 )}
