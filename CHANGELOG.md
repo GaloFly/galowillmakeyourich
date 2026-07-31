@@ -1,5 +1,46 @@
 # CHANGELOG — Bloques
 
+Bloques v3.99 — FIX: no se podía añadir Cash al Bloque 0
+
+## El síntoma
+Portfolio → ＋ → **B0 · Liquidez → Cash → Cash** → paso 3: el botón **"Añadir a Bloque 0"** salía
+gris y no respondía, por mucho importe que se escribiera.
+
+## La causa
+El ticker del cash **no es un campo editable**: en el paso 3, cuando la naturaleza es `CASH`,
+se pinta un `div` fijo con el texto "CASH" (v2.15, decisión tuya). Alguien tiene que escribir
+`wizForm.tkr = "CASH"` por detrás.
+
+El único sitio que lo hacía era el botón **"Continuar"** del caso *"esta naturaleza no tiene
+estrategias"* (`STRATS[wizBlock].filter(...).length === 0`). Pero **B0 sí tiene estrategias**
+(`STRATS[0] = ["Treasury ETF", "Money Market", "Cash"]`), así que ese botón nunca aparece: se
+entra al paso 3 por la *pill* de estrategia "Cash", que fijaba `wizStrat` y `wizStep` pero
+**no tocaba el ticker**.
+
+Resultado: `wizForm.tkr` vacío → `disabled={!(wizForm.tkr || "").trim()}` → botón muerto para
+siempre, sin ninguna forma de rellenarlo desde la interfaz. `wizSave()` estaba bien (ya guarda
+`tkr: "CASH"` por su cuenta); el bloqueo era puramente de la validación.
+
+## El arreglo (dos capas)
+1. **Siembra en la pill de estrategia**: al elegir una estrategia cuya naturaleza es `CASH`,
+   el `setWizForm` que ya limpiaba `er` ahora también escribe `tkr: "CASH"`.
+2. **Cinturón y tirantes en el botón**: la condición de habilitado pasa a
+   `wizNat === "CASH" || natFromStrat(wizStrat) === "CASH" || ticker escrito`.
+   Aunque cualquier otra ruta futura llegue al paso 3 sin sembrar, el cash se puede guardar.
+
+El resto de estrategias siguen exigiendo ticker exactamente igual que antes.
+
+## Verificación
+- **babel OK** (compilación completa del bundle JSX).
+- **Reproducción previa**: el mismo test corrido contra la v3.98 falla en 3 puntos —
+  botón deshabilitado, nada guardado, wizard sin cerrar.
+- **Test jsdom del flujo Cash (v3.99)**: FAB → B0 → Cash → Cash → paso 3 → botón habilitado →
+  importe 7960 → guardar → posición en `bloques_pos_v5` con `tkr: "CASH"`, `block: 0`,
+  `nat: "CASH"`, `mktValue: "7960"`, broker IBKR, y wizard cerrado. 13/13.
+- **Test de regresión**: B1 → Crédito → Short Put → el botón sigue deshabilitado sin ticker y
+  se habilita al escribir AAPL. 5/5.
+
+
 ## Bloques v3.98 — Todo en POP cruda al open: filtro, chip y tarjeta
 
 Revierte la decisión de la v3.97 (que unificó hacia la suavizada) y unifica hacia el otro lado, el que querías: **la cifra visible es la POP CRUDA al open** (1 − roturas/N), la misma con la que filtras.
