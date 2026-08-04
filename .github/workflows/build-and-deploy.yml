@@ -1,0 +1,43 @@
+# The robot: every push to main compiles index.html (build.mjs) and publishes dist/ to GitHub Pages.
+# The editing routine does not change — upload index.html exactly as always; this does the rest.
+#
+# ONE-TIME SETUP (a human has to click this once):
+#   repo Settings → Pages → "Build and deployment" → Source: "GitHub Actions"
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
