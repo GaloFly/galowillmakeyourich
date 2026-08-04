@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+Bloques v4.11 — Rediseño "cabina": jerarquía, color con criterio y micro-detalles (fases A–E aprobadas)
+
+Rediseño visual aprobado sobre maqueta (artefacto "Bloques — Propuesta de rediseño").
+Ni una fórmula ni un dato cambian — esto es piel, no motor.
+
+## A · Tarjeta de cuenta
+- El valor manda: 33px, dígitos tabulares, y "aterriza" con un contador de 0,4 s al refrescar
+  precios o cambiar USD/EUR (con "reducir movimiento" de iOS, quieto).
+- El cambio del día pasa a chip verde/rojo ("▲ +$849 · 1,13% hoy").
+- Línea de 30 días bajo el valor (snapshots diarios + el valor vivo de hoy como último punto;
+  con menos de 2 puntos no se pinta — la app no inventa historia).
+- Distribución por bloques compacta: barra apilada con separadores + leyenda B0–B3. Es CUOTA
+  DEL DESPLEGADO (no % NLV: con apalancamiento sumarían >100% y una apilada mentiría); el %
+  contra objetivo sigue en las tarjetas del Resumen. El donut de abajo no cambia.
+- Métricas en rejilla 2×2 (P&L abierto entra; antes flotaba arriba compitiendo con el valor).
+  Liquidez (cash/NLV) baja a la fila de ratios como "· liq X%".
+
+## B · Colores de bloque propios
+B0 pasa de gris invisible a AZUL ACERO (#3E7CB1); B1 verde profundo #128A45; B2 violeta
+#6F5BD8; B3 naranja tierra #C2681E — ya no reciclan los colores semánticos del tema. Las dos
+cuaternas (clara y oscura) pasan el validador de visión de color sobre sus fondos.
+
+## C · Tarjetas de bloque del Resumen: identidad ≠ estado
+La barra lleva el COLOR DEL BLOQUE, la banda objetivo se dibuja ENCIMA del relleno (antes el
+relleno la tapaba) y hay una marca en el valor actual. El estado va en chip: ✓ verde en banda ·
+▲/▼ ámbar si el desvío cabe en la banda de tolerancia del bloque · rojo solo si la supera.
+Antes, cualquier desvío pintaba la barra ENTERA de rojo y todo gritaba igual.
+
+## D · Modo noche "cabina"
+Negro azulado profundo (#0C0D10) con tarjetas elevadas (#16171B), tiles y filetes recalibrados,
+verde nocturno #3FBF7F — en vez de la inversión directa anterior.
+
+## E · Micro-detalles
+- Todo botón se encoge un 4% mientras lo tocas (transición 0,12 s; respeta "reducir movimiento").
+- Cabecera compacta: al bajar ~120px aparece una barra fina de cristal esmerilado con el título
+  de la vista y, en Portfolio, el NLV vivo.
+- El contador del valor (ver A).
+- Los "esqueletos de carga" de la propuesta se descartaron a conciencia: los datos son locales
+  y nunca hay pantalla vacía que tapar — habrían sido teatro.
+
+## Verificación (Chromium, viewport iPhone, cartera sembrada + 29 snapshots)
+- Claro y oscuro: hero con chip del día, sparkline, barra apilada y rejilla — sin errores de
+  consola. El chip del día requiere snapshots con desglose por bróker (los reales lo tienen).
+- Resumen: banda visible sobre el relleno de identidad, chips ✓/▲ con el matiz ámbar/rojo según
+  la banda de tolerancia de cada bloque.
+- Cabecera compacta aparece al bajar y no interfiere con hojas ni modales.
+- `npm run build` ok (`app v4.11`) y `node --check` pasa.
+
 Bloques v4.10 — FIX del descuadre REAL: las tarjetas de Ajustes se ensanchaban solas
 
 ## El diagnóstico correcto (por fin)

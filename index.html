@@ -38,13 +38,14 @@ const T_LIGHT = {
   dark: "#1C2530", line: "#EAE3D8", shadow: "0 6px 20px rgba(120,105,85,0.10)",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
-/* paleta oscura: mismo carácter cálido, luminancia invertida — se activa a mano con el icono ☀️/🌙, por defecto claro */
+/* paleta oscura (v4.11, "cabina nocturna"): negro azulado profundo con tarjetas elevadas, en vez de
+   la inversión directa anterior — se activa a mano con el icono ☀️/🌙, por defecto claro */
 const T_DARK = {
-  bg: "#0A0A0A", card: "#161616", tile: "#1C1C1E",
-  tileGreen: "#0F2318", tileAmber: "#2A2110", tileRed: "#2A1512", tilePurple: "#1B1826",
-  ink: "#FFFFFF", sub: "#8E8E93",
-  green: "#20C46E", purple: "#A99AF0", gold: "#F0B90B", orange: "#F7931A", red: "#FF4D4D",
-  dark: "#2C2C2E", line: "#26262A", shadow: "0 6px 20px rgba(0,0,0,0.55)",
+  bg: "#0C0D10", card: "#16171B", tile: "#1E1F24",
+  tileGreen: "#122A1C", tileAmber: "#2A2210", tileRed: "#2C1614", tilePurple: "#1D1A2B",
+  ink: "#F2F1F5", sub: "#97949E",
+  green: "#3FBF7F", purple: "#A99AF0", gold: "#E5B33C", orange: "#F7931A", red: "#FF5D55",
+  dark: "#2C2D33", line: "#292A30", shadow: "0 8px 26px rgba(0,0,0,0.55)",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
 /* T, HEX, BLOCKS, TABS, PALETTE dependen todos del tema activo. Son "let" (no "const") y se reconstruyen
@@ -69,14 +70,20 @@ function applyTheme(dark) {
   T = dark ? T_DARK : T_LIGHT;
   HEX = { green: T.green, amber: T.gold, red: T.red, purple: T.purple, orange: T.orange, muted: T.sub };
   PALETTE = [T.green, T.purple, T.orange, T.red, T.gold, "#4A90D9", "#D96BA0", "#5FBAA3", "#B08D57", "#7E8CE0", "#E0A85F", "#6BAF6B", "#C4739B", "#5C9AC7"];
+  /* v4.11: colores de bloque PROPIOS (ya no reciclan los semánticos verde/morado/naranja del tema) —
+     B0 pasa de gris invisible a azul acero ("cash aparcado"). Las dos cuaternas, clara y oscura,
+     pasan el validador de visión de color (daltonismo) sobre sus fondos respectivos. */
+  const BC = dark
+    ? { b0: "#3D7FB8", b1: "#1F9C55", b2: "#7A68DC", b3: "#CE7226", bg0: "#14202B", bg1: "#122A1C", bg2: "#1D1A2B", bg3: "#2A2110" }
+    : { b0: "#3E7CB1", b1: "#128A45", b2: "#6F5BD8", b3: "#C2681E", bg0: "#E7EFF6", bg1: "#E2F1E7", bg2: "#ECE9F8", bg3: "#F6EBD4" };
   BLOCKS = [
-    { id: 0, name: "Bloque 0", tag: "Liquidez", desc: "Cash equivalents · sin riesgo", color: T.sub, bg: T.tile, badge: dark ? "#4A4438" : "#DAD5C8",
+    { id: 0, name: "Bloque 0", tag: "Liquidez", desc: "Cash equivalents · sin riesgo", color: BC.b0, bg: BC.bg0, badge: BC.b0,
       tMin: 0.10, tMax: 0.12, scaleMin: 0, scaleMax: 0.25, band: 0.05 },
-    { id: 1, name: "Bloque 1", tag: "Core", desc: "Convicción alta · largo plazo", color: T.green, bg: T.tileGreen, badge: T.green,
+    { id: 1, name: "Bloque 1", tag: "Core", desc: "Convicción alta · largo plazo", color: BC.b1, bg: BC.bg1, badge: BC.b1,
       tMin: 0.70, tMax: 0.80, scaleMin: 0, scaleMax: 1.30, band: 0.10 },
-    { id: 2, name: "Bloque 2", tag: "Income", desc: "Generación activa de yield", color: T.purple, bg: T.tilePurple, badge: T.purple,
+    { id: 2, name: "Bloque 2", tag: "Income", desc: "Generación activa de yield", color: BC.b2, bg: BC.bg2, badge: BC.b2,
       tMin: 0.15, tMax: 0.20, scaleMin: -0.20, scaleMax: 0.30, band: 0.05 },
-    { id: 3, name: "Bloque 3", tag: "High Risk", desc: "Earnings · 0DTE · spreads", color: T.orange, bg: T.tileAmber, badge: T.orange,
+    { id: 3, name: "Bloque 3", tag: "High Risk", desc: "Earnings · 0DTE · spreads", color: BC.b3, bg: BC.bg3, badge: BC.b3,
       tMin: 0.00, tMax: 0.05, scaleMin: 0, scaleMax: 0.15, band: 0.03 },
   ];
   /* v1.41: "Resumen" abre la fila de pestañas — es lo primero que se ve en Portfolio y desde ahí se desliza a B0, B1… */
@@ -141,7 +148,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.10"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.11"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2053,11 +2060,37 @@ function blockTone(p, blk) {
   if (p >= blk.tMin - blk.band && p <= blk.tMax + blk.band) return "amber";
   return "red";
 }
+/* v4.11: el valor de cuenta "aterriza" — anima del número anterior al nuevo en ~0,4 s al refrescar
+   precios o cambiar de moneda, en vez de teletransportarse. Respeta "reducir movimiento" de iOS. */
+function useCountUp(value) {
+  const [shown, setShown] = useState(value);
+  const prevRef = useRef(value);
+  useEffect(() => {
+    const from = prevRef.current, to = value;
+    prevRef.current = value;
+    if (!isFinite(from) || !isFinite(to) || from === to) { setShown(to); return; }
+    let rm = false; try { rm = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+    if (rm) { setShown(to); return; }
+    let raf, t0 = null;
+    const step = (ts) => {
+      if (t0 == null) t0 = ts;
+      const k = Math.min(1, (ts - t0) / 400);
+      const e = 1 - Math.pow(1 - k, 3);
+      setShown(from + (to - from) * e);
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return shown;
+}
 /* ---------- v1.43: AccountHero — la tarjeta de "Valor de la cuenta" vive FUERA de las pestañas,
    fija arriba de Portfolio, así que se sigue viendo mientras deslizas por B0, B1… Lleva dentro el
-   expandible con el estado de cuenta completo (cash negativo, margen, EL y barras de zona). ---------- */
+   expandible con el estado de cuenta completo (cash negativo, margen, EL y barras de zona).
+   v4.11 (rediseño A): valor a 33px con contador, cambio del día en chip, línea de 30 días desde los
+   snapshots, distribución por bloques compacta y métricas en rejilla 2×2. ---------- */
 function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalPnl, totalRiesgo, nPos,
-  elNlv, elMrgn, leverage, dayChg, broker, brokers, accounts, setAccField, accOpen, setAccOpen, onOpenInfo }) {
+  elNlv, elMrgn, leverage, dayChg, broker, brokers, accounts, setAccField, accOpen, setAccOpen, onOpenInfo, snapshots, blockDist }) {
   const chgCol = !dayChg ? T.sub : dayChg.abs >= 0 ? T.green : T.red;
   /* v3.66 (Victor: "¿no se va a liar mucho todo?" → versión ligera): selector USD/EUR SOLO DE
      VISUALIZACIÓN para el valor de cuenta y MKT VL. Nada se guarda ni se calcula en euros — el motor
@@ -2093,6 +2126,29 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
   const cv = (x) => (fxOk ? x * fx.rate : x); /* convierte para MOSTRAR */
   const sym = fxOk ? "€" : "$";
   const toggleEur = () => setShowEur((v) => { const nv = !v; try { localStorage.setItem("bloques_showEur", nv ? "1" : "0"); } catch (e) {} return nv; });
+  const nlvShown = useCountUp(cv(nlv));
+  /* v4.11: línea de 30 días — los últimos snapshots diarios (uno por día con 🔄 Precios). Con menos
+     de 2 puntos no se pinta nada: la app no inventa historia. */
+  const sparkPts = useMemo(() => {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const ss = Array.isArray(snapshots) ? [...snapshots].filter((s) => s && s.date && s.date < hoy && isFinite(s.nlv)).sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-29) : [];
+    const pts = ss.map((s) => s.nlv);
+    if (pts.length >= 1 && isFinite(nlv) && nlv !== 0) pts.push(nlv); /* el último punto es el valor VIVO de hoy */
+    return pts;
+  }, [snapshots, nlv]);
+  const spark = useMemo(() => {
+    if (sparkPts.length < 2) return null;
+    const W = 280, H = 40, PAD = 3;
+    const min = Math.min(...sparkPts), max = Math.max(...sparkPts);
+    const span = max - min || 1;
+    const xy = sparkPts.map((v, i) => [
+      (i / (sparkPts.length - 1)) * W,
+      PAD + (1 - (v - min) / span) * (H - PAD * 2),
+    ]);
+    const line = xy.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + "," + y.toFixed(1)).join(" ");
+    return { line, area: line + " L" + W + "," + H + " L0," + H + " Z", end: xy[xy.length - 1], up: sparkPts[sparkPts.length - 1] >= sparkPts[0] };
+  }, [sparkPts]);
+  const dist = (blockDist || []).filter((d) => isFinite(d.p) && d.p > 0);
   return (
     <div style={{ marginBottom: 14 }}>
       {/* HERO: NLV + cambio del día + P&L, con el estado de cuenta plegado dentro */}
@@ -2107,36 +2163,57 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
               </span>
               {!margin && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 7, padding: "2px 7px", textTransform: "none", letterSpacing: 0 }}>falta margen</span>}
             </div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: nlv >= 0 ? T.ink : T.red, letterSpacing: -0.9, lineHeight: 1.15, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-              {(nlv < 0 ? "-" + sym : sym) + money(Math.abs(cv(nlv)))}
+            {/* v4.11: el valor manda — 33px, contador animado, chip del día al lado */}
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 9, flexWrap: "wrap", marginTop: 3 }}>
+              <span style={{ fontSize: 33, fontWeight: 800, color: nlv >= 0 ? T.ink : T.red, letterSpacing: -1.1, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                {(nlvShown < 0 ? "-" + sym : sym) + money(Math.abs(nlvShown))}
+              </span>
+              {dayChg && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 800, color: chgCol, background: dayChg.abs >= 0 ? T.tileGreen : T.tileRed, borderRadius: 8, padding: "4px 8px", fontVariantNumeric: "tabular-nums", marginBottom: 2 }}>
+                  {(dayChg.abs >= 0 ? "▲ +" : "▼ −") + sym + money(Math.abs(cv(dayChg.abs))) + " · " + signPct(dayChg.pct, 2).replace("+", "").replace("−", "") + " hoy"}
+                </span>
+              )}
             </div>
             {showEur && (
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: fxOk ? T.sub : T.gold, marginTop: 2 }}>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: fxOk ? T.sub : T.gold, marginTop: 4 }}>
                 {fxOk ? "1 USD = " + fx.rate.toFixed(4) + " € · " + (fx.src || "BCE") + " " + fx.ecbDate : fx && fx.err ? "sin conexión con las fuentes de cambio — mostrando USD (reintenta con el toggle)" : "obteniendo tipo de cambio…"}
               </div>
             )}
-            {/* v1.43: cambio desde la medianoche del día anterior — el cierre del último día con
-               snapshot. Sin texto: solo importe y %, en verde o rojo. Sin referencia, no se pinta
-               nada (la app no inventa cifras). */}
-            {dayChg && (
-              <div style={{ fontSize: 14, fontWeight: 800, color: chgCol, marginTop: 3, display: "flex", alignItems: "baseline", gap: 6, fontVariantNumeric: "tabular-nums" }}>
-                <span>{(dayChg.abs >= 0 ? "+" : "−") + sym + money(Math.abs(cv(dayChg.abs)))}</span>
-                <span>{signPct(dayChg.pct, 2)}</span>
-              </div>
-            )}
-          </div>
-          <div style={{ textAlign: "right", flex: "none" }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.6, textTransform: "uppercase" }}>P&L abierto</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: totalPnl >= 0 ? T.green : T.red, letterSpacing: -0.5, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{(totalPnl >= 0 ? "+" : "−") + sym + money(Math.abs(cv(totalPnl)))}</div>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
-          {/* v1.45: orden pedido por Victor — Riesgo · MKT VL · Posiciones · Liquidez. v3.66/v3.68: los
-              importes respetan el selector USD/EUR (Victor pidió incluir también Riesgo, cash y P&L). */}
-          {[["Riesgo", sym + money(cv(totalRiesgo))], ["MKT VL", sym + money(cv(mktvl))], ["Pos.", String(nPos)], ["Liquidez", nlv > 0 ? pct(cash / nlv, 0) : "—"]].map(([l, v]) => (
-            <div key={l} style={{ background: T.tile, borderRadius: 13, padding: "9px 3px", textAlign: "center", minWidth: 0, overflow: "hidden" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 2 }}>{l}</div>
+        {/* v4.11: línea de 30 días — contexto temporal sin abrir Rendimiento (≥2 snapshots) */}
+        {spark && (
+          <svg width="100%" height="40" viewBox="0 0 280 40" preserveAspectRatio="none" aria-hidden="true" style={{ display: "block", marginTop: -4 }}>
+            <path d={spark.area} fill={hexToRgba(spark.up ? T.green : T.red, DARK ? 0.14 : 0.1)} />
+            <path d={spark.line} fill="none" stroke={spark.up ? T.green : T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx={spark.end[0]} cy={spark.end[1]} r="3.2" fill={spark.up ? T.green : T.red} />
+          </svg>
+        )}
+        {/* v4.11: distribución por bloques compacta — el donut de abajo sigue para explorar */}
+        {dist.length > 0 && (
+          <div style={{ display: "grid", gap: 7 }}>
+            <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", gap: 2 }}>
+              {dist.map((d) => <span key={d.id} style={{ width: Math.max(d.p * 100, 1.2) + "%", background: d.color }} />)}
+            </div>
+            <div style={{ display: "flex", gap: 11, flexWrap: "wrap" }}>
+              {dist.map((d) => (
+                <span key={d.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 3, background: d.color }} />B{d.id} <span style={{ color: T.sub, fontWeight: 700 }}>{pct(d.p, 0)}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* v4.11: métricas en rejilla 2×2 — el P&L abierto entra en la rejilla (antes flotaba arriba
+            a la derecha compitiendo con el valor); Liquidez (cash/NLV) baja a la fila de ratios */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {[["P&L abierto", (totalPnl >= 0 ? "+" : "−") + sym + money(Math.abs(cv(totalPnl))), totalPnl >= 0 ? T.green : T.red],
+            ["Riesgo total", sym + money(cv(totalRiesgo)), T.ink],
+            ["Valor mercado", sym + money(cv(mktvl)), T.ink],
+            ["Posiciones", String(nPos), T.ink]].map(([l, v, c]) => (
+            <div key={l} style={{ background: T.tile, borderRadius: 13, padding: "9px 12px", minWidth: 0, overflow: "hidden" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>{l}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: c, fontVariantNumeric: "tabular-nums", letterSpacing: -0.3, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
             </div>
           ))}
         </div>
@@ -2153,6 +2230,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
           </span>
           <span onClick={(e) => { e.stopPropagation(); onOpenInfo && onOpenInfo("leverage"); }}
             style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>· {isFinite(leverage) ? leverage.toFixed(2) + "×" : "—"}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>· liq {nlv > 0 ? pct(cash / nlv, 0) : "—"}</span>
           <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: T.sub, flexShrink: 0 }}>{accOpen ? "▲" : "▼"}</span>
         </div>
         {accOpen && (<div style={{ display: "grid", gap: 9 }}>
@@ -2412,6 +2490,18 @@ function BlockDistribution({ nlv, blockTotals, onGoBlock }) {
             const maxP = Math.max(r.blk.tMax + r.blk.band, isFinite(r.p) ? r.p : 0, 0.05);
             const w = isFinite(r.p) ? Math.min(100, (r.p / maxP) * 100) : 0;
             const bandL = (r.blk.tMin / maxP) * 100, bandW = ((r.blk.tMax - r.blk.tMin) / maxP) * 100;
+            /* v4.11: identidad ≠ estado. La barra lleva el COLOR DEL BLOQUE y la banda objetivo se
+               dibuja ENCIMA del relleno (antes el relleno la tapaba y la barra entera se ponía roja
+               al desviarse — todo gritaba igual). El estado va en un chip: verde en banda, ámbar si
+               el desvío cabe en la banda de tolerancia del bloque, rojo solo si la supera. */
+            const dev = !isFinite(r.p) ? 0 : r.p < r.blk.tMin ? r.blk.tMin - r.p : r.p > r.blk.tMax ? r.p - r.blk.tMax : 0;
+            const stTone = dev === 0 ? "good" : dev <= r.blk.band ? "warn" : "bad";
+            const stBg = stTone === "good" ? T.tileGreen : stTone === "warn" ? T.tileAmber : T.tileRed;
+            const stCol = stTone === "good" ? T.green : stTone === "warn" ? T.gold : T.red;
+            const objTxt = "objetivo " + pct(r.blk.tMin, 0) + "–" + pct(r.blk.tMax, 0);
+            const stTxt = !isFinite(r.p) ? "— · " + objTxt
+              : stTone === "good" ? "✓ En banda · " + objTxt
+              : (r.p < r.blk.tMin ? "▼ " + pct(dev, 0) + " bajo el " : "▲ " + pct(dev, 0) + " sobre el ") + objTxt;
             return (
               <div key={r.blk.id} onClick={() => setSel(isSel ? null : r.blk.id)}
                 style={{ background: isSel ? r.blk.bg : T.tile, borderRadius: 14, padding: "10px 12px", cursor: "pointer", opacity: dim ? 0.5 : 1, transition: "opacity .15s, background .15s", display: "grid", gap: 7, minWidth: 0 }}>
@@ -2423,15 +2513,16 @@ function BlockDistribution({ nlv, blockTotals, onGoBlock }) {
                   </span>
                   <span style={{ marginLeft: "auto", flex: "none", display: "flex", alignItems: "baseline", gap: 7 }}>
                     <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>${money(r.val)}</span>
-                    <span style={{ fontSize: 16, fontWeight: 800, color: HEX[r.tone] || T.ink, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{pct(r.p, 0)}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: T.ink, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{pct(r.p, 0)}</span>
                   </span>
                 </div>
                 <div style={{ position: "relative", height: 9, background: T.line, borderRadius: 5, overflow: "hidden" }}>
-                  <div style={{ position: "absolute", left: bandL + "%", width: Math.max(bandW, 1.5) + "%", top: 0, bottom: 0, background: hexToRgba(r.blk.color, 0.28) }} />
-                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: w + "%", background: HEX[r.tone] || r.blk.color, borderRadius: 5, transition: "width .3s" }} />
+                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: w + "%", background: r.blk.color, borderRadius: 5, transition: "width .3s" }} />
+                  <div style={{ position: "absolute", left: bandL + "%", width: Math.max(bandW, 1.5) + "%", top: 0, bottom: 0, background: hexToRgba(DARK ? "#FFFFFF" : "#1D1C21", 0.16), borderRadius: 2 }} />
+                  {isFinite(r.p) && <div style={{ position: "absolute", left: "calc(" + w + "% - 2px)", top: 0, bottom: 0, width: 2, background: T.ink, opacity: 0.85 }} />}
                 </div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>
-                  Objetivo {pct(r.blk.tMin, 0)}–{pct(r.blk.tMax, 0)} · {!isFinite(r.p) ? "—" : r.tone === "green" ? "en banda" : r.p < r.blk.tMin ? "por debajo " + pct(r.blk.tMin - r.p, 0) : "por encima " + pct(r.p - r.blk.tMax, 0)}
+                <div style={{ display: "flex" }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: stCol, background: stBg, borderRadius: 8, padding: "3px 8px" }}>{stTxt}</span>
                 </div>
               </div>
             );
@@ -10002,6 +10093,16 @@ function App() {
     return { abs: nlv - base, pct: (nlv - base) / Math.abs(base) };
   }, [snapshots, nlv, broker]);
 
+  /* v4.11: distribución por bloques para la barra compacta del hero. CUOTA DEL DESPLEGADO (cada
+     bloque sobre la suma de todos), no % del NLV: con opciones apalancadas los % de NLV suman más
+     de 100 y una barra apilada mentiría. El % contra objetivo sigue en las tarjetas del Resumen. */
+  const blockDist = useMemo(() => {
+    const caps = BLOCKS.map((b) => ({ id: b.id, color: b.color, cap: active.filter((p) => p.block === b.id).reduce((s, p) => s + capDesplegado(p), 0) }));
+    const total = caps.reduce((s, c) => s + c.cap, 0);
+    if (!(total > 0)) return [];
+    return caps.map((c) => ({ id: c.id, color: c.color, p: c.cap / total }));
+  }, [active, isDark]);
+
   const setAccField = (brk, k) => (v) => setAccounts((a) => ({ ...a, [brk]: { ...a[brk], [k]: v } }));
   const setPos = (id, k, v) => setPositions((ps) => ps.map((p) => (p.id === id ? { ...p, [k]: v } : p)));
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
@@ -10835,6 +10936,19 @@ function App() {
      en línea (editSet) NO cuenta: se expande dentro de la lista y necesita que la lista siga scrolleando. */
   const anyOverlayOpen = wizOpen || !!sheetPosId || !!pendingAction || keyModalOpen || geminiModalOpen || avModalOpen || brokerModalOpen || exportOpen || backupOpen || refreshChoiceOpen || !!info;
 
+  /* v4.11: cabecera compacta — al bajar ~120px el título grande se pliega a una barra fina de
+     cristal con el título de la vista y, en Portfolio, el valor de la cuenta. rAF para no re-renderizar
+     en cada píxel de scroll. */
+  const [scrolled, setScrolled] = useState(false);
+  const scrollRafRef = useRef(false);
+  const onRootScroll = (e) => {
+    const st = e.currentTarget.scrollTop;
+    if (scrollRafRef.current) return;
+    scrollRafRef.current = true;
+    requestAnimationFrame(() => { scrollRafRef.current = false; setScrolled(st > 120); });
+  };
+  const viewTitle = view === "bloques" ? "Portfolio" : view === "movimientos" ? "Movimientos" : view === "vencimientos" ? "Vencimientos" : view === "ajustes" ? "Ajustes" : "Herramientas";
+
   return (
     <>
     <UpdateOffer />
@@ -10842,7 +10956,7 @@ function App() {
        Así el rebote de iOS al llegar arriba/abajo ocurre dentro del contenedor y NO arrastra el menú
        inferior, que vive fuera de este scroll (fijo al viewport). Es la única forma fiable en iOS de que
        una barra "position:fixed" no bote junto con la página. */}
-    <div ref={rootRef} className="no-scrollbar" style={{ height: "100dvh", overflowY: anyOverlayOpen ? "hidden" : "auto", overscrollBehavior: "contain", background: T.bg, fontFamily: T.sans, color: T.ink, padding: "calc(18px + env(safe-area-inset-top)) 14px calc(108px + env(safe-area-inset-bottom))", overflowX: "hidden" }}>{/* sin -webkit-overflow-scrolling:touch: en iOS crea un stacking context que dejaba el nav por encima de los modales; el scroll con inercia ya es nativo desde iOS 13. overflowY:hidden mientras CUALQUIER hoja/modal está abierto (v5.11) = la pantalla de atrás no se mueve al scrollear el que está abierto */}
+    <div ref={rootRef} className="no-scrollbar" onScroll={onRootScroll} style={{ height: "100dvh", overflowY: anyOverlayOpen ? "hidden" : "auto", overscrollBehavior: "contain", background: T.bg, fontFamily: T.sans, color: T.ink, padding: "calc(18px + env(safe-area-inset-top)) 14px calc(108px + env(safe-area-inset-bottom))", overflowX: "hidden" }}>{/* sin -webkit-overflow-scrolling:touch: en iOS crea un stacking context que dejaba el nav por encima de los modales; el scroll con inercia ya es nativo desde iOS 13. overflowY:hidden mientras CUALQUIER hoja/modal está abierto (v5.11) = la pantalla de atrás no se mueve al scrollear el que está abierto */}
       <style>{`
         input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
         input[type=number]{-moz-appearance:textfield;}
@@ -10855,6 +10969,11 @@ function App() {
         @supports (-webkit-touch-callout: none) {
           input, select, textarea { font-size: 16px !important; }
         }
+        /* v4.11: pulsación con respuesta — todo botón se encoge un 4% mientras lo tocas.
+           Con "reducir movimiento" activado en iOS, quieto. */
+        button { transition: transform 0.12s ease; }
+        button:active { transform: scale(0.96); }
+        @media (prefers-reduced-motion: reduce) { button { transition: none; } button:active { transform: none; } }
         .no-scrollbar{scrollbar-width:none;-ms-overflow-style:none;}
         .no-scrollbar::-webkit-scrollbar{display:none;width:0;height:0;}
         button{-webkit-appearance:none;appearance:none;}
@@ -10890,6 +11009,18 @@ function App() {
             )}
             <span style={{ fontSize: 10.5, fontWeight: 700, color: T.ink }}>{refreshing ? "Actualizando…" : "Actualizado"}</span>
           </div>
+        </div>
+      )}
+      {/* v4.11: cabecera compacta de cristal al bajar — título de la vista y, en Portfolio, el NLV */}
+      {scrolled && !anyOverlayOpen && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 55,
+          padding: "calc(8px + env(safe-area-inset-top)) 16px 9px",
+          background: DARK ? "rgba(12,13,16,0.72)" : "rgba(238,233,224,0.75)",
+          backdropFilter: "blur(18px) saturate(180%)", WebkitBackdropFilter: "blur(18px) saturate(180%)",
+          borderBottom: "0.5px solid " + hexToRgba(DARK ? "#FFFFFF" : "#000000", 0.08),
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, letterSpacing: -0.2 }}>{viewTitle}</span>
+          {view === "bloques" && <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", letterSpacing: -0.2 }}>${money(nlv)}</span>}
         </div>
       )}
       <ScanOverlay open={!!scan} step={scan ? scan.step : 0} sub={scan ? scan.sub : null} />
@@ -11040,7 +11171,8 @@ function App() {
           totalPnl={totalPnl} totalRiesgo={totalRiesgo} nPos={active.length}
           elNlv={elNlv} elMrgn={elMrgn} leverage={leverage} dayChg={dayChg}
           broker={broker} brokers={brokers} accounts={accounts} setAccField={setAccField}
-          accOpen={accOpen} setAccOpen={setAccOpen} onOpenInfo={setInfo} />
+          accOpen={accOpen} setAccOpen={setAccOpen} onOpenInfo={setInfo}
+          snapshots={snapshots} blockDist={blockDist} />
 
         {/* TABS: BLOQUES + EXPOSICIÓN */}
         <div ref={tabsRowRef} className="no-scrollbar" style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" }}>
