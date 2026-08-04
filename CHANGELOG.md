@@ -1,5 +1,20 @@
 # CHANGELOG — Bloques
 
+Bloques v4.22 — Relieve para los selectores y las filas de totales (Movimientos)
+
+Petición de Victor con capturas de Movimientos: relieve también para estos botones y tiles.
+- **Selectores de píldoras** (Todos/B1/B2/B3, Bloque/MKT VL/NLV/Margen, Aportación/Retiro…):
+  la opción activa se eleva con sombra propia y bisel de luz; las inactivas, elevación mínima.
+  Es el componente compartido, así que TODOS los selectores de la app lo heredan a la vez.
+- **Sub-menú de Movimientos** (Primas · MTM · Rendimiento · Histórico): la píldora activa lleva
+  ahora relieve también en reposo (antes solo lo tenía al arrastrarla como lente).
+- **Filas de totales de Primas/MTM**: las de año (oscuras) con sombra y bisel; las de mes con
+  la elevación mínima. Nuevo token `raiseSm` para chips y filas pequeñas.
+
+## Verificación
+- Chromium (viewport iPhone): Movimientos → Primas con totales y selectores en relieve, sin
+  errores de consola. `npm run build` ok (`app v4.22`), `node --check` pasa.
+
 Bloques v4.21 — FIX: la misma línea recta, ahora bajo los botones de broker
 
 El selector de brokers (Todos · IBKR · DEGIRO) es otra fila deslizable y recortaba la sombra
