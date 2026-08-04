@@ -1,5 +1,19 @@
 # CHANGELOG — Bloques
 
+Bloques v4.01 — Splash: sin título y con la app difuminada de fondo
+
+Dos retoques al splash de la v4.00, pedidos nada más verlo:
+- **Fuera el texto "Portfolio + Comparador"** — queda el icono, la versión y el estado de
+  actualización, nada más.
+- **El fondo ya no es opaco**: el velo pasa de 82% a 35% de opacidad, así el difuminado deja
+  ver la cuenta (la app real) detrás, como un cristal esmerilado de verdad. La versión y el
+  mensaje pasan a color tinta para que se lean bien sobre el velo más claro.
+
+## Verificación
+- `npm run build` compila (`build ok — app v4.01`) y `node --check` pasa.
+- Chromium (viewport iPhone): el splash muestra solo icono + "v4.01" + "Estás en la última
+  versión", el contenido de la app se distingue difuminado detrás, y desaparece a los 2 s.
+
 Bloques v4.00 — Aportaciones editables (con comisión) + splash de arranque con versión
 
 ## Aportaciones y retiros: ahora editables

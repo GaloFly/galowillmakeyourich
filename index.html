@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.00"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.01"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2223,13 +2223,13 @@ function SplashScreen() {
   if (!visible) return null;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 200,
-      background: DARK ? "rgba(10,10,10,0.82)" : "rgba(238,233,224,0.82)",
-      backdropFilter: "blur(24px) saturate(180%)", WebkitBackdropFilter: "blur(24px) saturate(180%)",
+      /* v4.01: velo translúcido (no opaco) — el blur del backdrop deja ver la cuenta difuminada detrás */
+      background: DARK ? "rgba(10,10,10,0.35)" : "rgba(238,233,224,0.35)",
+      backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
       <img src="./icon-512.png" alt="" width={96} height={96} style={{ borderRadius: 22, boxShadow: T.shadow }} />
-      <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, marginTop: 4 }}>Portfolio + Comparador</div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>v{APP_VERSION}</div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>{msg}</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 4 }}>v{APP_VERSION}</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: T.ink }}>{msg}</div>
     </div>
   );
 }
