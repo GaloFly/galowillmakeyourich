@@ -1,5 +1,23 @@
 # CHANGELOG — Bloques
 
+Bloques v4.04 — Fuera el splash: la app abre directa; el aviso de versión nueva pasa a ser una barrita
+
+El splash de arranque (v4.00–v4.03) se retira entero — con la app compilada la carga ya es
+rápida y la pantalla intermedia no aportaba. La app abre directamente en la cuenta.
+
+Lo único que se conserva es lo útil: al arrancar se sigue comprobando en segundo plano si hay
+versión nueva y, SOLO si la hay, aparece una barrita discreta arriba con el icono, "Versión
+nueva: vX.XX", el botón **Actualizar** (la baja con parámetros anticaché, el arreglo de la
+v4.03 sigue intacto) y una ✕ para descartarla (se vuelve a ofrecer en la próxima apertura).
+Si no hay nada nuevo, no se ve absolutamente nada.
+
+## Verificación
+- `npm run build` → `build ok — app v4.04`; `node --check` pasa; `app.js?v=<hash>` y marcador
+  APP_VERSION presentes en `dist/index.html`.
+- Chromium (viewport iPhone): sin versión nueva la app abre directa, sin splash ni overlay
+  alguno. Simulando un servidor con v9.99: aparece la barrita con "Actualizar" (navega con
+  anticaché) y ✕ (la cierra). Sin errores de consola en ningún caso.
+
 Bloques v4.03 — FIX: la app se quedaba clavada en "actualizando…" · ahora pregunta antes de actualizar
 
 ## El síntoma
