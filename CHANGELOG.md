@@ -1,5 +1,14 @@
 # CHANGELOG — Bloques
 
+Bloques v4.29 — Rótulo de la barra del hero, recortado
+
+Con la mecánica ya entendida (el 9% de B0 = liquidez ÷ capital total en juego, que con
+opciones supera el NLV), Victor pide dejar el rótulo en solo "Reparto del capital desplegado"
+— fuera la coletilla "· B0 = liquidez".
+
+## Verificación
+- `npm run build` ok (`app v4.29`), `node --check` pasa.
+
 Bloques v4.28 — La barra de bloques del hero, rotulada
 
 Victor leyó los % de la barra apilada del hero como "riesgo plausible" y el B0 no le cuadraba
