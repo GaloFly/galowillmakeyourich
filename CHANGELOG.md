@@ -1,5 +1,34 @@
 # CHANGELOG — Bloques
 
+Bloques v4.09 — FIX definitivo del descuadre: detección por medida y anclaje del viewport
+
+## El síntoma (captura, 08:37)
+Seguía descuadrado: contenido pegado a la derecha. Medido con precisión sobre las capturas:
+- Portfolio antes del problema: márgenes 42px/42px (14pt/14pt) — perfecto.
+- Justo tras usar el modal de la key: 42px/0px — contenido 14pt más ancho que la pantalla.
+- Tras la v4.07 y reinicio: 42px/15px — recuperado a medias, pero el lienzo seguía ~9pt
+  más ancho que la pantalla física.
+
+## La causa fina
+El zoom de iOS no solo amplía: puede dejar el **viewport de layout** (el lienzo donde se
+dibuja la app) más ancho que la pantalla, y ese estado sobrevive a recargas e incluso a
+reinicios. En esa situación la señal que usaba el des-zoom de la v4.08 (la escala de
+visualViewport) puede marcar "todo normal" y no actuar.
+
+## El arreglo
+La detección pasa de "escala" a **medida directa**: si el ancho del lienzo
+(`documentElement.clientWidth`) difiere del ancho físico de la pantalla (`screen.width`,
+ajustado por orientación), el `<meta viewport>` se ancla al número EXACTO de puntos de la
+pantalla (p. ej. `width=402` en vez de `width=device-width`) — eso fuerza a WebKit a
+recomponer el lienzo a su tamaño real. Se comprueba al arrancar, al cerrar el teclado, al
+girar el móvil y **al volver la app del segundo plano**. El toggle de escala de la v4.08 se
+mantiene para el caso de zoom simple.
+
+## Verificación
+- `npm run build` ok (`app v4.09`), `node --check` pasa, el script llega a dist/.
+- Chromium (viewport iPhone): lienzo y pantalla coinciden → el script no toca nada; la app
+  arranca y opera sin errores de consola.
+
 Bloques v4.08 — La app se des-zoomea sola (remate del zoom fantasma de iOS)
 
 ## El síntoma (captura, 08:30)
