@@ -1,5 +1,15 @@
 # CHANGELOG — Bloques
 
+Bloques v4.27 — El cuadro de fecha del editor, a tamaño
+
+El campo "Fecha de entrada" del editor de posición ocupaba el ancho entero y con más altura
+que el resto de campos (captura de Victor). Pasa a media columna y 36px de alto — el mismo
+formato que los EditField de al lado — con appearance:none para que iOS no le imponga su
+tamaño intrínseco. La celda derecha queda vacía, igual que en la fila de BLOQUE de arriba.
+
+## Verificación
+- `npm run build` ok (`app v4.27`), `node --check` pasa; editor revisado en Chromium.
+
 Bloques v4.26 — Signo negativo en el precio de cierre de opciones
 
 Al cerrar un spread (double diagonal, vertical…) el neto puede ser NEGATIVO, pero el teclado
