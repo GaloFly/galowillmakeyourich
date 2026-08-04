@@ -1,5 +1,32 @@
 # CHANGELOG — Bloques
 
+Bloques v4.00 — Aportaciones editables (con comisión) + splash de arranque con versión
+
+## Aportaciones y retiros: ahora editables
+Cada movimiento ya registrado en 💶 Aportaciones tiene un botón de editar (lápiz) junto a la ✕.
+Al tocarlo se abre el mismo formulario que al añadir un movimiento nuevo — fecha, Aportación/Retiro,
+Efectivo/Acciones, importe, bróker, **comisión** y nota — y los cambios se aplican al instante
+(no hace falta un botón de guardar aparte, "Hecho" solo cierra el panel). Antes, si te equivocabas al
+apuntar un importe o una comisión, la única forma de arreglarlo era borrar el movimiento y crearlo de
+nuevo. Los totales (Aportado, Retirado, Neto, Comisiones) y el gráfico acumulado se recalculan solos
+con cada edición.
+
+## Splash de arranque
+Al abrir la app aparece dos segundos una pantalla con el icono de Bloques sobre el fondo difuminado,
+la versión instalada (v4.00) y si es la última disponible — usa la misma comprobación de red que
+"buscar actualización", solo que aquí es automática y no hace falta pulsar nada. Pasados los 2 segundos
+se retira sola y se ve la app de siempre debajo. Es solo informativo: si detecta una versión más nueva,
+la recarga real la sigue haciendo el aviso de auto-actualización de siempre (sin cambios ahí).
+
+## Verificación
+- **build**: `npm run build` compila sin errores (`build ok — app v4.00`), `node --check` sobre el
+  JS compilado pasa.
+- **Chromium (viewport iPhone)**: splash visible desde el primer frame con el icono, "v4.00" y
+  "Estás en la última versión", y desaparece a los 2 segundos exactos, sin errores de consola.
+- **Aportaciones**: registrado un movimiento con comisión, edición en vivo de importe, comisión,
+  bróker, fecha y del tipo (Aportación ↔ Retiro, invierte el signo del importe correctamente) —
+  totales y lista se actualizan solos tras cada cambio.
+
 Bloques v3.99 — FIX: no se podía añadir Cash al Bloque 0
 
 ## El síntoma

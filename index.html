@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "3.99"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.00"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2202,6 +2202,37 @@ function ScanOverlay({ open, step, sub, steps }) {
     </div>
   );
 }
+/* ---------- v4.00: splash de arranque — logo + versión durante 2s fijos, sobre fondo difuminado ----------
+   Solo informa: comprueba en paralelo si hay una versión más nueva en el servidor (mismo fetch con
+   _cachebust que usa el auto-update) y lo dice, pero la recarga real a esa versión nueva la sigue
+   haciendo el script de auto-actualización del final del body — este splash no toca esa lógica. */
+function SplashScreen() {
+  const [visible, setVisible] = useState(true);
+  const [msg, setMsg] = useState("Comprobando actualización…");
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(false), 2000);
+    fetch(location.pathname + "?_cachebust=" + Date.now(), { cache: "no-store" })
+      .then((r) => r.text())
+      .then((html) => {
+        const m = html.match(/const APP_VERSION = "([^"]+)"/);
+        setMsg(m && m[1] !== APP_VERSION ? "Hay una versión nueva — actualizando…" : "Estás en la última versión");
+      })
+      .catch(() => setMsg("Sin conexión — no se pudo comprobar"));
+    return () => clearTimeout(t);
+  }, []);
+  if (!visible) return null;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 200,
+      background: DARK ? "rgba(10,10,10,0.82)" : "rgba(238,233,224,0.82)",
+      backdropFilter: "blur(24px) saturate(180%)", WebkitBackdropFilter: "blur(24px) saturate(180%)",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+      <img src="./icon-512.png" alt="" width={96} height={96} style={{ borderRadius: 22, boxShadow: T.shadow }} />
+      <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, marginTop: 4 }}>Portfolio + Comparador</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>v{APP_VERSION}</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>{msg}</div>
+    </div>
+  );
+}
 /* ---------- v1.47: mayores movers del día ----------
    Debajo de la distribución, en la pestaña Resumen. Δ P&L de la posición desde el cierre del último
    día con snapshot, y Δ% del subyacente al lado cuando ese snapshot guardó la cotización. Barras
@@ -3113,6 +3144,7 @@ function AportacionesCard({ flows, setFlows, brokers, accounts }) {
   const [brk, setBrk] = useState(brokers[0] || "");
   const [note, setNote] = useState("");
   const [warn, setWarn] = useState(false); /* v3.32: aviso post-aportación si el bróker tiene cash negativo */
+  const [editSet, setEditSet] = useState(() => new Set()); /* v4.00: movimientos ya registrados que se pueden editar (importe, comisión, etc.) */
   useEffect(() => { if (!brokers.includes(brk)) setBrk(brokers[0] || ""); }, [brokers]);
   const brkCash = (b) => n(((accounts || {})[b] || {}).cash); /* cash manual del bróker (negOnly → negativo = margen) */
   const negCashBrk = brkCash(brk) < 0;
@@ -3125,6 +3157,8 @@ function AportacionesCard({ flows, setFlows, brokers, accounts }) {
     setAmount(""); setNote(""); setFee("");
   };
   const del = (id) => setFlows((fs) => fs.filter((f) => f.id !== id));
+  const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
+  const setFlow = (id, k) => (v) => setFlows((fs) => fs.map((f) => (f.id === id ? { ...f, [k]: v } : f)));
   const sorted = [...flows].sort((a, b) => (a.date < b.date ? 1 : -1));
   const totalIn = flows.reduce((s, f) => s + Math.max(0, n(f.amount)), 0);
   const totalOut = flows.reduce((s, f) => s + Math.min(0, n(f.amount)), 0);
@@ -3189,18 +3223,48 @@ function AportacionesCard({ flows, setFlows, brokers, accounts }) {
       </div>
 
       {sorted.length === 0 && <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, padding: "4px 0" }}>Sin movimientos. Registra cada aportación o retirada —de efectivo o por traspaso de acciones (a valor de mercado)— con su fecha: el Rendimiento las descuenta para que la rentabilidad no se distorsione.</div>}
-      {sorted.map((f) => (
-        <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${T.line}`, padding: "9px 0" }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{new Date(f.date + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</div>
-            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.via === "Acciones" ? "🔄 Acciones · " : ""}{f.broker}{n(f.fee) > 0 ? " · com. $" + money2(n(f.fee)) : ""}{f.note ? " · " + f.note : ""}</div>
+      {sorted.map((f) => {
+        const editing = editSet.has(f.id);
+        const fKind = n(f.amount) < 0 ? "Retiro" : "Aportación";
+        const absStr = String(f.amount == null ? "" : f.amount).replace(/^-/, ""); /* texto tal cual se escribió, sin redondear por Number() — así no se pierde el "." al teclear decimales */
+        return (
+        <div key={f.id} style={{ borderTop: `1px solid ${T.line}`, padding: "9px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{new Date(f.date + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}</div>
+              <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.via === "Acciones" ? "🔄 Acciones · " : ""}{f.broker}{n(f.fee) > 0 ? " · com. $" + money2(n(f.fee)) : ""}{f.note ? " · " + f.note : ""}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 800, color: n(f.amount) >= 0 ? T.green : T.red }}>{signMoney(f.amount)}</span>
+              <button onClick={() => toggleEdit(f.id)} style={{ background: editing ? T.dark : "transparent", border: "none", borderRadius: 8, color: editing ? "#fff" : T.sub, cursor: "pointer", padding: "4px 5px", display: "flex", alignItems: "center" }}><ActIcon name="edit" size={14} /></button>
+              <button onClick={() => del(f.id)} style={{ background: "transparent", border: "none", color: T.red, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "2px 4px" }}>✕</button>
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            <span style={{ fontSize: 14.5, fontWeight: 800, color: n(f.amount) >= 0 ? T.green : T.red }}>{signMoney(f.amount)}</span>
-            <button onClick={() => del(f.id)} style={{ background: "transparent", border: "none", color: T.red, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "2px 4px" }}>✕</button>
-          </div>
+          {editing && (
+            <div style={{ background: T.tile, borderRadius: 14, padding: 12, marginTop: 8 }}>
+              <div style={{ marginBottom: 8 }}>
+                <Pill options={["Aportación", "Retiro"]} value={fKind} onChange={(k) => setFlow(f.id, "amount")((k === "Retiro" ? "-" : "") + absStr)} size="xs" />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <Pill options={["Efectivo", "Acciones"]} value={f.via || "Efectivo"} onChange={setFlow(f.id, "via")} size="xs" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input type="date" value={f.date} onChange={(e) => setFlow(f.id, "date")(e.target.value)} style={inputStyle} />
+                <input type="number" inputMode="decimal" value={absStr} onChange={(e) => setFlow(f.id, "amount")((fKind === "Retiro" ? "-" : "") + e.target.value)} placeholder={f.via === "Acciones" ? "Valor mercado USD" : "Importe USD"} style={inputStyle} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <select value={f.broker} onChange={(e) => setFlow(f.id, "broker")(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
+                  {brokers.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <input type="number" inputMode="decimal" value={f.fee || ""} onChange={(e) => setFlow(f.id, "fee")(e.target.value)} placeholder="Comisión USD (opc.)" style={inputStyle} />
+              </div>
+              <input type="text" value={f.note || ""} onChange={(e) => setFlow(f.id, "note")(e.target.value)} placeholder="Nota (opcional)" style={inputStyle} />
+              <button onClick={() => toggleEdit(f.id)} style={{ width: "100%", marginTop: 10, background: T.dark, border: "none", borderRadius: 12, padding: "9px 0", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer" }}>Hecho</button>
+            </div>
+          )}
         </div>
-      ))}
+        );
+      })}
 
       <div style={{ fontSize: 11, color: T.sub, lineHeight: 1.5, marginTop: 12 }}>Solo registro para el cálculo de rendimiento: no modifica el cash ni las posiciones de la cuenta. Cuando aportas o retiras de verdad, refléjalo en la cuenta: si el bróker estaba en <b>cash negativo</b> (margen), una aportación primero lo reduce o lo cancela; el resto es liquidez que sumas como <b>cash de B0</b> (y una retirada baja B0 o agranda el cash negativo). Por eso, tras registrar un movimiento sobre un bróker con cash negativo, salta el aviso de revisar esos dos saldos. La <b>comisión de bróker</b> se guarda aparte y el rendimiento (TWR) la descuenta del flujo — un depósito con comisión cuenta como capital neto entrante (importe − comisión). Un traspaso de acciones se registra a su valor de mercado en la fecha del traspaso, igual que una aportación de cash, para que el salto de NLV no cuente como rentabilidad. Puedes añadir movimientos con fecha pasada; el TWR se recalcula al momento.</div>
     </div>
@@ -10689,6 +10753,7 @@ function App() {
 
   return (
     <>
+    <SplashScreen />
     {/* CONTENEDOR DE SCROLL: la app scrollea DENTRO de este div (height fija = viewport), no en el body.
        Así el rebote de iOS al llegar arriba/abajo ocurre dentro del contenedor y NO arrastra el menú
        inferior, que vive fuera de este scroll (fijo al viewport). Es la única forma fiable en iOS de que
