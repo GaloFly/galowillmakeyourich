@@ -72,10 +72,17 @@ page = page.replace("</body>",
   'if ("serviceWorker" in navigator) { navigator.serviceWorker.register("./sw.js").catch(function () {}); }\n' +
   "</script>\n</body>");
 
-/* ---- 3. service worker: red primero, caché como respaldo ----
+/* ---- 3. service worker: red primero (SIN caché HTTP), caché propia como respaldo ----
  * Con red se comporta como hoy (siempre lo último, y el auto-update sigue funcionando);
  * sin red sirve la última copia buena. Solo cachea los archivos de la propia app — las
- * peticiones con ?_cachebust del auto-update pasan de largo sin ensuciar la caché. */
+ * peticiones con ?_cachebust del auto-update pasan de largo sin ensuciar la caché.
+ *
+ * v4.05 — cache:"no-cache" en TODOS los fetch del SW. Sin esto, fetch(req) podía responder
+ * desde la caché HTTP del navegador (GitHub Pages manda max-age=600): tras actualizar, cada
+ * apertura volvía a arrancar con el index.html VIEJO guardado para "./" (la actualización
+ * navega a una URL con parámetros, así que la entrada "./" nunca se renovaba) y la app
+ * re-ofrecía la misma versión una y otra vez. no-cache revalida contra el servidor (304 si
+ * no cambió: barato) y solo cae a la caché propia del SW cuando de verdad no hay red. */
 const iconCandidates = ["icon-512.png", "favicon.png", "apple-touch-icon.png", "apple-touch-icon-precomposed.png"];
 const icons = [];
 for (const f of iconCandidates) { try { await access(f); icons.push(f); } catch (e) {} }
@@ -88,7 +95,9 @@ const CACHE = "bloques-${version}";
 const ASSETS = ${JSON.stringify(ASSETS)};
 const PATHS = new Set(ASSETS.map((a) => new URL(a, self.location).pathname));
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(ASSETS.map((a) => new Request(a, { cache: "no-cache" }))))
+    .then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys()
@@ -99,8 +108,12 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || !req.url.startsWith(self.location.origin)) return;
   const clean = new URL(req.url); clean.search = "";
+  /* mode:"navigate" no se puede re-construir con init — para el documento se pide por URL */
+  const fresh = req.mode === "navigate"
+    ? fetch(clean.href, { cache: "no-cache" })
+    : fetch(req, { cache: "no-cache" });
   e.respondWith(
-    fetch(req).then((res) => {
+    fresh.then((res) => {
       if (res && res.ok && PATHS.has(clean.pathname)) {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(clean.href, copy));
