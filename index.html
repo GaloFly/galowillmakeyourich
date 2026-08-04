@@ -165,7 +165,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.28"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.29"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2213,7 +2213,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
             desplegado (B0 = liquidez), no riesgo plausible ni % NLV */}
         {dist.length > 0 && (
           <div style={{ display: "grid", gap: 7 }}>
-            <div style={{ fontSize: 8.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: -3 }}>Reparto del capital desplegado · B0 = liquidez</div>
+            <div style={{ fontSize: 8.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: -3 }}>Reparto del capital desplegado</div>
             <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", gap: 2 }}>
               {dist.map((d) => <span key={d.id} style={{ width: Math.max(d.p * 100, 1.2) + "%", background: d.color }} />)}
             </div>
