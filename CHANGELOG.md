@@ -1,5 +1,17 @@
 # CHANGELOG — Bloques
 
+Bloques v4.24 — Ajustes, acabado limpio: filas claras como las tarjetas de posiciones
+
+La v4.23 usaba el tile beige para las filas de Ajustes y, comparado con el Setup de la app de
+vuelos de Victor, quedaba menos profesional. Ahora las filas usan el FONDO DE TARJETA (claro)
+con filete, la sombra de sub-tarjeta y más aire (radio 16, padding 14, separación 10px) — el
+mismo acabado exacto que las tarjetas de posiciones y Exposición. Una sola familia de
+superficies en toda la app.
+
+## Verificación
+- Chromium (viewport iPhone): Ajustes con filas claras y elevadas, claro y noche, sin errores.
+- `npm run build` ok (`app v4.24`), `node --check` pasa.
+
 Bloques v4.23 — Ajustes con relieve: cada fila es su propia tarjetita
 
 Petición de Victor con captura del Setup de su app de vuelos: el menú de Ajustes pasa de
