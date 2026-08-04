@@ -1,5 +1,16 @@
 # CHANGELOG — Bloques
 
+Bloques v4.18 — El banner de covered call, de vuelta al original
+
+La línea "discreta" de la v4.17 no era lo que Victor pedía: quería el banner ORIGINAL (captura
+en mano) — tile violeta con banda de 3px y "COVERED" en versalitas + detalle de la call en la
+misma línea. Restaurado tal cual estaba antes del rediseño. El resto de la v4.17 (posiciones
+con el formato de Exposición) se queda.
+
+## Verificación
+- `npm run build` ok (`app v4.18`), `node --check` pasa; verificado en Chromium con posición
+  cubierta: banner violeta original de una línea, sin errores de consola.
+
 Bloques v4.17 — Covered discreto + posiciones con el formato de Exposición
 
 Dos peticiones de Victor al ver la v4.16 en vivo:
