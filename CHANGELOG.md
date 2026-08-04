@@ -1,5 +1,18 @@
 # CHANGELOG — Bloques
 
+Bloques v4.28 — La barra de bloques del hero, rotulada
+
+Victor leyó los % de la barra apilada del hero como "riesgo plausible" y el B0 no le cuadraba
+(la liquidez no arriesga). Con razón: la barra reparte el CAPITAL DESPLEGADO — cuánto de lo
+que hay en juego vive en cada bloque (B0 = liquidez, B1 = valor de acciones, B2/B3 = capital
+comprometido en opciones), como cuota de la suma. Es el mismo reparto que el donut del
+Resumen. No es % NLV (con apalancamiento sumaría >100 y la apilada mentiría) ni plausible
+(B0 sería siempre 0). Ahora un micro-rótulo sobre la barra lo dice: "Reparto del capital
+desplegado · B0 = liquidez".
+
+## Verificación
+- `npm run build` ok (`app v4.28`), `node --check` pasa; hero revisado en Chromium.
+
 Bloques v4.27 — El cuadro de fecha del editor, a tamaño
 
 El campo "Fecha de entrada" del editor de posición ocupaba el ancho entero y con más altura
