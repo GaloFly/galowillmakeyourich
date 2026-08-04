@@ -1,6 +1,6 @@
 {
   "name": "bloques",
-  "version": "4.0.6",
+  "version": "4.0.7",
   "private": true,
   "description": "Bloques — Portfolio + Comparador. El fuente es index.html; `npm run build` lo compila en dist/.",
   "type": "module",

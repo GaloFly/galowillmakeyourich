@@ -1,5 +1,33 @@
 # CHANGELOG — Bloques
 
+Bloques v4.07 — FIX: el zoom fantasma de iOS que "desformateaba" el menú de Ajustes
+
+## El síntoma (captura, 08:24)
+Tras pegar la key de Alpha Vantage, TODA la app quedaba ampliada y desbordada por la derecha:
+etiquetas cortadas ("Cambia…", "Activa…"), el menú inferior recortado, el título fuera de sitio.
+
+## La causa
+No era el formato del menú: era **zoom residual de iOS**. Al tocar un campo de texto con letra
+menor de 16px, iOS amplía la pantalla automáticamente "para ayudar a escribir" — y en apps
+guardadas en pantalla de inicio esa ampliación SE QUEDA PEGADA al cerrar el teclado. El
+`maximum-scale=1` del viewport (que ya estaba) no lo impide en modo standalone: iOS lo ignora.
+Podía pasar desde siempre con cualquier campo de la app (los de las keys tienen letra de 14px);
+tocó justo ahora al estrenar el modal de Alpha Vantage.
+
+## El arreglo
+Regla CSS solo para iOS/WebKit (`@supports (-webkit-touch-callout: none)`): **todos los campos
+de texto, número, fecha y selectores pasan a 16px** — el umbral a partir del cual iOS no amplía
+nunca. En ordenador no cambia nada (la regla no aplica fuera de WebKit táctil).
+
+## Si el zoom ya está pegado en tu pantalla
+Una vez: cierra la app del todo (desliza hacia fuera en el selector de apps) y ábrela de nuevo.
+El zoom residual se borra con el arranque; con la v4.07 ya no vuelve a aparecer.
+
+## Verificación
+- `npm run build` ok (`app v4.07`), `node --check` pasa.
+- Chromium (viewport iPhone): la app pinta igual que antes (la regla es solo-WebKit) y los
+  modales de keys abren y guardan sin errores de consola.
+
 Bloques v4.06 — Aviso de ex-dividend en la hoja de Rolar (vía Alpha Vantage)
 
 ## Qué hace

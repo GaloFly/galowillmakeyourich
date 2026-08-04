@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.06"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.07"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -10847,6 +10847,14 @@ function App() {
         input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
         input[type=number]{-moz-appearance:textfield;}
         input[type=date]::-webkit-date-and-time-value{text-align:left;}
+        /* v4.07: iOS hace ZOOM automático al tocar un input con letra <16px, y en apps de pantalla de
+           inicio ese zoom SE QUEDA PEGADO (todo el layout desbordado a la derecha — captura de Victor
+           tras pegar la key de Alpha Vantage). El maximum-scale=1 del <meta viewport> no basta: iOS lo
+           ignora en modo standalone. Con 16px en todos los campos, iOS no amplía nunca. Solo WebKit/iOS
+           (@supports de -webkit-touch-callout): en desktop los campos conservan su tamaño de diseño. */
+        @supports (-webkit-touch-callout: none) {
+          input, select, textarea { font-size: 16px !important; }
+        }
         .no-scrollbar{scrollbar-width:none;-ms-overflow-style:none;}
         .no-scrollbar::-webkit-scrollbar{display:none;width:0;height:0;}
         button{-webkit-appearance:none;appearance:none;}
