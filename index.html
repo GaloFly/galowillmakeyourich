@@ -162,7 +162,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.19"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.20"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -11196,8 +11196,10 @@ function App() {
           accOpen={accOpen} setAccOpen={setAccOpen} onOpenInfo={setInfo}
           snapshots={snapshots} blockDist={blockDist} />
 
-        {/* TABS: BLOQUES + EXPOSICIÓN */}
-        <div ref={tabsRowRef} className="no-scrollbar" style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" }}>
+        {/* TABS: BLOQUES + EXPOSICIÓN. v4.20: la fila deslizable RECORTABA la sombra de las pestañas
+           en seco (overflow) y se veía una línea recta bajo ellas — padding interior para que la
+           sombra muera suave dentro, y márgenes negativos para que la posición visual no cambie */}
+        <div ref={tabsRowRef} className="no-scrollbar" style={{ display: "flex", gap: 6, overflowX: "auto", padding: "10px 4px 26px", margin: "-10px -4px -12px" }}>
           {TABS.map((t) => (
             <button key={t.id} data-tabid={String(t.id)} onClick={() => selectTab(t.id)} style={{
               flex: "1 0 auto", border: "none", cursor: "pointer", borderRadius: 14, padding: "10px 12px", fontSize: 12.5, fontWeight: 800,
