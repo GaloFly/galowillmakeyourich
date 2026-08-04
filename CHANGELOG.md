@@ -1,5 +1,19 @@
 # CHANGELOG — Bloques
 
+Bloques v4.26 — Signo negativo en el precio de cierre de opciones
+
+Al cerrar un spread (double diagonal, vertical…) el neto puede ser NEGATIVO, pero el teclado
+decimal de iOS no tiene tecla "−" y el campo no dejaba ponerlo (captura de Victor cerrando su
+DD de QQQ). El campo "Precio recompra $/acc" de la hoja de cierre gana el botón +/− que ya
+usan otros campos con signo (el mecanismo `signed` de WizInput) — solo para opciones; el
+precio de venta de acciones sigue igual. El resultado estimado y el guardado ya trataban bien
+los negativos (todo pasa por `n()`).
+
+## Verificación
+- Chromium (viewport iPhone): hoja de cierre de una opción con el botón +/− funcionando —
+  alterna el signo y el resultado estimado cambia en consecuencia. Sin errores de consola.
+- `npm run build` ok (`app v4.26`), `node --check` pasa.
+
 Bloques v4.25 — Ajustes: filas más juntitas
 
 Ajuste fino sobre la v4.24 a petición de Victor: las filas de Ajustes se compactan — padding

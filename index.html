@@ -165,7 +165,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.25"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.26"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4972,7 +4972,9 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 {opt && closeExpira && (
                   <div style={{ gridColumn: "span 2", background: T.tileAmber, borderRadius: 12, padding: "10px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>Cierre a $0 sin comisión — la opción expira sin valor.</div>
                 )}
-                {!pmcc && !closeExercised && !closeExpira && <WizInput label={isCreditSpread(p) ? "Close price $/acc" : (opt ? "Precio recompra $/acc" : "Precio venta $/acc")} value={closePriceV} onChange={setClosePriceV} placeholder={opt ? "0 si expira sin valor" : "$"} inputMode="decimal" />}
+                {/* v4.26: signed en el precio de cierre de OPCIONES — al cerrar spreads (DD, verticales)
+                    el neto puede ser negativo y el teclado decimal de iOS no tiene tecla "−" */}
+                {!pmcc && !closeExercised && !closeExpira && <WizInput label={isCreditSpread(p) ? "Close price $/acc" : (opt ? "Precio recompra $/acc" : "Precio venta $/acc")} value={closePriceV} onChange={setClosePriceV} placeholder={opt ? "0 si expira sin valor" : "$"} inputMode="decimal" signed={opt} />}
                 {!pmcc && !closeExpira && <WizInput label={closeExercised ? "Comisión asignación" : "Comisión de cierre"} value={closeComisionV} onChange={setCloseComisionV} placeholder="$" inputMode="decimal" />}
                 {pmcc && (
                   <>
