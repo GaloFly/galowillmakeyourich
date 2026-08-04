@@ -45,7 +45,11 @@ const compiled = await transformAsync(jsx, {
 if (/<\/script/i.test(compiled.code)) throw new Error("el JS compilado contiene </script>");
 
 /* ---- 2. reescribir la página alrededor ---- */
-let page = html.slice(0, start) + '<script src="./app.js"></script>' + html.slice(end + "</script>".length);
+/* app.js se referencia con su hash (?v=…): GitHub Pages cachea hasta 10 min, y sin esto un index.html
+ * recién desplegado podía cargar el app.js VIEJO de la caché — la app seguía corriendo la versión
+ * anterior aunque el HTML ya fuera el nuevo, y la actualización parecía no aplicarse nunca. */
+const jsHash = createHash("sha256").update(compiled.code).digest("hex").slice(0, 10);
+let page = html.slice(0, start) + '<script src="./app.js?v=' + jsHash + '"></script>' + html.slice(end + "</script>".length);
 
 page = page
   .replace(/<script src="https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/react\/[^"]*"[^>]*><\/script>/,
