@@ -1,5 +1,15 @@
 # CHANGELOG — Bloques
 
+Bloques v4.21 — FIX: la misma línea recta, ahora bajo los botones de broker
+
+El selector de brokers (Todos · IBKR · DEGIRO) es otra fila deslizable y recortaba la sombra
+de sus chips igual que las pestañas de bloques en la v4.20. Mismo arreglo: padding interior
+para que la sombra muera suave + márgenes negativos para no mover nada.
+
+## Verificación
+- Chromium (viewport iPhone): chips de broker con sombra degradada, sin filo recto.
+- `npm run build` ok (`app v4.21`), `node --check` pasa.
+
 Bloques v4.20 — FIX: la línea recta bajo las pestañas de bloques
 
 Con el relieve de la v4.12, la fila deslizable de pestañas (Resumen · B0 · B1…) RECORTABA la
