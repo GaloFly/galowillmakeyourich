@@ -1,5 +1,14 @@
 # CHANGELOG — Bloques
 
+Bloques v4.25 — Ajustes: filas más juntitas
+
+Ajuste fino sobre la v4.24 a petición de Victor: las filas de Ajustes se compactan — padding
+vertical de 14 a 11px y separación entre filas de 10 a 6px — para el ritmo apretado del Setup
+de su app de vuelos.
+
+## Verificación
+- `npm run build` ok (`app v4.25`), `node --check` pasa; revisado en Chromium, sin errores.
+
 Bloques v4.24 — Ajustes, acabado limpio: filas claras como las tarjetas de posiciones
 
 La v4.23 usaba el tile beige para las filas de Ajustes y, comparado con el Setup de la app de
