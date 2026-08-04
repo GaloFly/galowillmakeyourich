@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.02"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.03"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2202,24 +2202,35 @@ function ScanOverlay({ open, step, sub, steps }) {
     </div>
   );
 }
-/* ---------- v4.00: splash de arranque — logo + versión durante 2s fijos, sobre fondo difuminado ----------
-   Solo informa: comprueba en paralelo si hay una versión más nueva en el servidor (mismo fetch con
-   _cachebust que usa el auto-update) y lo dice, pero la recarga real a esa versión nueva la sigue
-   haciendo el script de auto-actualización del final del body — este splash no toca esa lógica. */
+/* ---------- v4.00: splash de arranque — logo + versión durante 2s, sobre la app difuminada ----------
+   v4.03: si hay versión nueva, el splash YA NO se limita a avisar mientras otro script recarga solo
+   (eso dejaba la pantalla clavada en "actualizando…" cuando la caché seguía sirviendo la versión
+   vieja): ahora se queda abierto y OFRECE actualizar con un botón, o seguir con la actual. La
+   recarga solo ocurre si el usuario la pide. */
 function SplashScreen() {
   const [visible, setVisible] = useState(true);
+  const [newVer, setNewVer] = useState(null); /* versión más nueva detectada en el servidor */
   const [msg, setMsg] = useState("Comprobando actualización…");
   useEffect(() => {
-    const t = setTimeout(() => setVisible(false), 2000);
+    let found = false;
+    const t = setTimeout(() => { if (!found) setVisible(false); }, 2000);
     fetch(location.pathname + "?_cachebust=" + Date.now(), { cache: "no-store" })
       .then((r) => r.text())
       .then((html) => {
         const m = html.match(/const APP_VERSION = "([^"]+)"/);
-        setMsg(m && m[1] !== APP_VERSION ? "Hay una versión nueva — actualizando…" : "Estás en la última versión");
+        if (m && m[1] !== APP_VERSION) { found = true; setNewVer(m[1]); setMsg("Hay una versión nueva disponible"); setVisible(true); }
+        else setMsg("Estás en la última versión");
       })
       .catch(() => setMsg("Sin conexión — no se pudo comprobar"));
     return () => clearTimeout(t);
   }, []);
+  const applyUpdate = () => {
+    setMsg("Descargando v" + newVer + "…");
+    const url = new URL(location.href);
+    url.searchParams.set("v", newVer);
+    url.searchParams.set("_", Date.now());
+    location.replace(url.toString());
+  };
   if (!visible) return null;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 200,
@@ -2230,6 +2241,12 @@ function SplashScreen() {
       <img src="./icon-512.png" alt="" width={96} height={96} style={{ borderRadius: 22, boxShadow: T.shadow }} />
       <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 4 }}>v{APP_VERSION}</div>
       <div style={{ fontSize: 12, fontWeight: 700, color: T.ink }}>{msg}</div>
+      {newVer && (
+        <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+          <button onClick={applyUpdate} style={{ background: T.green, border: "none", borderRadius: 14, padding: "11px 18px", fontSize: 13.5, fontWeight: 800, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Actualizar a v{newVer}</button>
+          <button onClick={() => setVisible(false)} style={{ background: T.card, border: "none", borderRadius: 14, padding: "11px 18px", fontSize: 13.5, fontWeight: 700, color: T.ink, cursor: "pointer", boxShadow: T.shadow }}>Ahora no</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -12228,30 +12245,12 @@ class RescueBoundary extends React.Component {
 ReactDOM.createRoot(document.getElementById('root')).render(<RescueBoundary><App /></RescueBoundary>);
 </script>
 <script>
-/* ---------- auto-actualización: hosting estático (GitHub Pages/Netlify/Vercel) y apps guardadas en pantalla de
-   inicio pueden servir una copia cacheada y no recargar solos tras un deploy. Este script, en cada apertura,
-   pide de red (sin caché) el propio index.html, compara su APP_VERSION con la que está corriendo, y si hay una
-   más nueva en el servidor, fuerza una recarga con un parámetro que rompe cualquier caché. ---------- */
-(function () {
-  function checkForUpdate() {
-    try {
-      fetch(location.pathname + "?_cachebust=" + Date.now(), { cache: "no-store" })
-        .then(function (r) { return r.text(); })
-        .then(function (html) {
-          var m = html.match(/const APP_VERSION = "([^"]+)"/);
-          if (m && window.APP_VERSION && m[1] !== window.APP_VERSION) {
-            var url = new URL(location.href);
-            url.searchParams.set("v", m[1]);
-            url.searchParams.set("_", Date.now());
-            location.replace(url.toString());
-          }
-        })
-        .catch(function () {});
-    } catch (e) {}
-  }
-  if (document.readyState === "complete") checkForUpdate();
-  else window.addEventListener("load", checkForUpdate);
-})();
+/* ---------- auto-actualización (v4.03): la detección y la oferta de actualizar viven ahora en el
+   SplashScreen del arranque, que pregunta al usuario en vez de recargar solo — la recarga automática
+   de antes se quedaba en bucle ("actualizando…") cuando la caché del hosting seguía sirviendo la
+   versión vieja unos minutos tras el deploy. Este bloque queda solo como documentación del marcador:
+   el buscador de versiones (splash y botón de Ajustes) pide este index.html por red y busca en él el
+   texto `const APP_VERSION = "x"` — el build inyecta ese marcador en el <head> del HTML compilado. ---------- */
 </script>
 </body>
 </html>

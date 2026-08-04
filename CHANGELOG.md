@@ -1,5 +1,38 @@
 # CHANGELOG — Bloques
 
+Bloques v4.03 — FIX: la app se quedaba clavada en "actualizando…" · ahora pregunta antes de actualizar
+
+## El síntoma
+Al abrir la app tras publicarse una versión nueva, el splash se quedaba fijo con "Hay una
+versión nueva — actualizando…" y de ahí no pasaba (captura del iPhone a las 07:52).
+
+## La causa (dos mitades)
+1. **GitHub Pages cachea los archivos hasta 10 minutos.** El detector de versiones pide el
+   index.html por red saltándose la caché (con `?_cachebust`), así que VEÍA la versión nueva…
+   pero al recargar la página, el `app.js` (donde vive el código de verdad desde el pipeline
+   v4.00) volvía a salir de la caché con la versión VIEJA. Resultado: detecta nueva → recarga
+   → sigue corriendo la vieja → detecta nueva → recarga… bucle hasta que la caché caducara.
+2. El script de auto-actualización recargaba SOLO, sin preguntar — por eso el bucle se veía
+   como una pantalla clavada en vez de como un aviso.
+
+## El arreglo (dos mitades, como la causa)
+1. **`build.mjs` referencia app.js con su hash** (`app.js?v=abc123…`): cada index.html nuevo
+   exige exactamente su app.js, la caché no puede colar el viejo. La actualización aplica a la
+   primera.
+2. **Ahora la actualización se OFRECE, no se impone** (como pediste): si el splash detecta
+   versión nueva, se queda abierto con dos botones — "Actualizar a vX.XX" (la descarga y
+   recarga) y "Ahora no" (sigues con la actual y te lo volverá a ofrecer en la próxima
+   apertura). La recarga automática del final del body se retira; el botón manual "buscar
+   actualización" de Ajustes sigue igual.
+
+## Verificación
+- `npm run build` → `build ok — app v4.03`; `node --check` pasa; `dist/index.html` referencia
+  `app.js?v=<hash>` y conserva el marcador APP_VERSION.
+- Chromium (viewport iPhone), simulando un servidor con versión más nueva: el splash se queda
+  abierto ofreciendo "Actualizar a v9.99" / "Ahora no"; "Ahora no" cierra y deja la app usable;
+  "Actualizar" navega con parámetros anticaché. Sin versión nueva: "Estás en la última versión"
+  y el splash se retira solo a los 2 s. Sin errores de consola en ningún caso.
+
 Bloques v4.02 — Splash aún más traslúcido: la app se ve casi nítida detrás
 
 Tercer ajuste fino del splash: el velo baja de 35% a 15% de opacidad y el difuminado de
