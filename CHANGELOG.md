@@ -1,5 +1,17 @@
 # CHANGELOG — Bloques
 
+Bloques v4.23 — Ajustes con relieve: cada fila es su propia tarjetita
+
+Petición de Victor con captura del Setup de su app de vuelos: el menú de Ajustes pasa de
+filas planas separadas por filetes a TARJETITAS elevadas — tile con borde hairline, sombra
+mínima y aire de 8px entre filas, dentro de cada tarjeta de sección como hasta ahora. Aplica
+a todas las secciones (General, Datos, API keys y Zona de riesgo) porque es el componente
+compartido SettingsRow.
+
+## Verificación
+- Chromium (viewport iPhone): Ajustes con las filas en tarjetita, claro y noche, sin errores.
+- `npm run build` ok (`app v4.23`), `node --check` pasa.
+
 Bloques v4.22 — Relieve para los selectores y las filas de totales (Movimientos)
 
 Petición de Victor con capturas de Movimientos: relieve también para estos botones y tiles.
