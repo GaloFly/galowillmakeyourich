@@ -162,7 +162,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.20"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.21"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -11083,7 +11083,9 @@ function App() {
            Chips sueltos al estilo del resto del rediseño (como el selector de Distribución y las pestañas de
            bloques): fondo claro, activo en tinta oscura — fuera la barra negra maciza de antes. */}
         {view !== "movimientos" && view !== "ajustes" && view !== "vencimientos" && (
-        <div className="no-scrollbar" style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto" }}>
+        /* v4.21: mismo arreglo que las pestañas de bloques (v4.20) — el scroll recortaba la sombra
+           en seco y dejaba una línea recta; padding interior + márgenes negativos equivalentes */
+        <div className="no-scrollbar" style={{ display: "flex", gap: 8, overflowX: "auto", padding: "10px 4px 26px", margin: "-10px -4px -10px" }}>
           {(brokers.length > 1 ? ["Todos", ...brokers] : brokers).map((b) => (
             <button key={b} onClick={() => setBroker(b)} style={{
               flex: "1 0 auto", border: "none", cursor: "pointer", borderRadius: 20, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, whiteSpace: "nowrap",
