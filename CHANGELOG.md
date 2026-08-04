@@ -1,5 +1,25 @@
 # CHANGELOG — Bloques
 
+Bloques v4.14 — Las filas de las listas, en relieve ELEVADO con banda de color (como un roster)
+
+Victor, con captura de su app de vuelos: las duty cards elevadas con banda de color al borde
+quedan mejor que el hundido de la v4.13 para las listas. Cierto — y deja una regla clara:
+**lo interactivo se ELEVA (invita a tocar), lo estático se HUNDE (informa)**.
+
+- **Posiciones de cada bloque**: tarjeta elevada (sombra propia de sub-tarjeta, más suave que la
+  de tarjeta grande) con banda de 4px a la izquierda del COLOR DE SU BLOQUE.
+- **Exposición por subyacente**: elevadas; su banda izquierda es el SEMÁFORO DE CONCENTRACIÓN
+  (verde ≤12% NLV · ámbar ≤20% · rojo por encima) — el punto de color de siempre, ahora visible
+  de refilón sin mirar.
+- **Filas de bloque del Resumen**: elevadas con banda del color del bloque.
+- Los tiles de métricas del hero y la fila de ratios SIGUEN hundidos: son lectura, no botón.
+- En modo noche la sub-tarjeta lleva su bisel de luz arriba, como las tarjetas grandes.
+
+## Verificación
+- Chromium (viewport iPhone), claro y oscuro: posiciones, Exposición y Resumen con tarjetas
+  elevadas y su banda; swipe-eliminar intacto; sin errores de consola.
+- `npm run build` ok (`app v4.14`), `node --check` pasa.
+
 Bloques v4.13 — Relieve también en las listas: posiciones y Exposición
 
 Extensión del relieve de la v4.12 a las dos listas que seguían planas (capturas de Victor):
