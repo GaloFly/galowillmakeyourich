@@ -165,7 +165,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.23"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.24"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5171,9 +5171,9 @@ function ActIcon({ name, size, color }) {
 function SettingsRow({ icon, tint, iconColor, title, sub, right, onClick, danger, last, active }) {
   return (
     /* v4.23 (Victor, con captura del Setup de su app de vuelos): cada fila es su propia tarjetita
-       ELEVADA — tile con filete y sombra mínima, aire entre filas — en vez de filas planas con
-       filete separador */
-    <button onClick={onClick} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, background: active ? T.tileRed : T.tile, border: T.edge, borderRadius: 14, boxShadow: T.raiseSm, padding: "12px 12px", marginBottom: last ? 4 : 8, cursor: "pointer", textAlign: "left" }}>
+       ELEVADA. v4.24: acabado claro y limpio — fondo de TARJETA (no tile beige), como las tarjetas
+       de posiciones, con filete, sombra suave y más aire; el beige quedaba menos profesional. */
+    <button onClick={onClick} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, background: active ? T.tileRed : T.card, border: T.edge, borderRadius: 16, boxShadow: T.raise, padding: "14px 12px", marginBottom: last ? 4 : 10, cursor: "pointer", textAlign: "left" }}>
       <span style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 11, background: tint || T.tile, display: "flex", alignItems: "center", justifyContent: "center" }}><SetIcon name={icon} color={iconColor || T.ink} /></span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: danger ? T.red : T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
