@@ -165,7 +165,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.26"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.27"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4415,10 +4415,13 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </div>
             </div>
           )}
-          <div style={{ gridColumn: hideBroker ? "auto" : "span 2" }}>
+          {/* v4.27 (Victor: "el cuadro de fecha está mal — demasiado grande/ancho"): media columna y
+              altura 36, como los EditField de al lado; la celda derecha queda vacía igual que en la
+              fila de BLOQUE de arriba */}
+          <div style={{ gridColumn: "auto" }}>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Fecha de entrada</span>
             <input type="date" value={p.entryDate || ""} onChange={(e) => onChange("entryDate")(e.target.value)}
-              style={{ width: "100%", boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: p.entryDate ? T.ink : T.sub, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none" }} />
+              style={{ width: "100%", boxSizing: "border-box", height: 36, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: p.entryDate ? T.ink : T.sub, fontSize: 13, fontWeight: 700, padding: "0 8px", outline: "none", WebkitAppearance: "none", appearance: "none", display: "block", minWidth: 0, textAlign: "left" }} />
           </div>
           <SelectField label="Estrategia" value={p.tipo} options={Array.from(new Set([...(STRATS[p.block] || []), ...(p.tipo ? [p.tipo] : [])]))} span={2}
             onChange={(val) => { onChange("tipo")(val); const newNat = natFromStrat(val); onChange("nat")(newNat); if (newNat === "CASH") onChange("tkr")("CASH"); if (newNat === "CRED") onChange("right")(val.toLowerCase().includes("call") ? "C" : "P"); }} />
