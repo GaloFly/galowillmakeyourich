@@ -1,5 +1,15 @@
 # CHANGELOG — Bloques
 
+Bloques v4.19 — El banner de covered, mucho más delgado
+
+Mismo banner violeta de siempre (v4.18), pero en versión fina: padding vertical mínimo
+(2px), banda de 2px, tipografía un punto menor y el detalle de la call en una sola línea
+con recorte si no cabe. Ocupa la mitad de alto y sigue leyéndose igual.
+
+## Verificación
+- `npm run build` ok (`app v4.19`), `node --check` pasa; verificado en Chromium con posición
+  cubierta — banner de una línea fina, sin errores de consola.
+
 Bloques v4.18 — El banner de covered call, de vuelta al original
 
 La línea "discreta" de la v4.17 no era lo que Victor pedía: quería el banner ORIGINAL (captura
