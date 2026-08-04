@@ -35,7 +35,11 @@ const T_LIGHT = {
   tileGreen: "#E4F3E9", tileAmber: "#FaF0DC", tileRed: "#FBE7E4", tilePurple: "#ECE9F8",
   ink: "#26262B", sub: "#9E9CA2",
   green: "#1BA34C", purple: "#9384E6", gold: "#C39429", orange: "#E9863A", red: "#E0564D",
-  dark: "#1C2530", line: "#EAE3D8", shadow: "0 6px 20px rgba(120,105,85,0.10)",
+  dark: "#1C2530", line: "#EAE3D8",
+  /* v4.12 (relieve): dos capas — sombra de CONTACTO (1px, nítida) + AMBIENTE (32px, suave). */
+  shadow: "0 1px 2px rgba(93,82,62,0.10), 0 12px 32px rgba(120,105,85,0.16)",
+  /* v4.12: hueco "hundido" para tiles y filas dentro de tarjetas — sombra interior arriba + labio de luz abajo */
+  inset: "inset 0 1.5px 3px rgba(93,82,62,0.09), inset 0 -1px 0 rgba(255,255,255,0.7)",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
 /* paleta oscura (v4.11, "cabina nocturna"): negro azulado profundo con tarjetas elevadas, en vez de
@@ -45,7 +49,10 @@ const T_DARK = {
   tileGreen: "#122A1C", tileAmber: "#2A2210", tileRed: "#2C1614", tilePurple: "#1D1A2B",
   ink: "#F2F1F5", sub: "#97949E",
   green: "#3FBF7F", purple: "#A99AF0", gold: "#E5B33C", orange: "#F7931A", red: "#FF5D55",
-  dark: "#2C2D33", line: "#292A30", shadow: "0 8px 26px rgba(0,0,0,0.55)",
+  dark: "#2C2D33", line: "#292A30",
+  /* v4.12 (relieve): bisel de luz arriba (inset) + contacto + ambiente — las tarjetas se despegan del fondo */
+  shadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.45), 0 14px 36px rgba(0,0,0,0.6)",
+  inset: "inset 0 1.5px 3px rgba(0,0,0,0.45), inset 0 -1px 0 rgba(255,255,255,0.03)",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
 /* T, HEX, BLOCKS, TABS, PALETTE dependen todos del tema activo. Son "let" (no "const") y se reconstruyen
@@ -148,7 +155,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.11"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.12"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1815,7 +1822,7 @@ function Tile({ label, value, tone }) {
   };
   const t = map[tone] || map.default;
   return (
-    <div style={{ background: t.bg, borderRadius: 15, padding: "11px 8px", textAlign: "center", minWidth: 0 }}>
+    <div style={{ background: t.bg, borderRadius: 15, padding: "11px 8px", textAlign: "center", minWidth: 0, boxShadow: T.inset }}>
       <div style={{ fontSize: 16, fontWeight: 800, color: t.val, letterSpacing: -0.3 }}>{value}</div>
       <div style={{ fontSize: 10, color: T.sub, marginTop: 2, fontWeight: 500, lineHeight: 1.25 }}>{label}</div>
     </div>
@@ -2170,7 +2177,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
               </span>
               {dayChg && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 800, color: chgCol, background: dayChg.abs >= 0 ? T.tileGreen : T.tileRed, borderRadius: 8, padding: "4px 8px", fontVariantNumeric: "tabular-nums", marginBottom: 2 }}>
-                  {(dayChg.abs >= 0 ? "▲ +" : "▼ −") + sym + money(Math.abs(cv(dayChg.abs))) + " · " + signPct(dayChg.pct, 2).replace("+", "").replace("−", "") + " hoy"}
+                  {(dayChg.abs >= 0 ? "▲ +" : "▼ −") + sym + money(Math.abs(cv(dayChg.abs))) + " · " + signPct(dayChg.pct, 2).replace("+", "").replace("−", "").replace("-", "") + " hoy"}
                 </span>
               )}
             </div>
@@ -2211,7 +2218,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
             ["Riesgo total", sym + money(cv(totalRiesgo)), T.ink],
             ["Valor mercado", sym + money(cv(mktvl)), T.ink],
             ["Posiciones", String(nPos), T.ink]].map(([l, v, c]) => (
-            <div key={l} style={{ background: T.tile, borderRadius: 13, padding: "9px 12px", minWidth: 0, overflow: "hidden" }}>
+            <div key={l} style={{ background: T.tile, borderRadius: 13, padding: "9px 12px", minWidth: 0, overflow: "hidden", boxShadow: T.inset }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>{l}</div>
               <div style={{ fontSize: 15, fontWeight: 800, color: c, fontVariantNumeric: "tabular-nums", letterSpacing: -0.3, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
             </div>
@@ -2221,7 +2228,7 @@ function AccountHero({ nlv, mktvl, cash, margin, el, posCash, manualCash, totalP
             en la misma fila que el ▼ que despliega el detalle. Tocar un ratio abre su ficha; tocar
             el resto de la fila, despliega. */}
         <div onClick={() => setAccOpen((o) => !o)}
-          style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: T.tile, borderRadius: 13, padding: "9px 12px" }}>
+          style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: T.tile, borderRadius: 13, padding: "9px 12px", boxShadow: T.inset }}>
           <span style={{ display: "inline-flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start" }}>
             <span onClick={(e) => { e.stopPropagation(); onOpenInfo && onOpenInfo("nlv"); }}
               style={{ fontSize: 11.5, fontWeight: 800, color: HEX[toneNlv(elNlv)], lineHeight: 1.25, padding: "0 2px 2px", borderBottom: "1px solid " + T.line, alignSelf: "stretch" }}>EL/NLV {pct(elNlv)}</span>
@@ -2504,7 +2511,7 @@ function BlockDistribution({ nlv, blockTotals, onGoBlock }) {
               : (r.p < r.blk.tMin ? "▼ " + pct(dev, 0) + " bajo el " : "▲ " + pct(dev, 0) + " sobre el ") + objTxt;
             return (
               <div key={r.blk.id} onClick={() => setSel(isSel ? null : r.blk.id)}
-                style={{ background: isSel ? r.blk.bg : T.tile, borderRadius: 14, padding: "10px 12px", cursor: "pointer", opacity: dim ? 0.5 : 1, transition: "opacity .15s, background .15s", display: "grid", gap: 7, minWidth: 0 }}>
+                style={{ background: isSel ? r.blk.bg : T.tile, borderRadius: 14, padding: "10px 12px", cursor: "pointer", opacity: dim ? 0.5 : 1, transition: "opacity .15s, background .15s", display: "grid", gap: 7, minWidth: 0, boxShadow: T.inset }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                   <span style={{ width: 9, height: 9, borderRadius: 3, background: r.blk.color, flex: "none" }} />
                   <span onClick={(e) => { e.stopPropagation(); onGoBlock(r.blk.id); }}
@@ -11180,7 +11187,8 @@ function App() {
             <button key={t.id} data-tabid={String(t.id)} onClick={() => selectTab(t.id)} style={{
               flex: "1 0 auto", border: "none", cursor: "pointer", borderRadius: 14, padding: "10px 12px", fontSize: 12.5, fontWeight: 800,
               background: activeTab === t.id ? t.color : T.card, color: activeTab === t.id ? "#fff" : T.ink,
-              boxShadow: activeTab === t.id ? "none" : T.shadow, whiteSpace: "nowrap",
+              /* v4.12 (relieve): la pestaña activa proyecta sombra de su propio color + bisel de luz arriba */
+              boxShadow: activeTab === t.id ? "0 5px 14px " + hexToRgba(t.color, 0.38) + ", inset 0 1px 0 rgba(255,255,255,0.22)" : T.shadow, whiteSpace: "nowrap",
             }}>{t.label}</button>
           ))}
         </div>
@@ -12276,7 +12284,7 @@ function App() {
     {/* NAV INFERIOR — fuera del contenedor de scroll: fijo al viewport, no se mueve con el rebote.
        Oculto mientras el asistente está abierto para no tapar sus últimas opciones. */}
     {view === "bloques" && !wizOpen && (
-      <button onClick={openWizard} aria-label="Nueva posición" style={{ position: "fixed", right: "max(16px, calc(50% - 270px))", bottom: 100, zIndex: 41, width: 52, height: 52, border: "0.5px solid rgba(255,255,255,0.08)", cursor: "pointer", borderRadius: 26, background: "rgba(28,26,32,0.62)", backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)", boxShadow: "0 12px 34px rgba(0,0,0,0.35)", color: "#fff", fontSize: 26, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>+</button>
+      <button onClick={openWizard} aria-label="Nueva posición" style={{ position: "fixed", right: "max(16px, calc(50% - 270px))", bottom: 100, zIndex: 41, width: 52, height: 52, border: "0.5px solid rgba(255,255,255,0.10)", cursor: "pointer", borderRadius: 26, background: "rgba(28,26,32,0.62)", backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.20), 0 3px 7px rgba(0,0,0,0.3), 0 14px 36px rgba(0,0,0,0.4)", color: "#fff", fontSize: 26, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>+</button>
     )}
     {!wizOpen && (() => {
       const NAV = [["bloques", "portfolio", "Portfolio"], ["movimientos", "movimientos", "Movimientos"], ["vencimientos", "vencimientos", "Vencimientos"], ["comparador", "comparador", "Herramientas"], ["ajustes", "ajustes", "Ajustes"]];
@@ -12337,7 +12345,7 @@ function App() {
           onTouchMove={(e) => goTo(posFromX(e.touches[0].clientX))}
           onTouchEnd={endDrag}
           onTouchCancel={cancelDrag}
-          style={{ position: "relative", display: "flex", width: "100%", maxWidth: 540, background: barBg, backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)", borderRadius: 28, padding: "8px 9px", boxShadow: DARK ? "0 12px 34px rgba(0,0,0,0.45)" : "0 10px 30px rgba(30,30,40,0.16)", border: "0.5px solid " + (DARK ? "rgba(255,255,255,0.08)" : "rgba(20,20,25,0.07)"), pointerEvents: "auto", touchAction: "none" }}>
+          style={{ position: "relative", display: "flex", width: "100%", maxWidth: 540, background: barBg, backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)", borderRadius: 28, padding: "8px 9px", boxShadow: DARK ? "inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 5px rgba(0,0,0,0.4), 0 16px 40px rgba(0,0,0,0.5)" : "inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 5px rgba(30,30,40,0.10), 0 14px 36px rgba(30,30,40,0.20)", border: "0.5px solid " + (DARK ? "rgba(255,255,255,0.08)" : "rgba(20,20,25,0.07)"), pointerEvents: "auto", touchAction: "none" }}>
           {/* v3.86 (Victor, con foto ampliada de WhatsApp: "no es lo mismo, parece más tipo lupa y se
               vuelve borroso al deslizar, y se hace más grande el selector"): la v3.85 era cristal PLANO.
               Lo de WhatsApp es una LENTE ESFÉRICA. Cuatro cosas la definen, y aquí están las cuatro:

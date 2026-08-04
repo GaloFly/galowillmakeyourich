@@ -1,5 +1,25 @@
 # CHANGELOG — Bloques
 
+Bloques v4.12 — Relieve: tarjetas que se elevan, huecos que se hunden
+
+Remate del rediseño v4.11, pedido al verlo en vivo ("le metemos un poco de relieve a los menús").
+El sistema es de dos capas opuestas:
+
+- **Lo elevado** (tarjetas, pestañas, barra inferior, FAB): sombra doble — una de CONTACTO
+  (1-2px, nítida, pega la pieza al suelo) y una AMBIENTE (30-40px, suave, da la altura). En modo
+  noche además un bisel de luz de 1px en el borde superior, que es lo que hace que una tarjeta
+  oscura sobre fondo oscuro se "despegue".
+- **Lo hundido** (tiles de métricas, fila de ratios, filas de bloque del Resumen, tiles genéricos):
+  sombra INTERIOR arriba + labio de luz abajo — parecen grabados en la tarjeta.
+- La pestaña activa (Resumen/B0/B1…) proyecta ahora sombra de su propio color, como si el color
+  del bloque irradiara.
+- Barra inferior y FAB: mismo tratamiento (bisel superior + contacto + ambiente más profundo).
+
+## Verificación
+- Chromium (viewport iPhone), claro y oscuro, con cartera sembrada: capturas revisadas — el
+  relieve se percibe sin ensuciar; sin errores de consola.
+- `npm run build` ok (`app v4.12`), `node --check` pasa.
+
 Bloques v4.11 — Rediseño "cabina": jerarquía, color con criterio y micro-detalles (fases A–E aprobadas)
 
 Rediseño visual aprobado sobre maqueta (artefacto "Bloques — Propuesta de rediseño").
