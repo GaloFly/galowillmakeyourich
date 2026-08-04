@@ -1,5 +1,26 @@
 # CHANGELOG — Bloques
 
+Bloques v4.08 — La app se des-zoomea sola (remate del zoom fantasma de iOS)
+
+## El síntoma (captura, 08:30)
+Aun con la v4.07, la pantalla seguía viéndose descuadrada: más margen a un lado que a otro y
+el menú inferior corrido. No son los márgenes de Ajustes (usa el mismo contenedor que todas
+las páginas, 14px por lado): es el **zoom residual** que iOS dejó pegado ANTES del arreglo —
+la v4.07 evita zooms nuevos, pero no despega el que ya estaba puesto, y cerrar la app no
+siempre lo borra (iOS restaura el estado).
+
+## El arreglo
+La app ahora se lo quita sola: si `visualViewport` detecta escala distinta de 1, se re-escribe
+el `<meta viewport>` con `user-scalable=0` un instante y se restaura — WebKit recalcula y
+devuelve la pantalla a escala 1. Se comprueba en tres momentos: al arrancar, al cerrar el
+teclado (focusout, por si un input colara un zoom pese a los 16px) y al girar el móvil.
+
+## Verificación
+- `npm run build` ok (`app v4.08`), `node --check` pasa; el script de des-zoom llega a
+  `dist/index.html`.
+- Chromium (viewport iPhone): la app arranca y opera igual, sin errores de consola (en
+  Chromium visualViewport.scale es 1 y el script no toca nada — solo actúa en iOS con zoom).
+
 Bloques v4.07 — FIX: el zoom fantasma de iOS que "desformateaba" el menú de Ajustes
 
 ## El síntoma (captura, 08:24)
