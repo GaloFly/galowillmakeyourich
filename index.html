@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.08"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.09"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -12341,27 +12341,46 @@ ReactDOM.createRoot(document.getElementById('root')).render(<RescueBoundary><App
    versión vieja unos minutos tras el deploy. Este bloque queda solo como documentación del marcador:
    el buscador de versiones (splash y botón de Ajustes) pide este index.html por red y busca en él el
    texto `const APP_VERSION = "x"` — el build inyecta ese marcador en el <head> del HTML compilado. ---------- */
-/* ---------- v4.08: des-zoom de iOS. El zoom que iOS aplica al tocar un campo (o un pincho accidental)
-   SE QUEDA PEGADO en apps de pantalla de inicio: la pantalla queda ampliada y corrida (márgenes
-   desiguales, menú inferior recortado). La v4.07 evita que se dispare (campos a 16px); esto despega
-   el que ya esté puesto: si visualViewport detecta escala ≠ 1, se re-escribe el <meta viewport> con
-   user-scalable=0 un instante y se restaura — WebKit recalcula y vuelve a escala 1. Se comprueba al
-   arrancar, al cerrar el teclado (focusout) y al girar el móvil. ---------- */
+/* ---------- v4.08/v4.09: des-zoom de iOS. El zoom que iOS aplica al tocar un campo (o un pincho
+   accidental) SE QUEDA PEGADO en apps de pantalla de inicio, y además puede dejar el VIEWPORT DE
+   LAYOUT más ancho que la pantalla física — sobrevive a recargas e incluso a reinicios (medido en
+   las capturas: margen izq 14pt correcto, contenido ~9pt más ancho, todo desbordado a la derecha).
+   En ese estado la escala de visualViewport puede marcar "normal", así que (v4.09) la detección va
+   por MEDIDA: si el lienzo (clientWidth) no coincide con el ancho físico de la pantalla, se ancla
+   el <meta viewport> al número EXACTO de puntos de la pantalla (width=402 en vez de device-width),
+   lo que fuerza a WebKit a recomponer el viewport a su sitio. Si la medida está bien pero hay
+   escala pegada, se aplica el toggle de user-scalable=0 de la v4.08. Se comprueba al arrancar, al
+   cerrar el teclado, al girar el móvil y al volver la app del segundo plano. ---------- */
 (function () {
-  var NORMAL = "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover";
+  function screenW() {
+    /* screen.width en iOS no rota (siempre da el lado corto en vertical) */
+    var land = Math.abs(window.orientation || 0) === 90;
+    return land ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+  }
   function unzoom() {
     try {
-      var vv = window.visualViewport;
-      if (!vv || Math.abs(vv.scale - 1) < 0.02) return;
       var m = document.querySelector('meta[name="viewport"]');
       if (!m) return;
-      m.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover");
-      setTimeout(function () { m.setAttribute("content", NORMAL); }, 60);
+      var sw = screenW();
+      var lw = document.documentElement.clientWidth;
+      if (sw > 0 && Math.abs(lw - sw) > 1) {
+        /* viewport de layout corrupto → anclar al ancho físico exacto */
+        m.setAttribute("content", "width=" + sw + ", initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover");
+        setTimeout(function () { m.setAttribute("content", "width=" + sw + ", initial-scale=1, maximum-scale=1, viewport-fit=cover"); }, 80);
+        return;
+      }
+      var vv = window.visualViewport;
+      if (vv && Math.abs(vv.scale - 1) >= 0.01) {
+        m.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover");
+        setTimeout(function () { m.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"); }, 80);
+      }
     } catch (e) {}
   }
   window.addEventListener("load", function () { setTimeout(unzoom, 300); });
   document.addEventListener("focusout", function () { setTimeout(unzoom, 350); });
-  window.addEventListener("orientationchange", function () { setTimeout(unzoom, 300); });
+  window.addEventListener("orientationchange", function () { setTimeout(unzoom, 400); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) setTimeout(unzoom, 300); });
+  window.addEventListener("pageshow", function () { setTimeout(unzoom, 300); });
 })();
 </script>
 </body>
