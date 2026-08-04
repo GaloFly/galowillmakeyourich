@@ -1,5 +1,16 @@
 # CHANGELOG — Bloques
 
+Bloques v4.02 — Splash aún más traslúcido: la app se ve casi nítida detrás
+
+Tercer ajuste fino del splash: el velo baja de 35% a 15% de opacidad y el difuminado de
+22px a 7px — ahora la cuenta se ve claramente detrás del icono, solo con un suavizado
+ligero, como pediste ("casi se pueda ver la app").
+
+## Verificación
+- `npm run build` compila (`build ok — app v4.02`) y `node --check` pasa.
+- Chromium (viewport iPhone): la cuenta se distingue con claridad detrás del splash
+  (velo 15% + blur 7px), icono y "v4.02" legibles, y desaparece a los 2 s sin errores.
+
 Bloques v4.01 — Splash: sin título y con la app difuminada de fondo
 
 Dos retoques al splash de la v4.00, pedidos nada más verlo:
