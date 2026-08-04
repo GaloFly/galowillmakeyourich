@@ -1,5 +1,17 @@
 # CHANGELOG — Bloques
 
+Bloques v4.16 — Relieve + separación: filete hairline en las filas elevadas
+
+En pantalla real, tarjeta blanca sobre tarjeta blanca: la sombra sola no definía el contorno
+y las posiciones parecían haber perdido los separadores (captura de Victor). El remedio es el
+de su app de vuelos: **relieve Y borde** — cada fila elevada (posiciones, Exposición, Resumen)
+lleva ahora un filete hairline (crema en claro, gris carbón en noche) además de una sombra un
+punto más presente. Elevadas, separadas y limpias — sin bandas de color.
+
+## Verificación
+- Chromium (viewport iPhone): filas nítidamente separadas en claro y noche, sin errores.
+- `npm run build` ok (`app v4.16`), `node --check` pasa.
+
 Bloques v4.15 — Fuera las bandas laterales de color
 
 Las bandas de 4px al borde izquierdo de la v4.14 (posiciones, Exposición y filas del Resumen)
