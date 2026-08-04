@@ -155,7 +155,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.12"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.13"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2607,7 +2607,7 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
           {rows.map((row) => {
             const isOpen = expanded.has(row.tkr);
             return (
-            <div key={row.tkr} style={{ borderRadius: 16, background: T.tile, padding: 12 }}>
+            <div key={row.tkr} style={{ borderRadius: 16, background: T.tile, padding: 12, boxShadow: T.inset /* v4.13: relieve hundido, como los tiles del hero */ }}>
               <div onClick={() => toggleRow(row.tkr)} style={{ cursor: "pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                   <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -4306,7 +4306,9 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   /* avisa hacia arriba cuando hay una hoja de roll/cierre abierta (BlockCard desactiva el swipe-eliminar) */
   useEffect(() => { onRollingChange && onRollingChange(rolling || closing || !!legSheet); return () => { onRollingChange && onRollingChange(false); }; }, [rolling, closing, legSheet]);
   return (
-    <div style={{ borderTop: `1px solid ${T.line}`, padding: "10px 0" }}>
+    /* v4.13: cada posición pasa de "línea con filete" a tile hundido (relieve) — se diferencian
+       de un vistazo, como los tiles del hero y la Exposición */
+    <div style={{ background: T.tile, borderRadius: 14, padding: "10px 12px", boxShadow: T.inset }}>
       {coveredLabel && coveredLabel.length > 0 && natOf(p) === "ACC" && (
         <div style={{ background: T.tilePurple, borderLeft: `3px solid ${T.purple}`, borderRadius: 8, padding: "5px 9px", marginBottom: 7 }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: T.purple, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: coveredLabel.length > 1 ? 3 : 0, display: "flex", alignItems: "center", gap: 6 }}>
@@ -5065,8 +5067,9 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
         {positions.length === 0 && (
           <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 500, padding: "8px 0" }}>Sin posiciones en este bloque para el broker seleccionado.</div>
         )}
+        <div style={{ display: "grid", gap: 8 }}>{/* v4.13: tiles con aire entre sí, en vez de filas pegadas */}
         {positions.map((p) => (
-          <SwipeDelete key={p.id} onDelete={() => delPos(p.id)} disabled={editSet.has(p.id) || rollingIds.has(p.id)}>
+          <SwipeDelete key={p.id} radius={14} onDelete={() => delPos(p.id)} disabled={editSet.has(p.id) || rollingIds.has(p.id)}>
             <PositionRow p={p} editing={editSet.has(p.id)} onToggle={() => (onOpenSheet ? onOpenSheet(p) : toggleEdit(p.id))} onDone={() => toggleEdit(p.id)}
               pendingAction={pendingAction} clearPending={clearPending}
               onRollingChange={(v) => setRollingIds((s) => { const x = new Set(s); if (v) x.add(p.id); else x.delete(p.id); return x; })}
@@ -5078,6 +5081,7 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
               pctBloque={capBlock ? capDesplegado(p) / capBlock : NaN} pctCartera={nlv ? capDesplegado(p) / nlv : NaN} />
           </SwipeDelete>
         ))}
+        </div>
       </div>
 
       {/* alta de posiciones: solo vía el FAB verde "+" (asistente Nueva posición) — el botón por bloque se retiró en v4.45 */}
