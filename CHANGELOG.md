@@ -1,5 +1,37 @@
 # CHANGELOG — Bloques
 
+Bloques v4.05 — FIX: al reabrir, el iPhone resucitaba la versión vieja y re-ofrecía la actualización
+
+## El síntoma (capturas del iPhone, 08:05)
+Ya actualizado a la v4.04, cada apertura volvía a enseñar el splash de la v4.03 ofreciendo
+"Actualizar a v4.04" — como si la actualización nunca hubiera quedado aplicada.
+
+## La causa
+La caché HTTP del navegador. GitHub Pages sirve los archivos con permiso de caché de 10
+minutos, y el service worker pedía la red con `fetch(req)` a secas — petición que el navegador
+puede responder desde su caché HTTP sin salir a internet. La apertura normal de la app pide
+siempre la puerta de entrada "./", cuya copia guardada era la v4.03; la actualización, en
+cambio, navega a una URL con parámetros anticaché (una "puerta lateral"), así que la entrada
+"./" de la caché nunca se renovaba. Resultado: abrir → arranca la v4.03 de la caché → detecta
+la v4.04 → la ofrece → actualizas por la puerta lateral → reabres → otra vez la v4.03.
+
+## El arreglo
+El service worker pide ahora TODO con `cache: "no-cache"`: revalida contra el servidor en cada
+apertura (si el archivo no cambió, el servidor responde "304, usa lo tuyo" — baratísimo) y la
+caché propia del SW queda solo como respaldo sin red, que era su papel. También la
+pre-descarga de la instalación revalida, para no sembrar la caché del SW con copias rancias.
+
+## Verificación
+- `npm run build` → `build ok — app v4.05`; `node --check` pasa; `dist/sw.js` contiene los
+  `cache: "no-cache"` y el manejo especial de navegaciones (mode "navigate" no admite init).
+- Chromium (viewport iPhone): arranque online normal, y arranque OFFLINE servido por el
+  service worker nuevo — ambos sin errores de consola.
+
+## Transición en el teléfono
+La primera apertura tras este deploy aún puede pasar una vez por la caché vieja (el robot
+nuevo se instala en segundo plano en esa misma apertura). Desde la segunda apertura, la
+puerta de entrada se revalida siempre y el síntoma desaparece.
+
 Bloques v4.04 — Fuera el splash: la app abre directa; el aviso de versión nueva pasa a ser una barrita
 
 El splash de arranque (v4.00–v4.03) se retira entero — con la app compilada la carga ya es
