@@ -158,7 +158,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.14"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.15"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2514,7 +2514,7 @@ function BlockDistribution({ nlv, blockTotals, onGoBlock }) {
               : (r.p < r.blk.tMin ? "▼ " + pct(dev, 0) + " bajo el " : "▲ " + pct(dev, 0) + " sobre el ") + objTxt;
             return (
               <div key={r.blk.id} onClick={() => setSel(isSel ? null : r.blk.id)}
-                style={{ background: isSel ? r.blk.bg : T.card, borderRadius: 14, padding: "10px 12px", cursor: "pointer", opacity: dim ? 0.5 : 1, transition: "opacity .15s, background .15s", display: "grid", gap: 7, minWidth: 0, boxShadow: T.raise, borderLeft: "4px solid " + r.blk.color /* v4.14: fila elevada con banda del color del bloque */ }}>
+                style={{ background: isSel ? r.blk.bg : T.card, borderRadius: 14, padding: "10px 12px", cursor: "pointer", opacity: dim ? 0.5 : 1, transition: "opacity .15s, background .15s", display: "grid", gap: 7, minWidth: 0, boxShadow: T.raise /* v4.14 elevada · v4.15 sin banda lateral */ }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                   <span style={{ width: 9, height: 9, borderRadius: 3, background: r.blk.color, flex: "none" }} />
                   <span onClick={(e) => { e.stopPropagation(); onGoBlock(r.blk.id); }}
@@ -2610,7 +2610,7 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
           {rows.map((row) => {
             const isOpen = expanded.has(row.tkr);
             return (
-            <div key={row.tkr} style={{ borderRadius: 16, background: T.card, padding: 12, boxShadow: T.raise, borderLeft: "4px solid " + HEX[concTone(row.pctNlv)] /* v4.14: tarjeta elevada; la banda izquierda es el semáforo de concentración */ }}>
+            <div key={row.tkr} style={{ borderRadius: 16, background: T.card, padding: 12, boxShadow: T.raise /* v4.14 elevada · v4.15 sin banda lateral (el punto semáforo de siempre sigue junto al ticker) */ }}>
               <div onClick={() => toggleRow(row.tkr)} style={{ cursor: "pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                   <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -4310,9 +4310,9 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   useEffect(() => { onRollingChange && onRollingChange(rolling || closing || !!legSheet); return () => { onRollingChange && onRollingChange(false); }; }, [rolling, closing, legSheet]);
   return (
     /* v4.14 (Victor, con captura de su app de vuelos: "¿no quedaría mejor en relieve?"): cada
-       posición es una tarjeta ELEVADA con banda del color de su bloque a la izquierda — como las
-       duty cards de un roster. Lo hundido queda para métricas estáticas; lo interactivo se eleva. */
-    <div style={{ background: T.card, borderRadius: 14, padding: "10px 12px", boxShadow: T.raise, borderLeft: "4px solid " + ((BLOCKS[Number(p.block)] || {}).color || T.sub) }}>
+       posición es una tarjeta ELEVADA — como las duty cards de un roster. Lo hundido queda para
+       métricas estáticas; lo interactivo se eleva. v4.15: fuera la banda lateral (no le gustó). */
+    <div style={{ background: T.card, borderRadius: 14, padding: "10px 12px", boxShadow: T.raise }}>
       {coveredLabel && coveredLabel.length > 0 && natOf(p) === "ACC" && (
         <div style={{ background: T.tilePurple, borderLeft: `3px solid ${T.purple}`, borderRadius: 8, padding: "5px 9px", marginBottom: 7 }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: T.purple, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: coveredLabel.length > 1 ? 3 : 0, display: "flex", alignItems: "center", gap: 6 }}>

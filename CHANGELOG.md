@@ -1,5 +1,16 @@
 # CHANGELOG — Bloques
 
+Bloques v4.15 — Fuera las bandas laterales de color
+
+Las bandas de 4px al borde izquierdo de la v4.14 (posiciones, Exposición y filas del Resumen)
+no convencieron — se retiran las tres. Queda el relieve elevado limpio, que era lo que gustaba.
+La información que llevaban no se pierde: el color del bloque sigue en el punto y el badge de
+cada fila, y el semáforo de concentración de Exposición sigue en su punto junto al ticker.
+
+## Verificación
+- `npm run build` ok (`app v4.15`), `node --check` pasa; revisado en Chromium (viewport iPhone)
+  sin errores de consola.
+
 Bloques v4.14 — Las filas de las listas, en relieve ELEVADO con banda de color (como un roster)
 
 Victor, con captura de su app de vuelos: las duty cards elevadas con banda de color al borde
