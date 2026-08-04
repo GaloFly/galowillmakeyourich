@@ -1,5 +1,18 @@
 # CHANGELOG — Bloques
 
+Bloques v4.17 — Covered discreto + posiciones con el formato de Exposición
+
+Dos peticiones de Victor al ver la v4.16 en vivo:
+- **La línea de covered call vuelve a ser discreta**: texto pequeño en violeta ("🛡️ Covered ·
+  call vendida: 60C · AUG 28 '26 · 14 contratos"), sin el recuadro morado con banda que gritaba
+  más que la propia posición. Con varias coberturas, una línea por call, igual de sobria.
+- **Las tarjetas de posiciones adoptan el formato exacto de las de Exposición** (que le
+  gustaron): radio 16, aire interior 12 — el swipe de eliminar acompaña con la misma esquina.
+
+## Verificación
+- Chromium (viewport iPhone): posición cubierta con la línea discreta y tarjetas idénticas a
+  Exposición; sin errores de consola. `npm run build` ok (`app v4.17`), `node --check` pasa.
+
 Bloques v4.16 — Relieve + separación: filete hairline en las filas elevadas
 
 En pantalla real, tarjeta blanca sobre tarjeta blanca: la sombra sola no definía el contorno

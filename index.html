@@ -162,7 +162,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.16"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.17"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4316,16 +4316,16 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
     /* v4.14 (Victor, con captura de su app de vuelos: "¿no quedaría mejor en relieve?"): cada
        posición es una tarjeta ELEVADA — como las duty cards de un roster. Lo hundido queda para
        métricas estáticas; lo interactivo se eleva. v4.15: fuera la banda lateral (no le gustó). */
-    <div style={{ background: T.card, borderRadius: 14, padding: "10px 12px", boxShadow: T.raise, border: T.edge }}>
+    <div style={{ background: T.card, borderRadius: 16, padding: 12, boxShadow: T.raise, border: T.edge /* v4.17: mismo formato exacto que las tarjetas de Exposición */ }}>
       {coveredLabel && coveredLabel.length > 0 && natOf(p) === "ACC" && (
-        <div style={{ background: T.tilePurple, borderLeft: `3px solid ${T.purple}`, borderRadius: 8, padding: "5px 9px", marginBottom: 7 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: T.purple, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: coveredLabel.length > 1 ? 3 : 0, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>🛡️ {coveredLabel.length === 1 ? (coveredLabel[0].kind === "collar" ? "Collar" : "Covered") : "Cobertura"}</span>
-            {coveredLabel.length === 1 && <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "none", letterSpacing: 0 }}>{coveredLabel[0].kind === "collar" ? coveredLabel[0].label : "call vendida: " + coveredLabel[0].label}</span>}
-          </div>
-          {coveredLabel.length > 1 && coveredLabel.map((e, i) => (
-            <div key={i} style={{ fontSize: 10.5, fontWeight: 700, color: T.purple, lineHeight: 1.5 }}>{(e.kind === "collar" ? "Collar" : "CC") + " · " + e.label}</div>
-          ))}
+        /* v4.17: la línea de covered vuelve a ser DISCRETA — texto pequeño en violeta, sin recuadro
+           ni banda (el tile morado de antes gritaba más que la propia posición) */
+        <div style={{ marginBottom: 5 }}>
+          {coveredLabel.length === 1
+            ? <div style={{ fontSize: 10.5, fontWeight: 700, color: T.purple, lineHeight: 1.4 }}>🛡️ {coveredLabel[0].kind === "collar" ? "Collar · " + coveredLabel[0].label : "Covered · call vendida: " + coveredLabel[0].label}</div>
+            : coveredLabel.map((e, i) => (
+              <div key={i} style={{ fontSize: 10.5, fontWeight: 700, color: T.purple, lineHeight: 1.4 }}>🛡️ {(e.kind === "collar" ? "Collar" : "CC") + " · " + e.label}</div>
+            ))}
         </div>
       )}
       <div onClick={editing ? onDone : onToggle} style={{ cursor: "pointer" }}>
@@ -5077,7 +5077,7 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
         )}
         <div style={{ display: "grid", gap: 8 }}>{/* v4.13: tiles con aire entre sí, en vez de filas pegadas */}
         {positions.map((p) => (
-          <SwipeDelete key={p.id} radius={14} onDelete={() => delPos(p.id)} disabled={editSet.has(p.id) || rollingIds.has(p.id)}>
+          <SwipeDelete key={p.id} radius={16} onDelete={() => delPos(p.id)} disabled={editSet.has(p.id) || rollingIds.has(p.id)}>
             <PositionRow p={p} editing={editSet.has(p.id)} onToggle={() => (onOpenSheet ? onOpenSheet(p) : toggleEdit(p.id))} onDone={() => toggleEdit(p.id)}
               pendingAction={pendingAction} clearPending={clearPending}
               onRollingChange={(v) => setRollingIds((s) => { const x = new Set(s); if (v) x.add(p.id); else x.delete(p.id); return x; })}
