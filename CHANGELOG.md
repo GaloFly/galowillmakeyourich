@@ -1,5 +1,17 @@
 # CHANGELOG — Bloques
 
+Bloques v4.20 — FIX: la línea recta bajo las pestañas de bloques
+
+Con el relieve de la v4.12, la fila deslizable de pestañas (Resumen · B0 · B1…) RECORTABA la
+sombra de las píldoras en el borde del contenedor de scroll y quedaba una línea recta antiestética
+bajo ellas (captura de Victor). Arreglo: la fila gana padding interior (la sombra muere suave
+dentro del área desplazable) y márgenes negativos equivalentes para que la posición visual de las
+pestañas no se mueva ni un píxel.
+
+## Verificación
+- Chromium (viewport iPhone): pestañas con sombra degradada natural, sin filo recto; el deslizado
+  lateral sigue igual. `npm run build` ok (`app v4.20`), `node --check` pasa.
+
 Bloques v4.19 — El banner de covered, mucho más delgado
 
 Mismo banner violeta de siempre (v4.18), pero en versión fina: padding vertical mínimo
