@@ -1,5 +1,18 @@
 # CHANGELOG — Bloques
 
+Bloques v4.13 — Relieve también en las listas: posiciones y Exposición
+
+Extensión del relieve de la v4.12 a las dos listas que seguían planas (capturas de Victor):
+- **Posiciones dentro de cada bloque**: cada posición pasa de "línea con filete" a TILE hundido
+  con aire entre filas — se diferencian de un vistazo. El deslizar-para-eliminar conserva la
+  esquina redondeada (radius en SwipeDelete, como ya hacía el Comparador).
+- **Exposición por subyacente**: sus tarjetitas ganan el mismo hundido.
+
+## Verificación
+- Chromium (viewport iPhone), claro y oscuro: lista de posiciones de un bloque y Exposición
+  con tiles hundidos y separados; swipe-eliminar sigue funcionando con esquinas redondeadas;
+  sin errores de consola. `npm run build` ok (`app v4.13`), `node --check` pasa.
+
 Bloques v4.12 — Relieve: tarjetas que se elevan, huecos que se hunden
 
 Remate del rediseño v4.11, pedido al verlo en vivo ("le metemos un poco de relieve a los menús").
