@@ -141,7 +141,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.05"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.06"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1309,6 +1309,67 @@ function EarningsHint({ tkr, expiry }) {
   const hTxt = d.hour === "bmo" ? " (antes de la apertura)" : d.hour === "amc" ? " (tras el cierre)" : d.hour === "dmh" ? " (en sesión)" : "";
   if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + sym + " el " + dTxt + hTxt + " — DENTRO del vencimiento. Documentar y valorar sizing.");
   return line(T.tile, T.sub, "Earnings de " + sym + " el " + dTxt + " — después del vencimiento. ✓");
+}
+/* v4.06: fecha ex-dividend del subyacente. El plan gratis de Finnhub NO da dividendos (endpoint de
+   pago), así que la fuente es Alpha Vantage OVERVIEW (gratis, misma key 25/día que ya usa Earnings).
+   OVERVIEW da la ex-div MÁS RECIENTE anunciada — puede ser futura (anunciada) o ya pasada (la última
+   repartida, cuando la próxima aún no está anunciada); el hint distingue ambos casos. */
+async function fetchExDividendAV(sym, key) {
+  try {
+    const r = await fetchRetry("https://www.alphavantage.co/query?function=OVERVIEW&symbol=" + encodeURIComponent(sym) + "&apikey=" + encodeURIComponent(key));
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (j && (j.Note || j.Information)) return { limit: true };
+    if (!j || j["Error Message"] || !j.Symbol) return { none: true };
+    const d = String(j.ExDividendDate || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return { none: true };
+    return { date: d };
+  } catch (e) { return null; }
+}
+const exDivHintCache = {};
+function ExDivHint({ tkr, expiry, right }) {
+  const sym = String(tkr || "").trim().toUpperCase();
+  const exp = String(expiry || "");
+  const okExp = /^\d{4}-\d{2}-\d{2}$/.test(exp);
+  const [st, setSt] = useState({ k: "idle" });
+  useEffect(() => {
+    if (!sym) { setSt({ k: "idle" }); return; }
+    let key = ""; try { key = localStorage.getItem(KEY_AVANTAGE) || ""; } catch (e) {}
+    if (!key) { setSt({ k: "nokey" }); return; }
+    const c = exDivHintCache[sym];
+    if (c) { setSt({ k: "done", sym, data: c }); return; }
+    setSt({ k: "busy", sym });
+    let dead = false;
+    const t = setTimeout(async () => {
+      const d = await fetchExDividendAV(sym, key);
+      if (dead) return;
+      if (d && !d.limit) exDivHintCache[sym] = d; /* el límite diario no se cachea: mañana habrá cupo */
+      setSt({ k: "done", sym, data: d });
+    }, 600);
+    return () => { dead = true; clearTimeout(t); };
+  }, [sym]);
+  if (!sym || st.k === "idle") return null;
+  const line = (bg, col, txt) => (
+    <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>{txt}</div>
+  );
+  if (st.k === "nokey") return line(T.tile, T.sub, "Sin key de Alpha Vantage en Ajustes → API keys — no puedo comprobar el ex-dividend de " + sym + ".");
+  if (st.k === "busy") return line(T.tile, T.sub, "⏳ Comprobando ex-dividend de " + sym + "…");
+  if (st.k !== "done" || st.sym !== sym) return null;
+  const d = st.data;
+  if (!d) return line(T.tile, T.sub, "Alpha Vantage no respondió — sin dato de ex-dividend para " + sym + ".");
+  if (d.limit) return line(T.tile, T.sub, "Alpha Vantage: límite diario agotado (25/día) — sin dato de ex-dividend hoy.");
+  if (d.none) return line(T.tile, T.sub, sym + " no reparte dividendo (según Alpha Vantage). ✓");
+  const today = new Date().toISOString().slice(0, 10);
+  const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+  if (d.date < today) return line(T.tile, T.sub, "Último ex-dividend de " + sym + ": " + dTxt + " (ya pasado; el próximo aún no está anunciado — suelen repetir cadencia trimestral).");
+  if (okExp && d.date <= exp) {
+    const extra = right === "C"
+      ? " Una call corta ITM con extrínseco menor que el dividendo tiene riesgo de asignación la víspera."
+      : " Ese día el precio abre descontando el dividendo.";
+    return line(T.tileAmber, T.gold, "⚠️ Ex-dividend de " + sym + " el " + dTxt + " — DENTRO del nuevo vencimiento." + extra);
+  }
+  if (okExp) return line(T.tile, T.sub, "Ex-dividend de " + sym + " el " + dTxt + " — después del nuevo vencimiento. ✓");
+  return line(T.tile, T.sub, "Ex-dividend de " + sym + ": " + dTxt + ".");
 }
 async function fetchQuote(symbol, key) {
   try {
@@ -4712,6 +4773,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                     p.earnIn (la estadística de Estrategias mide solo la decisión de apertura) */}
                 <div style={{ gridColumn: "span 2" }}>
                   <EarningsHint tkr={p.tkr} expiry={rollExpiry} />
+                </div>
+                {/* v4.06: fecha ex-dividend del subyacente antes de confirmar el roll (Alpha Vantage) */}
+                <div style={{ gridColumn: "span 2" }}>
+                  <ExDivHint tkr={p.tkr} expiry={rollExpiry} right={p.right} />
                 </div>
               </div>
               <button onClick={confirmRoll} disabled={!ok} style={{ marginTop: 16, width: "100%", background: ok ? T.green : T.tile, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, color: ok ? "#fff" : T.sub, cursor: "pointer" }}>Confirmar roll</button>
@@ -9286,6 +9351,9 @@ function App() {
   const [keyInput, setKeyInput] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
   const [geminiModalOpen, setGeminiModalOpen] = useState(false);
+  const [avKey, setAvKey] = useState(""); /* v4.06: Alpha Vantage — ex-dividend (hint del roll) y earnings pasados */
+  const [avModalOpen, setAvModalOpen] = useState(false);
+  const [avInput, setAvInput] = useState("");
   const [geminiInput, setGeminiInput] = useState("");
   const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
   const [pendingAutoRefresh, setPendingAutoRefresh] = useState(false); /* arranque: descarga directa de precios si hay key (v5.05) */
@@ -9357,6 +9425,7 @@ function App() {
        dispara la descarga en el siguiente render, ya con las posiciones cargadas. */
     try { if (localStorage.getItem(KEY_FINNHUB)) setPendingAutoRefresh(true); } catch (e) {}
     try { const gk = localStorage.getItem(KEY_GEMINI); if (gk) setGeminiKey(gk); } catch (e) {}
+    try { const ak = localStorage.getItem(KEY_AVANTAGE); if (ak) setAvKey(ak); } catch (e) {}
     try { const s = localStorage.getItem(KEY_SNAP); if (s) setSnapshots(JSON.parse(s)); } catch (e) {}
     try { const bk = localStorage.getItem(KEY_BROKERS); if (bk) { const arr = JSON.parse(bk); if (Array.isArray(arr) && arr.length) setBrokers(arr); } } catch (e) {}
     let haveTr = false;
@@ -9514,7 +9583,7 @@ function App() {
        el riesgo objetivo solo vivían en la copia automática de versión; exportar y restaurar en otro
        dispositivo los perdía. Ahora viajan en el propio JSON (v12; restaurar un v11 sigue funcionando). */
     const erCalcRaw = (() => { try { return localStorage.getItem(KEY_EARNCALC) || null; } catch (e) { return null; } })();
-    setBackupText(JSON.stringify({ v: 12, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, geminiKey, showPnl, erHist: loadErHist(), erIdeas: loadErIdeas(), erCalc: erCalcRaw, riesgoObj: getRiesgoObj(), alerts: loadAlerts() }, null, 2));
+    setBackupText(JSON.stringify({ v: 12, appVersion: APP_VERSION, ts: Date.now(), brokers, accounts, positions: posOut, snapshots: nextSnaps, aportaciones: flows, trades, compBasis: basis, finnhubKey: apiKey, geminiKey, alphaVantageKey: avKey, showPnl, erHist: loadErHist(), erIdeas: loadErIdeas(), erCalc: erCalcRaw, riesgoObj: getRiesgoObj(), alerts: loadAlerts() }, null, 2));
     setCopied(false); setRestoreMsg(""); setBackupOpen(true);
   };
   /* guarda una copia JSON en la lista de restaurables (fecha/hora). Se llama cada vez que el usuario graba un
@@ -9611,6 +9680,7 @@ function App() {
       if (typeof d.compBasis === "string" && BASIS_KEYS.includes(d.compBasis)) setBasis(d.compBasis);
       if (typeof d.finnhubKey === "string" && d.finnhubKey) { setApiKey(d.finnhubKey); try { localStorage.setItem(KEY_FINNHUB, d.finnhubKey); } catch (e) {} }
       if (typeof d.geminiKey === "string" && d.geminiKey) { setGeminiKey(d.geminiKey); try { localStorage.setItem(KEY_GEMINI, d.geminiKey); } catch (e) {} }
+      if (typeof d.alphaVantageKey === "string" && d.alphaVantageKey) { setAvKey(d.alphaVantageKey); try { localStorage.setItem(KEY_AVANTAGE, d.alphaVantageKey); } catch (e) {} } /* v4.06 */
       if (typeof d.showPnl === "boolean") { setShowPnl(d.showPnl); try { localStorage.setItem("bloques_show_pnl", d.showPnl ? "1" : "0"); } catch (e) {} }
       /* v1.66: la herramienta de earnings viaja en el backup (v12). Un v11 no trae estas claves y se salta. */
       if (d.erHist && typeof d.erHist === "object" && !Array.isArray(d.erHist)) saveErHist(d.erHist);
@@ -9686,6 +9756,7 @@ function App() {
         [KEY_BASIS, typeof d.compBasis === "string" ? d.compBasis : null],
         [KEY_FINNHUB, typeof d.finnhubKey === "string" && d.finnhubKey ? d.finnhubKey : null],
         [KEY_GEMINI, typeof d.geminiKey === "string" && d.geminiKey ? d.geminiKey : null],
+        [KEY_AVANTAGE, typeof d.alphaVantageKey === "string" && d.alphaVantageKey ? d.alphaVantageKey : null], /* v4.06 */
         ["bloques_show_pnl", typeof d.showPnl === "boolean" ? (d.showPnl ? "1" : "0") : null],
       ];
       for (const [k, v] of writes) {
@@ -9833,6 +9904,13 @@ function App() {
     setGeminiKey(k);
     try { localStorage.setItem(KEY_GEMINI, k); } catch (e) {}
     setGeminiModalOpen(false);
+  };
+  const openAvModal = () => { setAvInput(avKey); setAvModalOpen(true); };
+  const saveAvKey = () => {
+    const k = avInput.trim();
+    setAvKey(k);
+    try { localStorage.setItem(KEY_AVANTAGE, k); } catch (e) {}
+    setAvModalOpen(false);
   };
 
   /* v5.35: una posición histórica SIN campo broker no debe desaparecer al filtrar por un broker concreto —
@@ -10755,7 +10833,7 @@ function App() {
   /* bloqueo de scroll de fondo (v5.11): mientras haya CUALQUIER hoja o modal abierto, el contenedor de
      scroll de la app se congela — así solo se mueve el panel abierto y no la pantalla de detrás. El editor
      en línea (editSet) NO cuenta: se expande dentro de la lista y necesita que la lista siga scrolleando. */
-  const anyOverlayOpen = wizOpen || !!sheetPosId || !!pendingAction || keyModalOpen || geminiModalOpen || brokerModalOpen || exportOpen || backupOpen || refreshChoiceOpen || !!info;
+  const anyOverlayOpen = wizOpen || !!sheetPosId || !!pendingAction || keyModalOpen || geminiModalOpen || avModalOpen || brokerModalOpen || exportOpen || backupOpen || refreshChoiceOpen || !!info;
 
   return (
     <>
@@ -11054,7 +11132,8 @@ function App() {
             <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>API keys</div>
               <SettingsRow icon="key" tint={apiKey ? T.tileGreen : T.tileAmber} iconColor={apiKey ? T.green : T.gold} title="Precios (Finnhub)" sub={apiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para cotizaciones"} right={apiKey ? "Cambiar" : "Activar"} onClick={openChangeKey} />
-              <SettingsRow icon="camera" tint={geminiKey ? T.tileGreen : T.tileAmber} iconColor={geminiKey ? T.green : T.gold} title="Lector de capturas (Gemini)" sub={geminiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para leer capturas"} right={geminiKey ? "Cambiar" : "Activar"} onClick={openGeminiModal} last />
+              <SettingsRow icon="camera" tint={geminiKey ? T.tileGreen : T.tileAmber} iconColor={geminiKey ? T.green : T.gold} title="Lector de capturas (Gemini)" sub={geminiKey ? "Key guardada en este dispositivo" : "Sin key — añádela para leer capturas"} right={geminiKey ? "Cambiar" : "Activar"} onClick={openGeminiModal} />
+              <SettingsRow icon="dividend" tint={avKey ? T.tileGreen : T.tileAmber} iconColor={avKey ? T.green : T.gold} title="Dividendos (Alpha Vantage)" sub={avKey ? "Key guardada en este dispositivo" : "Sin key — añádela para ver el ex-dividend al rolar"} right={avKey ? "Cambiar" : "Activar"} onClick={openAvModal} last />
             </div>
 
             <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
@@ -11110,6 +11189,20 @@ function App() {
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setGeminiModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
               <button onClick={saveGeminiKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {avModalOpen && (
+        <div onClick={() => setAvModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+            <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{avKey ? "Cambiar API key de Alpha Vantage" : "API key de Alpha Vantage"}</div>
+            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en alphavantage.co/support/#api-key (solo pide un email). Se guarda en este dispositivo. Con ella, la hoja de Rolar enseña la fecha ex-dividend del subyacente — Finnhub gratis no da dividendos. Límite del plan gratis: 25 consultas/día.</div>
+            <input type="text" value={avInput} onChange={(e) => setAvInput(e.target.value)} placeholder="Pega aquí tu API key"
+              style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 14 }} />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setAvModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={saveAvKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
             </div>
           </div>
         </div>

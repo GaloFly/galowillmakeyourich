@@ -1,5 +1,32 @@
 # CHANGELOG — Bloques
 
+Bloques v4.06 — Aviso de ex-dividend en la hoja de Rolar (vía Alpha Vantage)
+
+## Qué hace
+Al abrir "Rolar" en una posición, debajo del aviso de earnings aparece otro con la **fecha
+ex-dividend del subyacente**:
+- Si cae DENTRO del nuevo vencimiento → aviso ámbar. En una call corta añade el riesgo real:
+  una call ITM con extrínseco menor que el dividendo tiene papeletas de asignación la víspera.
+  En una put, recuerda que ese día el precio abre descontando el dividendo.
+- Si es posterior al vencimiento → línea neutra con ✓.
+- Si la última ex-div ya pasó y la próxima no está anunciada → lo dice tal cual (suelen repetir
+  cadencia trimestral).
+- Si el ticker no reparte dividendo → también lo dice, y no molesta más.
+
+## De dónde sale el dato
+**Finnhub gratis NO da dividendos** (su endpoint de dividendos es de pago) — la fuente es
+**Alpha Vantage** (OVERVIEW → ExDividendDate), gratis con 25 consultas/día. La app ya tenía
+reservado el hueco para esa key desde la v2.08 pero sin interfaz: ahora hay fila propia en
+**Ajustes → API keys → "Dividendos (Alpha Vantage)"** (gratis en alphavantage.co, solo pide un
+email). La key viaja en el backup como las de Finnhub y Gemini. Caché por ticker y sesión para
+no quemar el cupo; si el cupo diario se agota, el aviso lo dice en vez de callar.
+
+## Verificación (Chromium, viewport iPhone, Alpha Vantage simulado)
+- Short put sembrada en B2 → hoja Rolar: con ex-div dentro del vencimiento sale el aviso ámbar;
+  con fecha posterior, la línea neutra ✓; sin key, la pista de activarla en Ajustes.
+- Ajustes → API keys: la fila nueva abre su modal, guarda la key y cambia a "Key guardada".
+- `npm run build` ok (`app v4.06`) y `node --check` pasa. Sin errores de consola.
+
 Bloques v4.05 — FIX: al reabrir, el iPhone resucitaba la versión vieja y re-ofrecía la actualización
 
 ## El síntoma (capturas del iPhone, 08:05)
