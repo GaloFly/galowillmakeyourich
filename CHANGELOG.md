@@ -1,5 +1,34 @@
 # CHANGELOG — Bloques
 
+Bloques v4.10 — FIX del descuadre REAL: las tarjetas de Ajustes se ensanchaban solas
+
+## El diagnóstico correcto (por fin)
+Tu pista del menú deslizador de abajo fue la clave. Medido sobre la captura de las 08:50:
+- **Barra inferior: 41px/41px — perfectamente centrada.** O sea, el viewport está BIEN
+  (el des-zoom de la v4.09 hizo su parte o nunca fue el problema completo).
+- **Tarjetas de Ajustes: 42px/15px** — las tarjetas en sí miden ~9pt de más y sobresalen
+  por la derecha. El descuadre era del CONTENIDO de Ajustes, no de la pantalla.
+
+## La causa
+Las tarjetas de Ajustes viven en una rejilla CSS con columna automática, y una columna así
+se ensancha hasta el texto sin envolver más largo de sus filas. La fila nueva de la v4.06
+("Dividendos (Alpha Vantage)", con su subtítulo largo de cuando no hay key) superó el ancho
+disponible y estiró TODAS las tarjetas de la página ~9-14pt — por eso el desborde cambió de
+tamaño al guardar la key (cambió el texto) y por eso solo pasaba en Ajustes.
+
+## El arreglo
+- La rejilla de Ajustes pasa a columna `minmax(0, 1fr)`: clavada al ancho de la página,
+  imposible que el contenido la ensanche; los textos largos se recortan dentro.
+- El título de cada fila gana el mismo recorte con puntos suspensivos que ya tenía el
+  subtítulo, por si algún título futuro no cabe.
+Los mecanismos anti-zoom de la v4.07–v4.09 se quedan (protegen del zoom real de iOS, que
+también ocurrió — había dos problemas superpuestos, por eso costó aislarlo).
+
+## Verificación
+- Chromium (viewport iPhone 390pt): en Ajustes, tarjetas y barra inferior quedan con el
+  MISMO ancho; márgenes simétricos verificados midiendo el DOM (14px/14px en ambas).
+- `npm run build` ok (`app v4.10`), `node --check` pasa, sin errores de consola.
+
 Bloques v4.09 — FIX definitivo del descuadre: detección por medida y anclaje del viewport
 
 ## El síntoma (captura, 08:37)
