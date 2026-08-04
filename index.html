@@ -162,7 +162,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.18"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.19"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4320,13 +4320,14 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
       {coveredLabel && coveredLabel.length > 0 && natOf(p) === "ACC" && (
         /* v4.18: el banner covered ORIGINAL de vuelta (Victor, con captura: "que sea así") — tile
            violeta con banda y COVERED en versalitas, tal como estaba antes del rediseño */
-        <div style={{ background: T.tilePurple, borderLeft: `3px solid ${T.purple}`, borderRadius: 8, padding: "5px 9px", marginBottom: 7 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: T.purple, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: coveredLabel.length > 1 ? 3 : 0, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>🛡️ {coveredLabel.length === 1 ? (coveredLabel[0].kind === "collar" ? "Collar" : "Covered") : "Cobertura"}</span>
-            {coveredLabel.length === 1 && <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "none", letterSpacing: 0 }}>{coveredLabel[0].kind === "collar" ? coveredLabel[0].label : "call vendida: " + coveredLabel[0].label}</span>}
+        /* v4.19: mucho más delgada — padding vertical mínimo, tipografía un punto menor */
+        <div style={{ background: T.tilePurple, borderLeft: `2px solid ${T.purple}`, borderRadius: 7, padding: "2px 8px", marginBottom: 6 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: T.purple, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: coveredLabel.length > 1 ? 2 : 0, display: "flex", alignItems: "center", gap: 5, lineHeight: 1.4 }}>
+            <span style={{ whiteSpace: "nowrap", flexShrink: 0 }}>🛡️ {coveredLabel.length === 1 ? (coveredLabel[0].kind === "collar" ? "Collar" : "Covered") : "Cobertura"}</span>
+            {coveredLabel.length === 1 && <span style={{ fontSize: 9.5, fontWeight: 700, textTransform: "none", letterSpacing: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{coveredLabel[0].kind === "collar" ? coveredLabel[0].label : "call vendida: " + coveredLabel[0].label}</span>}
           </div>
           {coveredLabel.length > 1 && coveredLabel.map((e, i) => (
-            <div key={i} style={{ fontSize: 10.5, fontWeight: 700, color: T.purple, lineHeight: 1.5 }}>{(e.kind === "collar" ? "Collar" : "CC") + " · " + e.label}</div>
+            <div key={i} style={{ fontSize: 9.5, fontWeight: 700, color: T.purple, lineHeight: 1.4 }}>{(e.kind === "collar" ? "Collar" : "CC") + " · " + e.label}</div>
           ))}
         </div>
       )}
