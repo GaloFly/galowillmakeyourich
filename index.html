@@ -44,6 +44,8 @@ const T_LIGHT = {
      tarjeta. v4.16: algo más de sombra + va SIEMPRE con borde hairline (T.edge): blanco sobre blanco,
      la sombra sola no define el contorno y las filas parecían sin separar. */
   raise: "0 1px 3px rgba(93,82,62,0.11), 0 6px 16px rgba(120,105,85,0.16)",
+  /* v4.22: elevación mínima para chips/filas pequeñas (selectores, totales por mes) */
+  raiseSm: "0 1px 3px rgba(93,82,62,0.16)",
   edge: "1px solid #ECE6DA",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
@@ -59,6 +61,7 @@ const T_DARK = {
   shadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.45), 0 14px 36px rgba(0,0,0,0.6)",
   inset: "inset 0 1.5px 3px rgba(0,0,0,0.45), inset 0 -1px 0 rgba(255,255,255,0.03)",
   raise: "inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.4), 0 6px 16px rgba(0,0,0,0.45)",
+  raiseSm: "0 1px 3px rgba(0,0,0,0.5)",
   edge: "1px solid #2C2D33",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
@@ -162,7 +165,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.21"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.22"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1955,6 +1958,8 @@ function Pill({ options, value, onChange, size }) {
       {options.map((o) => (
         <button key={o} onClick={() => onChange(o)} style={{
           border: "none", cursor: "pointer", borderRadius: 10, padding: size === "xs" ? "6px 8px" : size === "sm" ? "6px 10px" : "8px 14px",
+          /* v4.22 (relieve): la opción activa se eleva con sombra propia; las inactivas, elevación mínima */
+          boxShadow: value === o ? "0 3px 9px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.16)" : T.raiseSm,
           fontSize: size === "sm" || size === "xs" ? 11.5 : 13, fontWeight: 700, background: value === o ? T.dark : T.tile, color: value === o ? "#fff" : T.ink,
           whiteSpace: "nowrap",
         }}>{o}</button>
@@ -5652,7 +5657,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const yCollapsed = !openYears.has(y);
             return (
             <div key={y} style={{ marginTop: 10 }}>
-              <div onClick={() => toggleYear(y)} style={{ display: "grid", gridTemplateColumns: "1fr 76px 100px", gap: 0, alignItems: "center", background: T.dark, borderRadius: 12, padding: "10px 0 10px 12px", fontVariantNumeric: "tabular-nums", cursor: "pointer" }}>
+              <div onClick={() => toggleYear(y)} style={{ display: "grid", gridTemplateColumns: "1fr 76px 100px", gap: 0, alignItems: "center", background: T.dark, borderRadius: 12, padding: "10px 0 10px 12px", fontVariantNumeric: "tabular-nums", cursor: "pointer", boxShadow: "0 3px 10px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.14)" /* v4.22: relieve */ }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", textTransform: "uppercase", letterSpacing: 0.5 }}>
                   {y === "sin-fecha" ? "TOTAL SIN FECHA" : "TOTAL " + y}
                 </span>
@@ -5666,7 +5671,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const isCollapsed = !openMonths.has(key);
             return (
             <div key={key} style={{ marginTop: 4 }}>
-              <div onClick={() => toggleMonth(key)} style={{ display: "grid", gridTemplateColumns: "1fr 76px 100px", gap: 0, alignItems: "center", margin: "10px 0 4px", background: T.tile, borderRadius: 10, padding: "8px 0 8px 12px", fontVariantNumeric: "tabular-nums", cursor: "pointer" }}>
+              <div onClick={() => toggleMonth(key)} style={{ display: "grid", gridTemplateColumns: "1fr 76px 100px", gap: 0, alignItems: "center", margin: "10px 0 4px", background: T.tile, borderRadius: 10, padding: "8px 0 8px 12px", fontVariantNumeric: "tabular-nums", cursor: "pointer", boxShadow: T.raiseSm /* v4.22: relieve */ }}>
                 <span style={{ fontSize: 12, fontWeight: 800, color: T.ink, textTransform: "uppercase", letterSpacing: 0.5 }}>
                   {key === "sin-fecha" ? "TOTAL SIN FECHA" : "TOTAL " + monthLabel(key)}
                 </span>
@@ -6729,7 +6734,7 @@ function GlassSegmented({ items, value, onChange, renderIcon }) {
         border: "0.5px solid " + (dragging ? (DARK ? "rgba(255,255,255,0.40)" : "rgba(255,255,255,0.90)") : "transparent"),
         boxShadow: dragging
           ? "inset 0 1.5px 1px rgba(255,255,255,0.75), inset 0 -2px 3px rgba(255,255,255,0.30), inset 0 0 10px rgba(255,255,255,0.22), 0 8px 20px rgba(0,0,0,0.24)"
-          : "none",
+          : "0 3px 10px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.15)" /* v4.22: relieve también en reposo */,
         transition: dragging
           ? "background 0.22s, box-shadow 0.22s, border-color 0.22s, border-radius 0.22s"
           : "transform 0.30s cubic-bezier(0.3,1.12,0.35,1), background 0.22s, box-shadow 0.22s, border-color 0.22s, border-radius 0.22s",
