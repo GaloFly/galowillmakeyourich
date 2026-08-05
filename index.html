@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.31"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.32"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6556,13 +6556,18 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
                           <MiniStat label={csPending ? "ROI potencial (" + (csCredit >= 0 ? "crédito" : "débito") + "/riesgo)" : isCreditSpread(p) ? "ROI (P&L/riesgo)" : "ROI (prima/riesgo)"} value={fmtPct2(rom)} color={isFinite(rom) && rom >= 0 ? T.green : T.red} size={18} />
                           <div style={{ display: "flex", gap: 14, background: T.card, borderRadius: 12, padding: "8px 12px", flexShrink: 0 }}>
+                            {/* v4.32 (Victor: "el riesgo debería bajar igual que el BEP"): los dos números
+                                convivían aquí sin decir de CUÁNDO era cada uno — el riesgo es el de la
+                                APERTURA (base fija del ROI: si encogiera con cada roll, el ROI subiría solo
+                                por rolar) y el BEP es el VIGENTE tras la cadena. Se rotulan solo cuando de
+                                verdad difieren, para no meter ruido en una posición sin rolar. */}
                             <div style={{ textAlign: "center" }}>
-                              <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>Riesgo</div>
+                              <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>{isOpt && natOf(p) === "CRED" && !isPMCC(p) && chain.length > 0 ? "Riesgo apertura" : "Riesgo"}</div>
                               <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>${money(riesgo)}</div>
                             </div>
                             {!isCreditSpread(p) && (
                             <div style={{ textAlign: "center" }}>
-                              <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>BEP</div>
+                              <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>{chain.length > 0 ? "BEP actual" : "BEP"}</div>
                               <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>${money2(effBep(p))}</div>
                             </div>
                             )}
