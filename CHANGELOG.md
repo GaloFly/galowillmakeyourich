@@ -1,5 +1,32 @@
 # CHANGELOG — Bloques
 
+Bloques v4.31 — En oscuro apenas se veía QUÉ estaba seleccionado
+
+## El síntoma
+En modo oscuro (captura de Victor en Movimientos → Histórico): "Por estrategia", "Iron Condor",
+"Cerradas (45)"… la opción elegida se distinguía a duras penas de las no elegidas.
+
+## La causa
+El token `T.dark` es el fondo de lo seleccionado (píldoras, chips, pestañas) y de los botones de
+acción. En claro es tinta casi negra sobre crema y canta. En oscuro valía **#2C2D33**, a un paso
+del tile de las inactivas (**#1E1F24**): 14 puntos de diferencia, invisible en una pantalla al
+sol. El error de base era pensar el modo oscuro como "lo mismo pero más oscuro": ahí lo
+seleccionado tiene que ir MÁS CLARO que el fondo, como hace iOS.
+
+## El arreglo
+- `T_DARK.dark` pasa a **#4A4C55** — gris medio que se despega del fondo, con blanco encima a
+  7,4:1 de contraste. Al ser el token compartido, se arreglan de una vez TODAS las selecciones
+  (píldoras de Histórico, filtros de estrategia, chips de broker, USD/EUR, sub-menú de
+  Movimientos, barra inferior) y de paso los botones de acción ganan presencia.
+- Las píldoras refuerzan la selección por partida doble: la activa en negrita 800 y la inactiva
+  en tinta secundaria. Así se lee cuál está elegida aunque el fondo no se aprecie.
+
+## Verificación
+- Chromium (viewport iPhone) en oscuro: Histórico con sus cuatro filas de filtros — la opción
+  activa se distingue de un vistazo en todas. Revisado también en claro: sin cambios (el token
+  claro no se toca). Sin errores de consola.
+- `npm run build` ok (`app v4.31`), `node --check` pasa.
+
 Bloques v4.30 — Relieve en oscuro: barras, botones de bloque, histórico y tarjeta de puts
 
 Cuatro cosas que Victor reportó con capturas del modo oscuro.
