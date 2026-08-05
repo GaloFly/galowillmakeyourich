@@ -56,7 +56,11 @@ const T_DARK = {
   tileGreen: "#122A1C", tileAmber: "#2A2210", tileRed: "#2C1614", tilePurple: "#1D1A2B",
   ink: "#F2F1F5", sub: "#97949E",
   green: "#3FBF7F", purple: "#A99AF0", gold: "#E5B33C", orange: "#F7931A", red: "#FF5D55",
-  dark: "#2C2D33", line: "#292A30",
+  /* v4.31: `dark` es el fondo de LO SELECCIONADO (píldoras, chips, pestañas) y de los botones de
+     acción. En claro es tinta casi negra sobre crema y canta; en oscuro estaba en #2C2D33, a un
+     paso del tile #1E1F24 — la selección no se veía. En modo oscuro lo seleccionado va MÁS CLARO
+     que el fondo (convención de iOS), no más oscuro: gris medio con blanco encima (7,4:1). */
+  dark: "#4A4C55", line: "#292A30",
   /* v4.12 (relieve): bisel de luz arriba (inset) + contacto + ambiente — las tarjetas se despegan del fondo */
   shadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.45), 0 14px 36px rgba(0,0,0,0.6)",
   inset: "inset 0 1.5px 3px rgba(0,0,0,0.45), inset 0 -1px 0 rgba(255,255,255,0.03)",
@@ -167,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.30"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.31"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1973,9 +1977,11 @@ function Pill({ options, value, onChange, size }) {
       {options.map((o) => (
         <button key={o} onClick={() => onChange(o)} style={{
           border: "none", cursor: "pointer", borderRadius: 10, padding: size === "xs" ? "6px 8px" : size === "sm" ? "6px 10px" : "8px 14px",
-          /* v4.22 (relieve): la opción activa se eleva con sombra propia; las inactivas, elevación mínima */
+          /* v4.22 (relieve): la opción activa se eleva con sombra propia; las inactivas, elevación mínima.
+             v4.31: la activa además va en negrita 800 y la inactiva baja a tinta secundaria — la
+             selección se lee por peso y color de texto, no solo por el fondo. */
           boxShadow: value === o ? "0 3px 9px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.16)" : T.raiseSm,
-          fontSize: size === "sm" || size === "xs" ? 11.5 : 13, fontWeight: 700, background: value === o ? T.dark : T.tile, color: value === o ? "#fff" : T.ink,
+          fontSize: size === "sm" || size === "xs" ? 11.5 : 13, fontWeight: value === o ? 800 : 700, background: value === o ? T.dark : T.tile, color: value === o ? "#fff" : T.sub,
           whiteSpace: "nowrap",
         }}>{o}</button>
       ))}
