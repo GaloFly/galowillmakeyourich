@@ -1,5 +1,41 @@
 # CHANGELOG — Bloques
 
+Bloques v4.30 — Relieve en oscuro: barras, botones de bloque, histórico y tarjeta de puts
+
+Cuatro cosas que Victor reportó con capturas del modo oscuro.
+
+**1 · Las barras de cada bloque, apagadas.** Medida sobre su captura, la banda roja de la barra
+de rango salía en rgb(72,43,45) sobre un fondo de rgb(30,31,36): casi el mismo tono que la
+tarjeta. Causa: `bandZones()` era la ÚNICA barra con los rgba del tema CLARO escritos a mano,
+así que no pasaba por el refuerzo de oscuro que sí usan las barras EL del Comparador. Ahora usa
+el rojo/oro/verde del tema activo, y ese refuerzo sube de +0.24 a +0.36 de opacidad. La banda
+roja pasa a rgb(160,67,64) y la verde a rgb(48,120,86). Además la barra crece de 10 a 13px en
+los dos sitios donde es protagonista (rango del bloque y EL post) y gana un aro hundido por
+encima de los tramos, para que deje de parecer una pegatina plana.
+
+**2 · Los botones de bloque, difuminados.** El botón activo proyectaba un halo de su propio
+color de 14px de desenfoque al 38% — de lejos parecía que el botón estaba desenfocado. Se
+sustituye por una sombra de contacto nítida de 1px más un resto de color corto y bajo: mantiene
+el relieve y recupera el borde limpio.
+
+**3 · El histórico de Movimientos, plano.** Las operaciones eran filas separadas solo por un
+filete de 1px; en oscuro no se veía dónde acababa una y empezaba la siguiente. Pasan a
+sub-tarjeta elevada (T.raise + filete), el mismo formato que ya usan las filas de posiciones de
+Portfolio y las tarjetas de Exposición.
+
+**4 · La tarjeta de puts.** Sus dos barras EL se benefician de todo lo del punto 1. Los cuadros
+(Position Size, Return on margin, anualizado) quedaban en rgb(30,31,36) sobre una tarjeta de
+rgb(22,23,27) — 8 niveles de diferencia y la sombra interior invisible. Se les añade filete; en
+los de color el filete es del propio color, que el gris del tema encima de verde o ámbar
+ensucia. El cuadro Riesgo/BEP, que era el único de la tarjeta sin ningún relieve, se hunde
+igual que los demás.
+
+## Verificación
+- `npm run build` ok (`app v4.30`), `node --check dist/app.js` pasa.
+- Chromium en viewport iPhone 13, oscuro y claro, con posiciones y candidatas sembradas en
+  localStorage: revisadas la pestaña B1 (barra + botones), el histórico de Short Puts cerradas
+  y las tarjetas del Comparador. Sin errores de consola.
+
 Bloques v4.29 — Rótulo de la barra del hero, recortado
 
 Con la mecánica ya entendida (el 9% de B0 = liquidez ÷ capital total en juego, que con
