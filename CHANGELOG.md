@@ -1,5 +1,32 @@
 # CHANGELOG — Bloques
 
+Bloques v4.32 — "Riesgo apertura" y "BEP actual" en la tarjeta del Histórico
+
+## La duda
+Victor, sobre una TMDX 70P rolada: *"el riesgo debería bajar igual que el BEP, ¿no? Ahora mismo
+solo cuenta el inicial"*. En su tarjeta: Riesgo $6.428 · BEP $62,28.
+
+## Lo que pasaba (y no era un fallo)
+Los dos números convivían en el mismo tile SIN decir de cuándo era cada uno:
+- **Riesgo $6.428** = el de la APERTURA (strike 70 − prima inicial 5,72 = 64,28 × 100). Es la base
+  del ROI, fijada a propósito desde la v5.15: si encogiera con cada roll, el ROI subiría solo por
+  rolar, sin haber ganado nada extra, y dejaría de ser comparable entre operaciones.
+- **BEP $62,28** = el VIGENTE tras la cadena (70 − 7,72 de prima acumulada).
+
+Y en Portfolio el riesgo SÍ baja con cada roll: esa misma posición cuenta **$6.228** (BEP vigente
+× 100), que es lo que alimenta % NLV, EL/NLV, objetivos de bloque y la barra del hero. Verificado
+sembrando la posición: cartera $6.228 · histórico $6.428 · ROI +11,99%, idéntico a su captura.
+
+## El arreglo
+Solo rótulos, ni un cálculo tocado: el riesgo de las cortas pasa a **"Riesgo apertura"**, y el BEP
+a **"BEP actual"** cuando hay cadena de rolls. Se rotula solo cuando de verdad difieren, para no
+meter ruido en una posición sin rolar.
+
+## Verificación
+- Chromium (viewport iPhone) con la TMDX de la captura sembrada: la tarjeta muestra "Riesgo
+  apertura $6.428" y "BEP actual $62,28"; una short put sin rolar sigue diciendo "Riesgo" y "BEP".
+- `npm run build` ok (`app v4.32`), `node --check` pasa.
+
 Bloques v4.31 — En oscuro apenas se veía QUÉ estaba seleccionado
 
 ## El síntoma
