@@ -1,5 +1,64 @@
 # CHANGELOG — Bloques
 
+Bloques v4.37 — Las filas de Posiciones cambiaban de forma, y su relieve nunca se llegaba a pintar
+
+## El síntoma
+Victor, con dos capturas (Posiciones de B3 y Exposición): *"el menú de las posiciones de cada bloque
+es difícil de leer, se pierde uno un poco; el de las exposiciones se lee mucho mejor, ¿igual por el
+relieve?"*.
+
+## La causa (no era el relieve)
+Las dos pantallas tienen el mismo relieve desde la v4.17. Lo que cambia es la **silueta**:
+- **Exposición** tiene siempre tres pisos idénticos: identidad + cifra · franja de chips de bloque ·
+  rejilla de métricas. El ojo coge el hábito en dos tarjetas.
+- **Posiciones** metía el detalle del contrato en la MISMA línea del ticker, con `flexWrap`. Según lo
+  largo que fuera, unas veces cabía al lado de la insignia y otras saltaba solo. En su propia captura:
+  MRLN (texto largo) baja a su línea, la QQQ de debajo (texto corto) se queda arriba. Dos tarjetas
+  seguidas, dos siluetas distintas. Eso es perderse.
+
+Tres agravantes:
+1. En los spreads la estrategia salía **dos veces**: la insignia decía "Call Debit Spread" y la línea
+   de debajo volvía a empezar por "Call Debit Spread 12,5/7,5 · JAN 15 '27".
+2. `× 10 contr.` ocupaba una línea entera él solo, separado del contrato que describe.
+3. Todo gris sobre gris, sin una sola mancha de color que anclara la mirada — mientras que Exposición
+   tiene los chips de bloque.
+
+## El arreglo
+Silueta fija de tres pisos, igual que Exposición:
+- **Piso 1** — identidad: ticker + insignia (ahora con el **color del bloque**, el ancla que faltaba)
+  y, a la derecha, capital y % NLV.
+- **Piso 2** — contrato **y** cantidad, juntos y siempre en su propia línea, sin el eco del nombre de
+  la estrategia.
+- **Piso 3** — la rejilla de métricas de siempre.
+
+Más un filete fino sobre las métricas, el mismo recurso que usa Exposición: la tarjeta crece ~8 px y
+se lee en dos mitades limpias.
+
+## Y el relieve, que llevaba desde la v4.14 sin verse
+Victor, sobre la propuesta: *"la B, pero ¿puedes darle el mismo relieve que tienen en Exposición?"*.
+
+Aquí estaba lo bueno: la fila de posición **ya traía `boxShadow: T.raise`**, exactamente el mismo que
+Exposición, desde la v4.14. Nunca se pintó. La culpa es de `SwipeDelete`, el envoltorio que permite
+deslizar la fila para eliminarla: lleva `overflow: hidden` (necesario para esconder el botón rojo
+mientras no se desliza) y la sombra, que se dibuja FUERA de la caja de la fila, quedaba recortada al
+ras del borde. Es el mismo fallo que ya nos comió las sombras en las filas deslizables de pestañas.
+
+Medido en las capturas de Victor, muestreando la luminancia del hueco entre dos tarjetas:
+- Exposición: `45 · 9 10 11 12 13 14 15 16 17 · 46` — el degradado de la sombra, caída de 37.
+- Posiciones: `46 · 24 24 24 24 24 24 24 24 24 · 46` — plano. Ni rastro.
+
+El arreglo: sombra y filete pasan al envoltorio `SwipeDelete`. `overflow: hidden` recorta a los
+descendientes, **no** la sombra del propio elemento, así que ahí sí se pinta.
+
+## Verificación
+Chromium (viewport iPhone 390×844) con las cinco posiciones de B3 de su captura sembradas (MRLN Call
+Debit Spread, tres QQQ DD/DC y una SPX DC):
+- Las cinco tarjetas salen con la misma silueta, el eco de "Call Debit Spread" desaparece y la línea
+  larga de la QQQ (`P 665/660 · C 715/720 JUL 31 '26 · ×1 contr.`) entra en una sola línea.
+- El hueco entre tarjetas mide ahora `9 9 9 10 10 11 11 12 13 13 13 14 15 15 15…`, **idéntico** al de
+  Exposición en la misma escala. Caída de 37 en las dos.
+- Sin errores en consola. `npm run build` ok (`app v4.37`), `node --check dist/app.js` pasa.
+
 Bloques v4.36 — "Resolver → Editar" tampoco hacía nada
 
 ## El síntoma
