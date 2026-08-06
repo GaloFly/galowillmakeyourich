@@ -1,5 +1,56 @@
 # CHANGELOG — Bloques
 
+Bloques v4.39 — Los avisos del roll, en su idioma y sin nombres de proveedores
+
+## El síntoma
+Victor, con captura del diálogo de rolar: *"el aviso de dividendo, que ponga solamente el ticker y
+próximo dividendo en fecha y luego el aviso de cuidado a veces los ADRs no aparecen. Que no ponga
+nada de Finnhub"*.
+
+Lo que salía:
+- `Sin earnings de TEP en los próximos 60 días (Finnhub). Ojo: los ADRs a veces no aparecen.`
+- `TEP no reparte dividendo (según Alpha Vantage). ✓`
+
+## La causa
+Dos vicios de programador. Primero, **acreditar al proveedor** en cada línea: a él "(Finnhub)" o
+"(según Alpha Vantage)" no le dicen nada, son ruido en mitad de la frase. Y segundo, cada caso tenía
+**una redacción distinta** ("Sin earnings de X…", "X no reparte…", "Último ex-dividend de X:…"), así
+que el ojo tenía que leer la frase entera para saber de qué iba.
+
+Además la coletilla de los ADRs colgaba del aviso de EARNINGS, cuando es al dividendo al que más le
+aplica: los ADRs europeos son justo los que suelen faltar en el dato de dividendo.
+
+## El arreglo
+Todos los avisos pasan a la misma forma: **`TICKER · qué pasa y cuándo`**.
+
+| Antes | Ahora |
+|---|---|
+| `Sin earnings de TEP en los próximos 60 días (Finnhub). Ojo: los ADRs…` | `TEP · sin earnings en los próximos 60 días.` |
+| `TEP no reparte dividendo (según Alpha Vantage). ✓` | `TEP · sin dividendo.` |
+| `Último ex-dividend de TEP: 3 jun 2026 (ya pasado; el próximo aún no…)` | `TEP · último dividendo: 3 jun 2026. El próximo aún no está anunciado.` |
+| `⚠️ Ex-dividend de TEP el 15 sept 2026 — DENTRO del nuevo vencimiento.` | `⚠️ TEP · próximo dividendo: 15 sept 2026 — DENTRO del nuevo vencimiento.` |
+
+Y la advertencia de los ADRs se muda al aviso de dividendo, en una segunda línea en gris pequeño,
+debajo de todas sus variantes. Ni una mención a Finnhub ni a Alpha Vantage en todo el diálogo. Donde
+sí se conserva el nombre es en el aviso de "falta la key", porque ahí hace de indicación para llegar
+al sitio: *Ajustes → API keys → Dividendos*, que es como se llama la fila en su pantalla.
+
+## Verificación
+Chromium (viewport iPhone 390×844) con una TEP 68P sembrada, abriendo el diálogo de rolar y simulando
+las respuestas de las dos APIs (`ctx.route` con regex, que los globs no cubren la query):
+- **Con dividendo dentro del nuevo vencimiento**: `⚠️ TEP · próximo dividendo: 15 sept 2026 — DENTRO
+  del nuevo vencimiento. Ese día el precio abre descontando el dividendo.` + `Ojo: los ADRs a veces
+  no aparecen.`
+- **Sin dividendo**: `TEP · sin dividendo.` + la misma coletilla.
+- Barrido del texto de la pantalla en los dos casos: **cero** apariciones de "Finnhub" y de "Alpha
+  Vantage". Sin errores en consola.
+- `npm run build` ok (`app v4.39`), `node --check dist/app.js` pasa.
+
+## Lo que NO toca
+Las otras pantallas (Herramientas → Earnings y la fila "Precios (Finnhub)" de Ajustes) siguen
+nombrando a Finnhub. Ahí el nombre es el de la key que hay que activar, no una acreditación al pie de
+un dato. Si también las quiere sin nombre, es un momento.
+
 Bloques v4.38 — La cabecera "Posiciones · Ver P&L" iba pegada a la primera tarjeta
 
 ## El síntoma
