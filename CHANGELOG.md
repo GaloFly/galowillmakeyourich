@@ -42,10 +42,16 @@ el despliegue — y GitHub identifica cada despliegue por el commit, así que es
 como cancelado **para siempre**: todos los reintentos contestaban ya "Deployment cancelled" y hacía
 falta un commit nuevo para desatascarlo.
 
-Arreglada la causa en `.github/workflows/build-and-deploy.yml`, sin tocar ni una línea de la app:
-- **Espera de 20 minutos** en vez de 10 antes de rendirse, para que un atasco del servicio no aborte.
+Retocado `.github/workflows/build-and-deploy.yml`, sin tocar ni una línea de la app:
 - **`cancel-in-progress: false`**: si llega otro empujón mientras hay un despliegue en vuelo, ahora
   espera su turno en vez de cancelarlo. Cancelar era justo lo que envenenaba el commit.
+- Se intentó subir la espera de 10 a 20 minutos y **no se puede**: la propia acción lo rechaza
+  ("timeout set to the maximum of 600000 milliseconds"). 10 minutos es techo duro. Queda anotado en
+  el propio workflow para no volver a intentarlo.
+
+Con eso, si Pages se atasca más de 10 minutos no hay ajuste que valga: toca esperar a que el
+servicio se recupere y empujar un commit nuevo. Lo que pasó ese día: la cola de Pages estuvo
+**más de 35 minutos** sin mover ficha, con cuatro intentos seguidos muriendo igual.
 
 Bloques v4.34 — Relieve en las fichas de fecha de Vencimientos (se veían planas en oscuro)
 
