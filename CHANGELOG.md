@@ -21,6 +21,13 @@ Chromium (viewport iPhone 390×844), midiendo el hueco entre el borde inferior d
 borde superior de la primera tarjeta: pasa de **2 px a 12 px**. Sin errores en consola.
 `npm run build` ok (`app v4.38`), `node --check dist/app.js` pasa.
 
+## Nota de despliegue
+Primer intento caído otra vez con la cola de Pages parada (ver la nota de la v4.35). Reintento con
+commit nuevo, sin tocar la app: mismo `APP_VERSION` 4.38 y mismo hash de compilación.
+
+Un efecto secundario que sí funcionó: gracias al `cancel-in-progress: false` de esa misma nota, la
+v4.38 **esperó su turno** detrás de la v4.37 en vez de cancelarla. La v4.37 se publicó limpia.
+
 Bloques v4.37 — Las filas de Posiciones cambiaban de forma, y su relieve nunca se llegaba a pintar
 
 ## El síntoma
