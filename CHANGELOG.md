@@ -1,5 +1,40 @@
 # CHANGELOG — Bloques
 
+Bloques v4.35 — Los botones "Resolver" de Vencimientos no hacían nada
+
+## El síntoma
+Victor, con captura del banner ⏰ *"2 opciones vencieron y siguen abiertas"*: *"los botones de
+Resolver no hacen nada, deberían llevarte al movimiento y marcarlo, o al menú de cerrar / editar /
+rolar"*. Se pulsaba y no pasaba absolutamente nada — ni menú, ni error, ni aviso.
+
+## La causa (dos fallos encadenados)
+1. **El menú no llegaba a abrirse.** `openSheet()` espera la POSICIÓN entera y hace `p.id` dentro.
+   El banner le pasaba el id ya suelto: `openSheet(pp.id)`. Dentro salía `undefined.id` →
+   `undefined`, el estado quedaba a nulo y el menú simplemente no se montaba. Silencioso.
+2. **Aunque se abriera, "Cerrar" y "Rolar" se perdían.** Esas dos acciones no abren nada ahí mismo:
+   dejan una *acción pendiente* y navegan a Portfolio, porque el formulario vive en la fila de la
+   posición. Pero la acción pendiente solo la recoge la tarjeta del bloque correspondiente, y
+   Portfolio abre siempre en **Resumen** — donde no hay ninguna tarjeta de bloque. La acción se
+   quedaba colgada y el efecto seguía siendo "no hace nada".
+
+## El arreglo
+- El banner pasa la posición entera. Y `openSheet()` acepta ya indistintamente la posición o su id,
+  para que un llamador despistado no vuelva a fallar en silencio.
+- Al elegir Cerrar / Rolar / operar una pata, la app **salta a la pestaña del bloque** de esa
+  posición antes de navegar a Portfolio.
+- La fila **se desplaza sola hasta quedar centrada en pantalla** al abrirse su formulario: si el
+  bloque tiene muchas posiciones, antes el formulario se abría fuera de la vista.
+
+## Verificación
+Chromium (viewport iPhone 390×844), sembrando las dos QQQ vencidas de su captura más una short put
+vencida:
+- El banner sale con sus 3 botones; al pulsar **Resolver** se abre el menú de la posición.
+- Un DC/DD ofrece *Cerrar · Editar · Eliminar*; una short put ofrece además **Rolar** (correcto: un
+  riesgo definido no se rola).
+- Pulsando **Cerrar** en la QQQ (B3) → Portfolio, pestaña **Bloque 3**, formulario "Cerrar QQQ"
+  abierto. En la short put (B2) → pestaña **Bloque 2**, formulario "Cerrar TMDX". Sin errores.
+- `npm run build` ok (`app v4.35`), `node --check dist/app.js` pasa.
+
 Bloques v4.34 — Relieve en las fichas de fecha de Vencimientos (se veían planas en oscuro)
 
 ## El síntoma
