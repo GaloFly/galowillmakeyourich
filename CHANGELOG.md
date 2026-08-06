@@ -1,5 +1,37 @@
 # CHANGELOG — Bloques
 
+Bloques v4.33 — En Vencimientos, el BEP ya no se parte por la mitad
+
+## El síntoma
+Victor, con captura de Vencimientos: *"el BEP se salta de página"*. En las filas desplegadas de cada
+vencimiento, el salto de línea caía JUSTO entre la palabra "BEP" y su cifra: arriba quedaba
+`B2 · ASTS · x 1 63P · Últ $68.38 · BEP` y solo debajo, huérfano, `$56.75`.
+
+## La causa
+Toda la fila era UNA sola frase corrida ("bloque · ticker · x N strike · Últ $X · BEP $Y") dentro de
+un span con envoltura libre (v5.10, que arregló otro problema: antes el texto largo se salía del
+cuadro). Con el ancho del iPhone esa frase no cabe en una línea, así que el navegador la parte por
+donde le toca — y le tocaba entre la etiqueta y el número.
+
+## El arreglo
+La fila pasa a tener **dos líneas fijas** en vez de una frase que se parte por donde caiga:
+- Arriba, **qué es** la posición: `B2 · ASTS · x 1 63P`, con su riesgo alineado a la derecha.
+- Abajo, los **precios**: `Últ $68.38  BEP $56.75`, en tono secundario (11px, color apagado).
+
+Cada pareja etiqueta+cifra lleva `nowrap`, así que ninguna puede partirse por la mitad; si algún día
+no cupieran las dos juntas, el BEP bajaría entero a la línea siguiente. Las filas sin precio ni BEP
+siguen ocupando una sola línea. Ni un cálculo tocado, solo la maquetación.
+
+Al separar el BEP se vio que el mismo salto afectaba también a "Últ" (quedaba arriba y su cifra
+sola abajo), por eso los dos precios se han bajado juntos.
+
+## Verificación
+- Chromium (viewport iPhone 390×844) con las cinco posiciones de la captura sembradas (ASTS 63P,
+  MRVL 195P, ORCL 190P, TMDX 70P, MRLN 7,50P): las cinco filas ocupan exactamente dos líneas y
+  ninguna etiqueta se separa de su cifra. Medido en el DOM: cada línea de precios, 15 px de alto = 1
+  línea. Sin errores en consola.
+- `npm run build` ok (`app v4.33`), `node --check dist/app.js` pasa.
+
 Bloques v4.32 — "Riesgo apertura" y "BEP actual" en la tarjeta del Histórico
 
 ## La duda
