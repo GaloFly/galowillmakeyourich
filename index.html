@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.32"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.33"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2906,25 +2906,36 @@ function VencimientosCard({ rows, onOpen }) {
                              asignación), verde suave = a salvo, sin fondo = sin precio. El texto queda neutro
                              (solo la etiqueta de bloque conserva su color) — un único canal visual, sin ruido. */
                           return (
-                        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "5px 8px", borderRadius: 8, background: dgr == null ? "transparent" : danger ? T.tileRed : T.tileGreen }}>
+                        <div key={i} style={{ padding: "5px 8px", borderRadius: 8, background: dgr == null ? "transparent" : danger ? T.tileRed : T.tileGreen }}>
                           {/* v5.10: el texto largo ahora ENVUELVE dentro del cuadro (antes nowrap y se salía o se
                              cortaba). Los credit spreads muestran sus dos alas (put spread · call spread) y los
-                             DC/DD sus strikes P/C, en vez de un strike vacío. */}
-                          <span style={{ fontSize: 12, color: T.ink, fontWeight: 700, minWidth: 0, flex: 1, whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", lineHeight: 1.45 }}>
-                            <span style={{ color: b ? b.color : T.sub, fontWeight: 800 }}>{b ? b.name.replace("Bloque ", "B") : ""}</span>
-                            {" · " + d.tkr}
-                            {" · x " + d.qtyNum + " "}
-                            {d.spreads ? (
-                              <span style={{ fontWeight: 800 }}>{(d.tipo === "Iron Condor" ? "IC " : d.tipo ? d.tipo + " " : "") + d.spreads}</span>
-                            ) : d.dcStk ? (
-                              <span style={{ fontWeight: 800 }}>{(d.tipo ? d.tipo + " " : "") + d.dcStk}</span>
-                            ) : (
-                              <span style={{ fontWeight: 800 }}>{strikeStr(d.strike) + (d.right === "C" ? "C" : "P")}</span>
-                            )}
-                            {hasLast && <span style={{ fontWeight: 700 }}>{" · Últ $" + money2(lastN)}</span>}
-                            {isFinite(d.bep) && n(d.bep) !== 0 ? " · BEP $" + money2(d.bep) : ""}
-                          </span>
-                          <span style={{ fontSize: 12, color: T.sub, fontWeight: 800, flexShrink: 0 }}>{d.covered && !d.riesgo ? "cubierta" : "$" + money(d.riesgo)}</span>
+                             DC/DD sus strikes P/C, en vez de un strike vacío.
+                             v4.33 (Victor, con captura): "el BEP se salta de página". Toda la fila era UNA frase
+                             corrida y el salto caía justo entre una etiqueta y su cifra ("BEP" arriba, "$56,75"
+                             solo abajo). Ahora son DOS líneas fijas: arriba QUÉ es la posición (bloque · ticker ·
+                             cantidad · strike) con su riesgo a la derecha; debajo los PRECIOS (último y BEP) en
+                             tono secundario y con nowrap, para que ninguna pareja etiqueta+número pueda partirse. */}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                            <span style={{ fontSize: 12, color: T.ink, fontWeight: 700, minWidth: 0, flex: 1, whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", lineHeight: 1.45 }}>
+                              <span style={{ color: b ? b.color : T.sub, fontWeight: 800 }}>{b ? b.name.replace("Bloque ", "B") : ""}</span>
+                              {" · " + d.tkr}
+                              {" · x " + d.qtyNum + " "}
+                              {d.spreads ? (
+                                <span style={{ fontWeight: 800 }}>{(d.tipo === "Iron Condor" ? "IC " : d.tipo ? d.tipo + " " : "") + d.spreads}</span>
+                              ) : d.dcStk ? (
+                                <span style={{ fontWeight: 800 }}>{(d.tipo ? d.tipo + " " : "") + d.dcStk}</span>
+                              ) : (
+                                <span style={{ fontWeight: 800 }}>{strikeStr(d.strike) + (d.right === "C" ? "C" : "P")}</span>
+                              )}
+                            </span>
+                            <span style={{ fontSize: 12, color: T.sub, fontWeight: 800, flexShrink: 0 }}>{d.covered && !d.riesgo ? "cubierta" : "$" + money(d.riesgo)}</span>
+                          </div>
+                          {(hasLast || (isFinite(d.bep) && n(d.bep) !== 0)) && (
+                            <div style={{ fontSize: 11, color: T.sub, fontWeight: 700, lineHeight: 1.35, marginTop: 1, display: "flex", flexWrap: "wrap", gap: "0 6px" }}>
+                              {hasLast && <span style={{ whiteSpace: "nowrap" }}>{"Últ $" + money2(lastN)}</span>}
+                              {isFinite(d.bep) && n(d.bep) !== 0 ? <span style={{ whiteSpace: "nowrap" }}>{"BEP $" + money2(d.bep)}</span> : null}
+                            </div>
+                          )}
                         </div>
                           );
                         })()
