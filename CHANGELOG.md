@@ -1,5 +1,31 @@
 # CHANGELOG — Bloques
 
+Bloques v4.34 — Relieve en las fichas de fecha de Vencimientos (se veían planas en oscuro)
+
+## El síntoma
+Victor, con captura en modo oscuro: *"se ve un poco mal aquí, ¿darías algo de relieve?"*. Las fichas
+de cada fecha eran rectángulos grises planos pegados al fondo casi negro, sin nada que las separase.
+
+## La causa
+Esa vista se quedó fuera del repaso de relieve de la v4.11–v4.29. Las fichas de fecha iban en
+`T.tile` **sin sombra ni filete**, pese a que son pulsables (se despliegan). Rompían la regla de la
+casa: *lo interactivo se ELEVA, lo estático se hunde*. Y dentro, las filas sin semáforo (las que no
+tienen precio, como un DC/DD) iban con fondo `transparent`, así que flotaban sueltas al lado de las
+tintadas de rojo/verde.
+
+## El arreglo
+- **Fichas de fecha**: mismo trato que las filas de Exposición, que él ya aprobó — `T.card` +
+  `T.raise` + `T.edge`. El filete es lo que de verdad las dibuja en oscuro; la sombra las despega.
+- **Filas de dentro**: todas pasan a ser sub-tarjetas con `T.raiseSm`, y las que no tienen semáforo
+  usan `T.tile` en vez de transparente. El color sigue siendo el único canal del semáforo (rojo =
+  strike superado, verde = a salvo, gris = sin precio); el relieve solo las hace tangibles.
+
+## Verificación
+- Chromium (viewport iPhone 390×844) en **oscuro y en claro**, con las posiciones de la captura más
+  un DC sin precio para probar la fila sin semáforo: las fichas se despegan del fondo en los dos
+  temas y las filas grises ya no flotan. Sin errores en consola.
+- `npm run build` ok (`app v4.34`), `node --check dist/app.js` pasa.
+
 Bloques v4.33 — En Vencimientos, el BEP ya no se parte por la mitad
 
 ## El síntoma

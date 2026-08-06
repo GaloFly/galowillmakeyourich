@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.33"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.34"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2879,8 +2879,12 @@ function VencimientosCard({ rows, onOpen }) {
           {rows.map((row) => {
             const isOpen = expanded.has(row.expiry);
             const dteLabel = row.dte < 0 ? "vencido" : row.dte === 0 ? "hoy" : row.dte + "d";
+            /* v4.34 (Victor, captura en oscuro): estas fichas de fecha se pulsan para desplegar, así que
+               por la regla de la casa (lo interactivo SE ELEVA) les toca el mismo trato que a las filas de
+               Exposición: T.card + T.raise + T.edge. Iban en T.tile plano y sin sombra, y en oscuro, contra
+               un fondo casi negro, quedaban como rectángulos grises pegados al fondo. */
             return (
-              <div key={row.expiry} style={{ borderRadius: 16, background: T.tile, padding: 12 }}>
+              <div key={row.expiry} style={{ borderRadius: 16, background: T.card, padding: 12, boxShadow: T.raise, border: T.edge }}>
                 <div onClick={() => toggleRow(row.expiry)} style={{ cursor: "pointer" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -2906,7 +2910,7 @@ function VencimientosCard({ rows, onOpen }) {
                              asignación), verde suave = a salvo, sin fondo = sin precio. El texto queda neutro
                              (solo la etiqueta de bloque conserva su color) — un único canal visual, sin ruido. */
                           return (
-                        <div key={i} style={{ padding: "5px 8px", borderRadius: 8, background: dgr == null ? "transparent" : danger ? T.tileRed : T.tileGreen }}>
+                        <div key={i} style={{ padding: "6px 9px", borderRadius: 9, background: dgr == null ? T.tile : danger ? T.tileRed : T.tileGreen, boxShadow: T.raiseSm /* v4.34: las filas sin semáforo iban transparentes y en oscuro flotaban sueltas junto a las tintadas; ahora todas son una sub-tarjeta elevada y el color sigue siendo el único canal del semáforo */ }}>
                           {/* v5.10: el texto largo ahora ENVUELVE dentro del cuadro (antes nowrap y se salía o se
                              cortaba). Los credit spreads muestran sus dos alas (put spread · call spread) y los
                              DC/DD sus strikes P/C, en vez de un strike vacío.
