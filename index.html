@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.35"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.36"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4354,8 +4354,14 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
       if (pendingAction.action === "legL") openLeg("L");
       /* v4.35: si venimos del banner de vencidas (u otra pantalla), esta fila puede estar muy abajo
          del bloque. Se desplaza sola hasta ella para que se vea el formulario que se acaba de abrir
-         — si no, el botón parece no haber hecho nada. El timeout deja pintar la hoja primero. */
-      setTimeout(() => { try { filaRef.current && filaRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {} }, 80);
+         — si no, el botón parece no haber hecho nada. El timeout deja pintar la hoja primero.
+         v4.36: "edit" no abre una hoja, despliega la edición dentro de la propia fila y la hace muy
+         alta — centrarla dejaría la cabecera fuera de pantalla. Para ese caso, "start" (arriba) y un
+         respiro mayor, que el formulario tarda más en montarse que una hoja. */
+      const editando = pendingAction.action === "edit";
+      setTimeout(() => {
+        try { filaRef.current && filaRef.current.scrollIntoView({ behavior: "smooth", block: editando ? "start" : "center" }); } catch (e) {}
+      }, editando ? 160 : 80);
       clearPending && clearPending();
     }
   }, [pendingAction]);
@@ -10222,9 +10228,28 @@ function App() {
      menú no se abría, sin error ni aviso. Se arregla el llamador y, para que no vuelva a pasar en
      silencio, aquí se acepta indistintamente la posición o su id. */
   const openSheet = (p) => { setSheetPosId(p && typeof p === "object" ? p.id : p); setSheetConfirmDel(false); setExpPmccOpen(false); setExpPmccNote(""); };
+  /* v4.36: saltar a la pestaña del bloque de una posición, SIN pasar por selectTab cuando ya estamos
+     en ella. Ese atajo tiene un re-tap deliberado ("volver a tocar la pestaña activa cierra todas las
+     ediciones abiertas") que aquí sería justo lo contrario de lo que queremos: cerraría la edición que
+     acabamos de abrir. */
+  const irAlBloqueDe = (p) => {
+    if (p && BLOCKS.some((b) => b.id === p.block) && activeTab !== p.block) selectTab(p.block);
+  };
   const sheetDo = (action) => {
     if (!sheetPos) return;
-    if (action === "edit") { setEditSet((s) => new Set(s).add(sheetPos.id)); }
+    /* v4.36 (Victor: "Resolver y cerrar funciona pero Resolver y editar no hace nada"): "Editar" no
+       abre ninguna ventana propia — despliega la edición DENTRO de la fila de la posición, y esa fila
+       solo existe en la pestaña de su bloque. Marcarla como editable desde Vencimientos no se veía en
+       ninguna parte. Necesita exactamente el mismo viaje que Cerrar/Rolar: pestaña del bloque, vista
+       Portfolio y desplazar la fila a la vista. Se apunta también como acción pendiente, que es lo que
+       dispara ese desplazamiento en la fila. (`lotes` y `dividendos` no lo necesitan: esos sí abren su
+       propia ventana por encima de todo, se vean desde donde se vean.) */
+    if (action === "edit") {
+      setEditSet((s) => new Set(s).add(sheetPos.id));
+      setPendingAction({ id: sheetPos.id, action });
+      irAlBloqueDe(sheetPos);
+      if (view !== "bloques") selectView("bloques");
+    }
     if (action === "lotes") { setEditLotsId(sheetPos.id); }
     if (action === "dividendos") { setEditDivId(sheetPos.id); }
     /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio
@@ -10236,7 +10261,7 @@ function App() {
        con otro bloque) el formulario no aparecía nunca y el botón parecía no hacer nada. */
     if (action === "roll" || action === "close" || action === "legS" || action === "legL") {
       setPendingAction({ id: sheetPos.id, action });
-      if (BLOCKS.some((b) => b.id === sheetPos.block)) selectTab(sheetPos.block);
+      irAlBloqueDe(sheetPos);
       if (view !== "bloques") selectView("bloques");
     }
     if (action === "reopen") { reopenPos(sheetPos.id); }
