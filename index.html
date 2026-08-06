@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.38"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.39"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1329,16 +1329,18 @@ function EarningsHint({ tkr, expiry }) {
   const line = (bg, col, txt) => (
     <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>{txt}</div>
   );
-  if (st.k === "nokey") return line(T.tile, T.sub, "Sin key de Finnhub en Ajustes — no puedo comprobar earnings antes del vencimiento.");
-  if (st.k === "busy") return line(T.tile, T.sub, "⏳ Comprobando earnings de " + sym + "…");
+  /* v4.39: fuera el nombre del proveedor (Victor: "que no ponga nada de Finnhub") y fuera la coletilla
+     de los ADRs, que se muda al aviso de dividendo. Aquí solo: TICKER · qué pasa con los earnings. */
+  if (st.k === "nokey") return line(T.tile, T.sub, sym + " · sin dato de earnings. Falta la key en Ajustes → API keys → Precios.");
+  if (st.k === "busy") return line(T.tile, T.sub, "⏳ " + sym + " · comprobando earnings…");
   if (st.k !== "done" || st.sym !== sym) return null;
   const d = st.data;
-  if (!d) return line(T.tile, T.sub, "Finnhub no respondió — sin dato de earnings para " + sym + ". Compruébalo a mano si es carril B.");
-  if (d.none) return line(T.tile, T.sub, "Sin earnings de " + sym + " en los próximos 60 días (Finnhub). Ojo: los ADRs a veces no aparecen.");
+  if (!d) return line(T.tile, T.sub, sym + " · sin dato de earnings (el servicio no respondió). Compruébalo a mano si es carril B.");
+  if (d.none) return line(T.tile, T.sub, sym + " · sin earnings en los próximos 60 días.");
   const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
   const hTxt = d.hour === "bmo" ? " (antes de la apertura)" : d.hour === "amc" ? " (tras el cierre)" : d.hour === "dmh" ? " (en sesión)" : "";
-  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ Earnings de " + sym + " el " + dTxt + hTxt + " — DENTRO del vencimiento. Documentar y valorar sizing.");
-  return line(T.tile, T.sub, "Earnings de " + sym + " el " + dTxt + " — después del vencimiento. ✓");
+  if (d.date <= exp) return line(T.tileAmber, T.gold, "⚠️ " + sym + " · earnings el " + dTxt + hTxt + " — DENTRO del vencimiento. Documentar y valorar sizing.");
+  return line(T.tile, T.sub, sym + " · earnings el " + dTxt + " — después del vencimiento. ✓");
 }
 /* v4.06: fecha ex-dividend del subyacente. El plan gratis de Finnhub NO da dividendos (endpoint de
    pago), así que la fuente es Alpha Vantage OVERVIEW (gratis, misma key 25/día que ya usa Earnings).
@@ -1379,27 +1381,37 @@ function ExDivHint({ tkr, expiry, right }) {
     return () => { dead = true; clearTimeout(t); };
   }, [sym]);
   if (!sym || st.k === "idle") return null;
-  const line = (bg, col, txt) => (
-    <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>{txt}</div>
+  /* v4.39 (Victor: "el aviso de dividendo, que ponga solamente el ticker y próximo dividendo en fecha
+     y luego el aviso de cuidado a veces los ADRs no aparecen. Que no ponga nada de Finnhub").
+     El aviso tenía forma distinta en cada caso y colaba el nombre del proveedor ("según Alpha
+     Vantage"), que a él no le dice nada. Ahora la forma es siempre la misma: TICKER · qué pasa con el
+     dividendo y cuándo, y debajo, en gris pequeño, la advertencia de los ADRs. La coletilla de los
+     ADRs vivía en el aviso de EARNINGS; se muda aquí, que es donde él la quiere. */
+  const ADR = "Ojo: los ADRs a veces no aparecen.";
+  const line = (bg, col, txt, nota) => (
+    <div style={{ background: bg, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: col, lineHeight: 1.45 }}>
+      {txt}
+      {nota ? <div style={{ marginTop: 3, fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>{nota}</div> : null}
+    </div>
   );
-  if (st.k === "nokey") return line(T.tile, T.sub, "Sin key de Alpha Vantage en Ajustes → API keys — no puedo comprobar el ex-dividend de " + sym + ".");
-  if (st.k === "busy") return line(T.tile, T.sub, "⏳ Comprobando ex-dividend de " + sym + "…");
+  if (st.k === "nokey") return line(T.tile, T.sub, sym + " · sin dato de dividendo. Falta la key en Ajustes → API keys → Dividendos.", ADR);
+  if (st.k === "busy") return line(T.tile, T.sub, "⏳ " + sym + " · comprobando dividendo…");
   if (st.k !== "done" || st.sym !== sym) return null;
   const d = st.data;
-  if (!d) return line(T.tile, T.sub, "Alpha Vantage no respondió — sin dato de ex-dividend para " + sym + ".");
-  if (d.limit) return line(T.tile, T.sub, "Alpha Vantage: límite diario agotado (25/día) — sin dato de ex-dividend hoy.");
-  if (d.none) return line(T.tile, T.sub, sym + " no reparte dividendo (según Alpha Vantage). ✓");
+  if (!d) return line(T.tile, T.sub, sym + " · sin dato de dividendo (el servicio no respondió).", ADR);
+  if (d.limit) return line(T.tile, T.sub, sym + " · sin dato de dividendo hoy (límite diario agotado, 25/día).", ADR);
+  if (d.none) return line(T.tile, T.sub, sym + " · sin dividendo.", ADR);
   const today = new Date().toISOString().slice(0, 10);
   const dTxt = new Date(d.date + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
-  if (d.date < today) return line(T.tile, T.sub, "Último ex-dividend de " + sym + ": " + dTxt + " (ya pasado; el próximo aún no está anunciado — suelen repetir cadencia trimestral).");
+  if (d.date < today) return line(T.tile, T.sub, sym + " · último dividendo: " + dTxt + ". El próximo aún no está anunciado.", ADR);
   if (okExp && d.date <= exp) {
     const extra = right === "C"
       ? " Una call corta ITM con extrínseco menor que el dividendo tiene riesgo de asignación la víspera."
       : " Ese día el precio abre descontando el dividendo.";
-    return line(T.tileAmber, T.gold, "⚠️ Ex-dividend de " + sym + " el " + dTxt + " — DENTRO del nuevo vencimiento." + extra);
+    return line(T.tileAmber, T.gold, "⚠️ " + sym + " · próximo dividendo: " + dTxt + " — DENTRO del nuevo vencimiento." + extra, ADR);
   }
-  if (okExp) return line(T.tile, T.sub, "Ex-dividend de " + sym + " el " + dTxt + " — después del nuevo vencimiento. ✓");
-  return line(T.tile, T.sub, "Ex-dividend de " + sym + ": " + dTxt + ".");
+  if (okExp) return line(T.tile, T.sub, sym + " · próximo dividendo: " + dTxt + " — después del nuevo vencimiento. ✓", ADR);
+  return line(T.tile, T.sub, sym + " · próximo dividendo: " + dTxt + ".", ADR);
 }
 async function fetchQuote(symbol, key) {
   try {
