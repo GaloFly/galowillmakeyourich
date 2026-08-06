@@ -1,5 +1,26 @@
 # CHANGELOG — Bloques
 
+Bloques v4.38 — La cabecera "Posiciones · Ver P&L" iba pegada a la primera tarjeta
+
+## El síntoma
+Victor, sobre la v4.37: *"muy bien, lo único que Posiciones y Ver P&L se quedan un poco pegados"*.
+
+## La causa
+Esa cabecera llevaba `marginBottom: 2`. La equivalente de Exposición —la que él usa de referencia
+porque "se lee mucho mejor"— lleva **12**. Medido en pantalla: 2 px contra 12.
+
+Con las filas planas casi no cantaba. Pero la v4.37 acaba de devolverles la sombra, y una tarjeta con
+relieve necesita aire alrededor para que el relieve se lea: pegada a 2 px, la cabecera parecía
+apoyada encima de la primera tarjeta en vez de titularla.
+
+## El arreglo
+`marginBottom: 12`, igual que Exposición. Un número.
+
+## Verificación
+Chromium (viewport iPhone 390×844), midiendo el hueco entre el borde inferior de la cabecera y el
+borde superior de la primera tarjeta: pasa de **2 px a 12 px**. Sin errores en consola.
+`npm run build` ok (`app v4.38`), `node --check dist/app.js` pasa.
+
 Bloques v4.37 — Las filas de Posiciones cambiaban de forma, y su relieve nunca se llegaba a pintar
 
 ## El síntoma
