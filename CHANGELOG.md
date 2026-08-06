@@ -1,5 +1,51 @@
 # CHANGELOG — Bloques
 
+Publicación — se cambia el mecanismo (no toca la app)
+
+## La pregunta
+Victor: *"¿por qué está costando tanto hoy con este proyecto? Con mi otra app no tengo problemas con
+nuestros updates"*.
+
+## La respuesta
+Ni una sola vez falló el código: las ocho versiones del día compilaron a la primera. Lo que falló
+—nueve veces— fue siempre el mismo paso, el de **publicar en GitHub Pages**, de tres formas:
+la cola de Pages parada cerca de una hora, un 503 del servicio de credenciales OIDC, y colas de
+arranque de 6 minutos.
+
+Y hay tres cosas propias de este proyecto que lo agravan:
+
+1. `actions/deploy-pages` **no empuja ficheros**: crea un despliegue y espera en una cola compartida.
+2. Se rinde a los 10 minutos —techo duro, ya se comprobó que no se puede subir— y **al rendirse
+   cancela el despliegue**. Como GitHub lo identifica por el commit, ese commit queda inservible
+   para siempre. Un fallo obligaba a un commit nuevo entero: un tropiezo se convertía en tres.
+3. Se publicaron ocho versiones en un día. Ocho tiradas contra una cola atascada.
+
+## El cambio
+Publicar pasa a ser un `git push` de la carpeta `dist/` a la rama **`gh-pages`**, que es lo que
+sirve Pages. Sin cola, sin tope de 10 minutos y sin quemar el commit: el mismo commit se puede
+reintentar las veces que haga falta.
+
+Se añade además una **red de seguridad** que el camino viejo cubría solo: antes de empujar se
+comprueba que `dist/index.html` y `dist/app.js` existen, no están vacíos y llevan el marcador de
+versión. Si algo falla, para y no publica, en vez de dejar la web en blanco.
+
+## Transición
+De momento conviven los DOS caminos a propósito, para que la web no se quede sin actualizar. Manda
+el viejo mientras Settings → Pages siga en "GitHub Actions"; la rama `gh-pages` solo se va llenando.
+
+**Pendiente de una persona:** Settings → Pages → Source: "Deploy from a branch" → `gh-pages` ·
+carpeta `/ (root)`. En cuanto esté pulsado hay que **borrar el job `deploy`** del workflow, que a
+partir de ahí daría error siempre.
+
+## Verificación
+- YAML validado con `yaml.safe_load`; los dos jobs y los permisos salen como toca.
+- Ensayo en local de los comandos exactos de publicación sobre el `dist/` real: commit creado con
+  los **10 ficheros** correctos (`.nojekyll`, `index.html`, `app.js`, `sw.js`, manifest, iconos y
+  `vendor/`), y el marcador leído bien (`APP_VERSION = "4.40"`).
+- Ensayo del caso malo: con `dist/index.html` vacío, la comprobación **para con código 1** y no
+  publica.
+- La app no se toca: `APP_VERSION` sigue en 4.40.
+
 Bloques v4.40 — Fuera los nombres de proveedores de TODA la app
 
 ## La petición
