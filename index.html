@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.36"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.37"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4246,6 +4246,13 @@ function PosSummaryCard({ p, onClose }) {
 function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, onEditChain, onEditLots }) {
   const filaRef = useRef(null); /* v4.35: para desplazar la fila a la vista cuando se llega aquí desde otra pantalla */
   const detail = optionDetail(p);
+  /* v4.37: en los spreads, optionDetail EMPIEZA por el mismo texto que la insignia de al lado
+     ("Call Debit Spread Call Debit Spread 12,5/7,5 · JAN 15 '27"). Se quita el eco: la insignia ya
+     dice qué estrategia es, la línea de debajo solo tiene que decir strikes y vencimiento. */
+  const chipTxt = p.tipo ? tipoChipLabel(p) : "";
+  const detalle = chipTxt && detail && detail.startsWith(chipTxt) ? detail.slice(chipTxt.length).replace(/^[\s·]+/, "") : detail;
+  /* color del bloque para la insignia (mismo par color/fondo que los chips de Exposición) */
+  const blkTone = BLOCKS.find((b) => b.id === p.block) || { color: T.sub, bg: T.tile };
   const nat = natOf(p);
   const cap = capDesplegado(p);
   const plausible = plausibleOf(p);
@@ -4388,21 +4395,38 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
       )}
       <div onClick={editing ? onDone : onToggle} style={{ cursor: "pointer" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
+          {/* v4.37 (Victor: "el menú de posiciones se lee mal, uno se pierde; el de Exposición se lee
+              mucho mejor"). Medido: la fila de Exposición tiene SIEMPRE la misma forma —identidad +
+              cifra arriba, franja de bloque en medio, rejilla de métricas abajo—, mientras que aquí el
+              detalle del contrato iba en la MISMA línea del ticker con flexWrap. Según lo largo que
+              fuera, unas veces cabía al lado de la insignia y otras saltaba solo: la fila cambiaba de
+              silueta en cada posición y el ojo no podía coger el hábito. Ahora la forma es fija:
+              línea 1 identidad, línea 2 contrato + cantidad, línea 3 métricas. */}
+          <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.tkr || (cash ? "Cash" : "Sin ticker")}</span>
-              {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{tipoChipLabel(p)}</span>}
-              {detail && <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{detail}</span>}
+              {/* la insignia toma el color del bloque, como los chips de Exposición: da un ancla de
+                  color a la tarjeta en vez del gris sobre gris que se perdía */}
+              {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: blkTone.color, background: blkTone.bg, borderRadius: 6, padding: "2px 6px" }}>{tipoChipLabel(p)}</span>}
               {rollChain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{rollChain.length}</span>}
               {p.closed && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>Cerrada</span>}
             </div>
-            {!cash && <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 700, marginTop: 3 }}>× {qtyNum} <span style={{ fontWeight: 600, fontSize: 11 }}>{qtyUnit}</span></div>}
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 14.5, fontWeight: 800, color: T.ink }}>${money2(cap)}</div>
             <div style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{pct(pctCartera, 1)} NLV</div>
           </div>
         </div>
+        {/* LÍNEA 2 — el contrato y la cantidad, juntos y SIEMPRE en su propia línea. Antes la
+            cantidad ocupaba una línea entera ella sola ("× 1 contr.") separada del contrato que
+            describe; ahora van del brazo y se ahorra una línea por tarjeta. */}
+        {(detalle || !cash) && (
+          <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 3, lineHeight: 1.4 }}>
+            {detalle}
+            {detalle && !cash ? <span style={{ opacity: 0.55 }}>{"  ·  "}</span> : null}
+            {!cash && <span style={{ fontWeight: 800 }}>×{qtyNum} <span style={{ fontWeight: 600 }}>{qtyUnit}</span></span>}
+          </div>
+        )}
         {showPnl && !cash && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 7, padding: "6px 10px", borderRadius: 10, background: pnlVal > 0 ? T.tileGreen : pnlVal < 0 ? T.tileRed : T.tile }}>
             <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>P&L{isAutoPnl(p) ? "" : " · manual"}</span>
@@ -4410,7 +4434,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           </div>
         )}
         {!cash && (
-          <div style={{ display: "flex", gap: 8, marginTop: 7, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.line}`, flexWrap: "wrap" }}>
             {showsUnitPremium(p) ? (() => {
               const up = n(p.prima);
               const upStr = (up < 0 ? "−$" : "$") + money2(Math.abs(up));

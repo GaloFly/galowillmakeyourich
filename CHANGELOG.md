@@ -1,5 +1,50 @@
 # CHANGELOG — Bloques
 
+Bloques v4.37 — Las filas de Posiciones cambiaban de forma en cada tarjeta (PENDIENTE DE APROBAR)
+
+> **Ojo: esto NO está desplegado.** Vive solo en la rama de desarrollo, a la espera de que Victor
+> elija entre las dos variantes. No mergear a `main` sin su visto bueno.
+
+## El síntoma
+Victor, con dos capturas (Posiciones de B3 y Exposición): *"el menú de las posiciones de cada bloque
+es difícil de leer, se pierde uno un poco; el de las exposiciones se lee mucho mejor, ¿igual por el
+relieve?"*.
+
+## La causa (no era el relieve)
+Las dos pantallas tienen el mismo relieve desde la v4.17. Lo que cambia es la **silueta**:
+- **Exposición** tiene siempre tres pisos idénticos: identidad + cifra · franja de chips de bloque ·
+  rejilla de métricas. El ojo coge el hábito en dos tarjetas.
+- **Posiciones** metía el detalle del contrato en la MISMA línea del ticker, con `flexWrap`. Según lo
+  largo que fuera, unas veces cabía al lado de la insignia y otras saltaba solo. En su propia captura:
+  MRLN (texto largo) baja a su línea, la QQQ de debajo (texto corto) se queda arriba. Dos tarjetas
+  seguidas, dos siluetas distintas. Eso es perderse.
+
+Tres agravantes:
+1. En los spreads la estrategia salía **dos veces**: la insignia decía "Call Debit Spread" y la línea
+   de debajo volvía a empezar por "Call Debit Spread 12,5/7,5 · JAN 15 '27".
+2. `× 10 contr.` ocupaba una línea entera él solo, separado del contrato que describe.
+3. Todo gris sobre gris, sin una sola mancha de color que anclara la mirada — mientras que Exposición
+   tiene los chips de bloque.
+
+## El arreglo
+Silueta fija de tres pisos, igual que Exposición:
+- **Piso 1** — identidad: ticker + insignia (ahora con el **color del bloque**, el ancla que faltaba)
+  y, a la derecha, capital y % NLV.
+- **Piso 2** — contrato **y** cantidad, juntos y siempre en su propia línea, sin el eco del nombre de
+  la estrategia.
+- **Piso 3** — la rejilla de métricas de siempre.
+
+Dos variantes a decidir: **A** solo lo anterior; **B** añade un filete fino sobre las métricas (el
+mismo recurso que usa Exposición). La tarjeta crece ~8 px y se lee en dos mitades limpias. En el
+código está puesta la **B**; para volver a la A basta quitar el `borderTop` de la rejilla.
+
+## Verificación
+Chromium (viewport iPhone 390×844) con las cinco posiciones de B3 de su captura sembradas (MRLN Call
+Debit Spread, tres QQQ DD/DC y una SPX DC): las cinco tarjetas salen con la misma silueta, el eco de
+"Call Debit Spread" desaparece y la línea larga de la QQQ (`P 665/660 · C 715/720 JUL 31 '26 · ×1
+contr.`) entra en una sola línea. Sin errores en consola. `npm run build` ok (`app v4.37`),
+`node --check dist/app.js` pasa.
+
 Bloques v4.36 — "Resolver → Editar" tampoco hacía nada
 
 ## El síntoma
