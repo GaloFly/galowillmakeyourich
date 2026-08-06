@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+Bloques v4.40 — Fuera los nombres de proveedores de TODA la app
+
+## La petición
+Victor, sobre la nota de la v4.39 (*"las otras pantallas siguen nombrando a Finnhub… si también las
+quiere sin nombre, es un momento"*): **"Quítalo sí"**.
+
+## Lo que había
+La v4.39 limpió el diálogo de rolar. Fuera de ahí quedaban **33 sitios** con el nombre del proveedor
+a la vista: los títulos de Ajustes ("Precios (Finnhub)", "Dividendos (Alpha Vantage)", "Lector de
+capturas (Gemini)"), las cabeceras de los tres modales de key, los mensajes de error del Comparador
+("Finnhub HTTP 429", "Alpha Vantage: límite agotado", "Gemini falló…") y varios avisos sueltos.
+
+Son nombres de fontanería. A él no le dicen nada: quiere saber **qué** no funciona, no **quién**.
+
+## El arreglo
+Todo pasa a nombrarse por su función:
+
+| Antes | Ahora |
+|---|---|
+| `Precios (Finnhub)` | `Precios` |
+| `Dividendos (Alpha Vantage)` | `Dividendos` |
+| `Lector de capturas (Gemini)` | `Lector de capturas` |
+| `Cotizaciones en vivo vía Finnhub` | `Cotizaciones en vivo del subyacente` |
+| `API key de Finnhub` | `Key de precios` |
+| `Falta la key de Finnhub (Ajustes)` | `Falta la key de precios — actívala en Ajustes → API keys → Precios` |
+| `Finnhub HTTP 429` / `Finnhub saturado` | `servicio de earnings saturado (429)` |
+| `Alpha Vantage: límite (25/día o 5/min) agotado` | `límite diario agotado (25/día o 5/min)` |
+| `Gemini falló: …` | `El lector de capturas falló: …` |
+| `Sin earnings de X en el calendario de Finnhub` | `Sin earnings de X en los próximos 60 días.` |
+
+## Dónde SÍ se conserva, y por qué
+En dos frases, y solo como **dirección web para conseguir o recopiar la key**:
+- `Gratis en finnhub.io/register` (modal de la key de precios)
+- `Gratis en alphavantage.co/support/#api-key` (modal de la key de dividendos)
+- `Si dice "key inválida", cópiala de nuevo en finnhub.io/dashboard`
+
+Sin esas direcciones el mensaje no se puede accionar: no sabría a qué web ir. Ahí el nombre no es una
+firma al pie de un dato, es la señal de la carretera.
+
+## Verificación
+- **33 sustituciones** aplicadas (23 + 10), todas confirmadas una a una: el script aborta si alguna
+  cadena no aparece tal cual.
+- Barrido del `dist/app.js` compilado extrayendo **solo literales de texto**: las únicas apariciones
+  que quedan son las tres direcciones web de arriba, los identificadores internos
+  (`bloques_finnhub_key`, `gemini-2.5-flash`), las URLs de los endpoints y comentarios del código.
+- Chromium (viewport iPhone 390×844) en Ajustes: la sección API keys muestra **Precios · Lector de
+  capturas · Dividendos**, y el texto completo de la pantalla no contiene "Finnhub", "Alpha Vantage"
+  ni "Gemini". Sin errores en consola.
+- `npm run build` ok (`app v4.40`), `node --check dist/app.js` pasa.
+
 Bloques v4.39 — Los avisos del roll, en su idioma y sin nombres de proveedores
 
 ## El síntoma
