@@ -1,5 +1,38 @@
 # CHANGELOG — Bloques
 
+Bloques v4.36 — "Resolver → Editar" tampoco hacía nada
+
+## El síntoma
+Victor, probando la v4.35: *"Resolver y cerrar funciona pero Resolver y editar no hace nada"*.
+
+## La causa
+La v4.35 arregló Cerrar y Rolar, pero **Editar se quedó fuera**, y por el mismo motivo. Editar no
+abre ninguna ventana propia: despliega el formulario **dentro de la fila** de la posición, y esa fila
+solo existe en la pestaña de su bloque. Desde Vencimientos se marcaba la posición como editable… y
+no había ninguna fila en pantalla donde verlo.
+
+(`Lotes` y `Dividendos` no sufren esto: esos sí abren su propia ventana por encima de todo.)
+
+## El arreglo
+Editar hace ahora el mismo viaje que Cerrar y Rolar: salta a la **pestaña del bloque**, cambia a
+Portfolio y **desplaza la fila hasta la vista**.
+
+Con una trampa que hubo que esquivar: el atajo que cambia de pestaña tiene un re-tap deliberado
+—"volver a tocar la pestaña activa cierra todas las ediciones abiertas"— que aquí habría cerrado la
+edición recién abierta si ya estabas en ese bloque. Ahora solo se cambia de pestaña cuando de verdad
+hace falta.
+
+Y el desplazamiento se ajusta al caso: para Cerrar/Rolar la fila se **centra** (la hoja es pequeña);
+para Editar se alinea **arriba** y con algo más de espera, porque el formulario es largo y centrarlo
+dejaría su cabecera fuera de pantalla.
+
+## Verificación
+Chromium (viewport iPhone 390×844), dos escenarios:
+- **Desde Vencimientos** → Resolver en la TMDX (B2) → Editar: aterriza en Portfolio, pestaña
+  **Bloque 2 · Income**, con "Editar posición" abierto sobre la TMDX.
+- **Ya dentro de B2**, tocando la fila → Editar: la edición se abre y **no** se borra por el re-tap.
+- Sin errores en consola. `npm run build` ok (`app v4.36`), `node --check dist/app.js` pasa.
+
 Bloques v4.35 — Los botones "Resolver" de Vencimientos no hacían nada
 
 ## El síntoma
