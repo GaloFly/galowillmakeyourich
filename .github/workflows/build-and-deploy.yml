@@ -48,6 +48,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ---------------------------------------------------------------------------------------------
+  # CAMINO VIEJO — compila y deja el artefacto para actions/deploy-pages.
+  # Va SEPARADO del camino nuevo a propósito: si `publicar` falla, este tiene que seguir sacando la
+  # web igual. (En el primer intento los encadené con `needs` y fue un error mío: un fallo del
+  # camino nuevo habría dejado la app sin publicar por ningún sitio.)
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  # ⚠️ CAMINO VIEJO — BORRAR este job (y `build`) en cuanto Settings → Pages apunte a gh-pages.
+  # A partir de ese momento fallaría siempre ("Pages site not configured for GitHub Actions").
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ---------------------------------------------------------------------------------------------
+  # CAMINO NUEVO — empuja dist/ a la rama gh-pages. Independiente del de arriba.
   publicar:
     runs-on: ubuntu-latest
     steps:
@@ -66,8 +98,10 @@ jobs:
           test -s dist/index.html || { echo "::error::dist/index.html no existe o está vacío"; exit 1; }
           test -s dist/app.js     || { echo "::error::dist/app.js no existe o está vacío"; exit 1; }
           grep -q 'APP_VERSION' dist/index.html || { echo "::error::dist/index.html sin marcador de versión"; exit 1; }
-          echo "Publicando $(grep -o 'APP_VERSION = \"[0-9.]*\"' dist/index.html | head -1)"
+          echo "Publicando $(grep -o 'APP_VERSION = "[0-9.]*"' dist/index.html | head -1)"
 
+      # Aviso claro si el token viene en solo-lectura: es el fallo más probable la primera vez.
+      # Settings → Actions → General → Workflow permissions → "Read and write permissions".
       - name: Publicar dist/ en la rama gh-pages
         run: |
           set -e
@@ -81,24 +115,9 @@ jobs:
           git commit -q -m "Publica ${GITHUB_SHA}"
           # force-push de un único commit: gh-pages es un espejo del compilado, no un historial.
           # El historial de verdad vive en main.
-          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
+          if ! git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages; then
+            echo "::error::No se pudo empujar gh-pages. Si el error es 403, el token del robot está en solo-lectura: Settings → Actions → General → Workflow permissions → Read and write permissions."
+            exit 1
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Solo hace falta mientras siga vivo el job `deploy` de abajo. Se borra con él.
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  # ⚠️ CAMINO VIEJO — BORRAR este job entero en cuanto Settings → Pages apunte a la rama gh-pages.
-  # A partir de ese momento fallaría siempre ("Pages site not configured for GitHub Actions").
-  # Se deja de momento para que la web no se quede sin actualizar antes de pulsar el ajuste.
-  deploy:
-    needs: publicar
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
