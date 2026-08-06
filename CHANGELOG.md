@@ -33,6 +33,12 @@ Chromium (viewport iPhone 390×844), dos escenarios:
 - **Ya dentro de B2**, tocando la fila → Editar: la edición se abre y **no** se borra por el re-tap.
 - Sin errores en consola. `npm run build` ok (`app v4.36`), `node --check dist/app.js` pasa.
 
+## Nota de despliegue
+GitHub Pages seguía inestable ese día (ver la nota de la v4.35). El primer intento de publicar esta
+v4.36 volvió a morir con la cola parada a los 10 minutos, así que hizo falta un commit nuevo para
+reintentarlo — el anterior queda inservible en cuanto el robot cancela su despliegue. Nada de la app
+cambia entre uno y otro: mismo `APP_VERSION` 4.36 y mismo hash de compilación (`7a3df6ed03b3`).
+
 Bloques v4.35 — Los botones "Resolver" de Vencimientos no hacían nada
 
 ## El síntoma
