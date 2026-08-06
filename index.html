@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.37"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.38"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5164,7 +5164,11 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
 
       <div style={{ marginTop: 14 }}>
         {positions.length > 0 && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+          /* v4.38 (Victor: "Posiciones y Ver P&L se quedan un poco pegados"). Medido: 2 px entre esta
+             cabecera y la primera tarjeta, contra los 12 de la cabecera de Exposición. Con las filas
+             planas casi no se notaba; ahora que la v4.37 les devolvió la sombra, la cabecera parecía
+             apoyada encima de la primera tarjeta. Se iguala a 12, como Exposición. */
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 11, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Posiciones</span>
             <button onClick={togglePnl} style={{ background: showPnl ? blk.color : T.tile, border: "none", borderRadius: 10, padding: "5px 12px", fontSize: 11.5, fontWeight: 800, color: showPnl ? "#fff" : T.sub, cursor: "pointer" }}>{showPnl ? "P&L visible" : "Ver P&L"}</button>
           </div>
