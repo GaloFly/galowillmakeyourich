@@ -15,9 +15,15 @@ permissions:
   pages: write
   id-token: write
 
+# cancel-in-progress: false a propósito (v4.35). Con `true`, si un despliegue de Pages se queda en
+# cola —cosa que pasa cuando el servicio va con retraso— y llega otro empujón, se CANCELA el que
+# estaba a medias. Y GitHub identifica cada despliegue por el commit: una vez marcado como cancelado,
+# ese commit ya no se puede volver a publicar nunca (todo reintento contesta "Deployment cancelled")
+# y hace falta un commit nuevo para desatascarlo. Pasó justo con la v4.35. Mejor dejar que el que
+# está en vuelo termine y que el siguiente espere su turno.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -41,3 +47,7 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # Por defecto son 10 minutos y se agotaron el 6-ago-2026 con Pages atascado en cola.
+          # 20 minutos: si el servicio va lento, se espera en vez de abortar y envenenar el commit.
+          timeout: 1200000

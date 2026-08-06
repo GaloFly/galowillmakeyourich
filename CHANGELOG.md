@@ -35,6 +35,18 @@ vencida:
   abierto. En la short put (B2) → pestaña **Bloque 2**, formulario "Cerrar TMDX". Sin errores.
 - `npm run build` ok (`app v4.35`), `node --check dist/app.js` pasa.
 
+## Nota de despliegue (mismo día, sin tocar la app)
+La publicación de esta v4.35 falló tres veces seguidas, y no por el código: GitHub Pages se quedó
+**10 minutos con el despliegue en cola** hasta que el robot abortó por tiempo. Al abortar, canceló
+el despliegue — y GitHub identifica cada despliegue por el commit, así que ese commit quedó marcado
+como cancelado **para siempre**: todos los reintentos contestaban ya "Deployment cancelled" y hacía
+falta un commit nuevo para desatascarlo.
+
+Arreglada la causa en `.github/workflows/build-and-deploy.yml`, sin tocar ni una línea de la app:
+- **Espera de 20 minutos** en vez de 10 antes de rendirse, para que un atasco del servicio no aborte.
+- **`cancel-in-progress: false`**: si llega otro empujón mientras hay un despliegue en vuelo, ahora
+  espera su turno en vez de cancelarlo. Cancelar era justo lo que envenenaba el commit.
+
 Bloques v4.34 — Relieve en las fichas de fecha de Vencimientos (se veían planas en oscuro)
 
 ## El síntoma
