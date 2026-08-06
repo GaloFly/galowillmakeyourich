@@ -1,9 +1,6 @@
 # CHANGELOG — Bloques
 
-Bloques v4.37 — Las filas de Posiciones cambiaban de forma en cada tarjeta (PENDIENTE DE APROBAR)
-
-> **Ojo: esto NO está desplegado.** Vive solo en la rama de desarrollo, a la espera de que Victor
-> elija entre las dos variantes. No mergear a `main` sin su visto bueno.
+Bloques v4.37 — Las filas de Posiciones cambiaban de forma, y su relieve nunca se llegaba a pintar
 
 ## El síntoma
 Victor, con dos capturas (Posiciones de B3 y Exposición): *"el menú de las posiciones de cada bloque
@@ -34,16 +31,33 @@ Silueta fija de tres pisos, igual que Exposición:
   la estrategia.
 - **Piso 3** — la rejilla de métricas de siempre.
 
-Dos variantes a decidir: **A** solo lo anterior; **B** añade un filete fino sobre las métricas (el
-mismo recurso que usa Exposición). La tarjeta crece ~8 px y se lee en dos mitades limpias. En el
-código está puesta la **B**; para volver a la A basta quitar el `borderTop` de la rejilla.
+Más un filete fino sobre las métricas, el mismo recurso que usa Exposición: la tarjeta crece ~8 px y
+se lee en dos mitades limpias.
+
+## Y el relieve, que llevaba desde la v4.14 sin verse
+Victor, sobre la propuesta: *"la B, pero ¿puedes darle el mismo relieve que tienen en Exposición?"*.
+
+Aquí estaba lo bueno: la fila de posición **ya traía `boxShadow: T.raise`**, exactamente el mismo que
+Exposición, desde la v4.14. Nunca se pintó. La culpa es de `SwipeDelete`, el envoltorio que permite
+deslizar la fila para eliminarla: lleva `overflow: hidden` (necesario para esconder el botón rojo
+mientras no se desliza) y la sombra, que se dibuja FUERA de la caja de la fila, quedaba recortada al
+ras del borde. Es el mismo fallo que ya nos comió las sombras en las filas deslizables de pestañas.
+
+Medido en las capturas de Victor, muestreando la luminancia del hueco entre dos tarjetas:
+- Exposición: `45 · 9 10 11 12 13 14 15 16 17 · 46` — el degradado de la sombra, caída de 37.
+- Posiciones: `46 · 24 24 24 24 24 24 24 24 24 · 46` — plano. Ni rastro.
+
+El arreglo: sombra y filete pasan al envoltorio `SwipeDelete`. `overflow: hidden` recorta a los
+descendientes, **no** la sombra del propio elemento, así que ahí sí se pinta.
 
 ## Verificación
 Chromium (viewport iPhone 390×844) con las cinco posiciones de B3 de su captura sembradas (MRLN Call
-Debit Spread, tres QQQ DD/DC y una SPX DC): las cinco tarjetas salen con la misma silueta, el eco de
-"Call Debit Spread" desaparece y la línea larga de la QQQ (`P 665/660 · C 715/720 JUL 31 '26 · ×1
-contr.`) entra en una sola línea. Sin errores en consola. `npm run build` ok (`app v4.37`),
-`node --check dist/app.js` pasa.
+Debit Spread, tres QQQ DD/DC y una SPX DC):
+- Las cinco tarjetas salen con la misma silueta, el eco de "Call Debit Spread" desaparece y la línea
+  larga de la QQQ (`P 665/660 · C 715/720 JUL 31 '26 · ×1 contr.`) entra en una sola línea.
+- El hueco entre tarjetas mide ahora `9 9 9 10 10 11 11 12 13 13 13 14 15 15 15…`, **idéntico** al de
+  Exposición en la misma escala. Caída de 37 en las dos.
+- Sin errores en consola. `npm run build` ok (`app v4.37`), `node --check dist/app.js` pasa.
 
 Bloques v4.36 — "Resolver → Editar" tampoco hacía nada
 
