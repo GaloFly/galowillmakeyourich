@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.34"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.35"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -4244,6 +4244,7 @@ function PosSummaryCard({ p, onClose }) {
 }
 
 function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, onEditChain, onEditLots }) {
+  const filaRef = useRef(null); /* v4.35: para desplazar la fila a la vista cuando se llega aquí desde otra pantalla */
   const detail = optionDetail(p);
   const nat = natOf(p);
   const cap = capDesplegado(p);
@@ -4351,6 +4352,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
       if (pendingAction.action === "close") openClose();
       if (pendingAction.action === "legS") openLeg("S");
       if (pendingAction.action === "legL") openLeg("L");
+      /* v4.35: si venimos del banner de vencidas (u otra pantalla), esta fila puede estar muy abajo
+         del bloque. Se desplaza sola hasta ella para que se vea el formulario que se acaba de abrir
+         — si no, el botón parece no haber hecho nada. El timeout deja pintar la hoja primero. */
+      setTimeout(() => { try { filaRef.current && filaRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {} }, 80);
       clearPending && clearPending();
     }
   }, [pendingAction]);
@@ -4360,7 +4365,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
     /* v4.14 (Victor, con captura de su app de vuelos: "¿no quedaría mejor en relieve?"): cada
        posición es una tarjeta ELEVADA — como las duty cards de un roster. Lo hundido queda para
        métricas estáticas; lo interactivo se eleva. v4.15: fuera la banda lateral (no le gustó). */
-    <div style={{ background: T.card, borderRadius: 16, padding: 12, boxShadow: T.raise, border: T.edge /* v4.17: mismo formato exacto que las tarjetas de Exposición */ }}>
+    <div ref={filaRef} style={{ background: T.card, borderRadius: 16, padding: 12, boxShadow: T.raise, border: T.edge /* v4.17: mismo formato exacto que las tarjetas de Exposición */ }}>
       {coveredLabel && coveredLabel.length > 0 && natOf(p) === "ACC" && (
         /* v4.18: el banner covered ORIGINAL de vuelta (Victor, con captura: "que sea así") — tile
            violeta con banda y COVERED en versalitas, tal como estaba antes del rediseño */
@@ -10212,13 +10217,28 @@ function App() {
   const editDivPos = editDivId ? positions.find((x) => x.id === editDivId) : null;
   const savePositionEdit = (next) => setPositions((ps) => ps.map((p) => (p.id === next.id ? next : p)));
   const sheetPos = sheetPosId ? positions.find((x) => x.id === sheetPosId) : null;
-  const openSheet = (p) => { setSheetPosId(p.id); setSheetConfirmDel(false); setExpPmccOpen(false); setExpPmccNote(""); };
+  /* v4.35 (Victor: "los botones de Resolver no hacen nada"): esta función espera la POSICIÓN entera,
+     pero el banner de vencidas de Vencimientos le pasaba el id suelto — `p.id` salía undefined y el
+     menú no se abría, sin error ni aviso. Se arregla el llamador y, para que no vuelva a pasar en
+     silencio, aquí se acepta indistintamente la posición o su id. */
+  const openSheet = (p) => { setSheetPosId(p && typeof p === "object" ? p.id : p); setSheetConfirmDel(false); setExpPmccOpen(false); setExpPmccNote(""); };
   const sheetDo = (action) => {
     if (!sheetPos) return;
     if (action === "edit") { setEditSet((s) => new Set(s).add(sheetPos.id)); }
     if (action === "lotes") { setEditLotsId(sheetPos.id); }
     if (action === "dividendos") { setEditDivId(sheetPos.id); }
-    if (action === "roll" || action === "close" || action === "legS" || action === "legL") { setPendingAction({ id: sheetPos.id, action }); if (view !== "bloques") selectView("bloques"); } /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio (v3.46: navegar si venimos de otra pestaña; v3.49 FIX: el id de la pestaña Portfolio es "bloques" — "portfolio" es solo el nombre del ICONO; con el id malo la app caía al fallback Herramientas y la acción pendiente quedaba colgada) */
+    /* roll/cierre: hoja propia, sin abrir el menú de edición; la hoja vive en la fila de Portfolio
+       (v3.46: navegar si venimos de otra pestaña; v3.49 FIX: el id de la pestaña Portfolio es
+       "bloques" — "portfolio" es solo el nombre del ICONO; con el id malo la app caía al fallback
+       Herramientas y la acción pendiente quedaba colgada).
+       v4.35: además hay que saltar a la PESTAÑA DEL BLOQUE de la posición. La acción pendiente solo
+       la recoge la BlockCard de ese bloque, así que llegando a Portfolio con el Resumen abierto (o
+       con otro bloque) el formulario no aparecía nunca y el botón parecía no hacer nada. */
+    if (action === "roll" || action === "close" || action === "legS" || action === "legL") {
+      setPendingAction({ id: sheetPos.id, action });
+      if (BLOCKS.some((b) => b.id === sheetPos.block)) selectTab(sheetPos.block);
+      if (view !== "bloques") selectView("bloques");
+    }
     if (action === "reopen") { reopenPos(sheetPos.id); }
     setSheetPosId(null);
   };
@@ -11320,7 +11340,7 @@ function App() {
                       <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pp.tkr} <span style={{ color: T.sub, fontWeight: 600 }}>· {pp.tipo || "—"}{pp.strike ? " · " + pp.strike + (pp.right || "") : ""}</span></div>
                       <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600 }}>venció {pp.expiry} · B{pp.block} · {pp.broker}</div>
                     </div>
-                    <button onClick={() => openSheet(pp.id)} style={{ background: T.gold, border: "none", borderRadius: 10, padding: "8px 13px", fontSize: 12, fontWeight: 800, color: "#fff", cursor: "pointer", flexShrink: 0 }}>Resolver</button>
+                    <button onClick={() => openSheet(pp)} style={{ background: T.gold, border: "none", borderRadius: 10, padding: "8px 13px", fontSize: 12, fontWeight: 800, color: "#fff", cursor: "pointer", flexShrink: 0 }}>Resolver</button>
                   </div>
                 ))}
                 <div style={{ fontSize: 9.5, color: T.sub, fontWeight: 600, lineHeight: 1.4 }}>Registra el cierre (o la expiración de la corta, en PMCC) para que cartera y estadísticas no queden a medias.</div>
