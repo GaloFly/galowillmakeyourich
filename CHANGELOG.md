@@ -36,7 +36,7 @@ vencida:
 - `npm run build` ok (`app v4.35`), `node --check dist/app.js` pasa.
 
 ## Nota de despliegue (mismo día, sin tocar la app)
-La publicación de esta v4.35 falló tres veces seguidas, y no por el código: GitHub Pages se quedó
+La publicación de esta v4.35 falló **cinco veces seguidas**, y no por el código: GitHub Pages se quedó
 **10 minutos con el despliegue en cola** hasta que el robot abortó por tiempo. Al abortar, canceló
 el despliegue — y GitHub identifica cada despliegue por el commit, así que ese commit quedó marcado
 como cancelado **para siempre**: todos los reintentos contestaban ya "Deployment cancelled" y hacía
@@ -51,7 +51,11 @@ Retocado `.github/workflows/build-and-deploy.yml`, sin tocar ni una línea de la
 
 Con eso, si Pages se atasca más de 10 minutos no hay ajuste que valga: toca esperar a que el
 servicio se recupere y empujar un commit nuevo. Lo que pasó ese día: la cola de Pages estuvo
-**más de 35 minutos** sin mover ficha, con cuatro intentos seguidos muriendo igual.
+**cerca de una hora** sin mover ficha, con cinco intentos seguidos muriendo igual.
+
+**Reintento** (a petición de Victor, "haz commit"): este commit no cambia nada de la app —
+`APP_VERSION` sigue en 4.35 y el código compilado es idéntico. Existe solo para estrenar un commit
+limpio con el que Pages pueda publicar, ya que los anteriores quedaron marcados como cancelados.
 
 Bloques v4.34 — Relieve en las fichas de fecha de Vencimientos (se veían planas en oscuro)
 
