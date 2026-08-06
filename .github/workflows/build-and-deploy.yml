@@ -45,9 +45,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Sin `timeout`: se probó subirlo a 20 min el 6-ago-2026 y la propia acción lo rechaza
+      # ("timeout value is greater than the allowed maximum - timeout set to the maximum of
+      # 600000 milliseconds"). 10 minutos es el techo duro de deploy-pages@v4; poner más solo
+      # imprime un aviso y no cambia nada. Si Pages se atasca por encima de eso, no hay ajuste
+      # que valga: hay que esperar a que el servicio se recupere y volver a empujar.
       - id: deployment
         uses: actions/deploy-pages@v4
-        with:
-          # Por defecto son 10 minutos y se agotaron el 6-ago-2026 con Pages atascado en cola.
-          # 20 minutos: si el servicio va lento, se espera en vez de abortar y envenenar el commit.
-          timeout: 1200000
