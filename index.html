@@ -139,6 +139,11 @@ const KEY_MDATA = "bloques_marketdata_key"; // v1.92: key de marketdata.app para
 const KEY_AVANTAGE = "bloques_alphavantage_key"; // v2.08: key de Alpha Vantage para las FECHAS de earnings pasados (Finnhub gratis solo da futuros)
 const KEY_GEMINI = "bloques_gemini_key";
 const KEY_DARK_OVERRIDE = "bloques_dark_override"; // "dark" | "light" | ausente (= claro, por defecto)
+/* v4.43: servidor propio (el puente a OpenD) — { url, token }. DELIBERADAMENTE NO va al backup:
+   es la única credencial que abre una máquina de Victor, y los backups se comparten por chat
+   (ya ha pasado en este proyecto). Se vuelve a escribir a mano en cada dispositivo — son dos
+   campos — a cambio de que no viaje nunca dentro de un fichero. */
+const KEY_PUENTE = "bloques_puente_v1";
 const GEMINI_MODEL = "gemini-2.5-flash"; // lector de capturas del Comparador (modelo primario)
 /* Modelos que se prueban EN ORDEN si el anterior da 429: cada uno tiene su propio cupo gratuito
    independiente, así que Flash-Lite sigue teniendo margen cuando Flash ya está agotado
@@ -171,7 +176,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.42"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.43"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1413,6 +1418,59 @@ function ExDivHint({ tkr, expiry, right }) {
   if (okExp) return line(T.tile, T.sub, sym + " · próximo dividendo: " + dTxt + " — después del nuevo vencimiento. ✓", ADR);
   return line(T.tile, T.sub, sym + " · próximo dividendo: " + dTxt + ".", ADR);
 }
+/* ---------- SERVIDOR PROPIO (v4.43) — el puente a OpenD -------------------------------------
+   OpenD habla un protocolo propio y solo escucha dentro del servidor, así que el navegador no
+   puede preguntarle nada. `servidor/puente.py` se sienta a su lado y sirve lo mismo por HTTP.
+   Aquí vive TODO lo que la app sabe de ese servidor: una función que llama y traduce el fallo
+   al español. Nada más de la app toca fetch contra el puente.
+
+   Reglas:
+     · Nunca lanza. Devuelve siempre { ok: false, error: "…" } explicado, para que quien llame
+       no tenga que envolver en try y pueda enseñar el motivo en pantalla.
+     · Corta a los 10 s. Sin esto, con el servidor apagado el botón se queda pensando para
+       siempre y parece que la app se ha colgado.
+     · La clave viaja en cabecera, no en la dirección: así no acaba escrita en los registros
+       del túnel ni en el historial del navegador. */
+function puenteUrl(url) {
+  let u = String(url || "").trim();
+  if (!u) return "";
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u; /* pegará "puente.midominio.com" a secas */
+  return u.replace(/\/+$/, "");
+}
+async function puenteFetch(cfg, ruta, params) {
+  const base = puenteUrl(cfg && cfg.url);
+  if (!base) return { ok: false, error: "Falta la dirección del servidor." };
+  if (!(cfg && cfg.token)) return { ok: false, error: "Falta la clave del servidor." };
+  const qs = new URLSearchParams(params || {}).toString();
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const reloj = ctrl ? setTimeout(() => ctrl.abort(), 10000) : null;
+  try {
+    const r = await fetch(base + ruta + (qs ? "?" + qs : ""), {
+      headers: { "X-Bloques-Token": cfg.token },
+      signal: ctrl ? ctrl.signal : undefined,
+      cache: "no-store",
+    });
+    if (reloj) clearTimeout(reloj);
+    if (r.status === 401) return { ok: false, error: "La clave no es correcta — revísala en el servidor con: sudo grep TOKEN /etc/bloques/entorno" };
+    if (r.status === 404) return { ok: false, error: "El servidor responde pero no reconoce esa consulta. ¿Está actualizado el puente?" };
+    let j = null;
+    try { j = await r.json(); } catch (e) { j = null; }
+    if (j && j.ok === false) return { ok: false, error: j.error || "El servidor devolvió un error sin explicar." };
+    if (!r.ok) return { ok: false, error: "El servidor contestó con un error (HTTP " + r.status + ")." };
+    if (!j) return { ok: false, error: "El servidor contestó algo que no se entiende. ¿La dirección apunta al puente?" };
+    return j;
+  } catch (e) {
+    if (reloj) clearTimeout(reloj);
+    const msg = e && e.message ? e.message : "";
+    if (e && e.name === "AbortError") return { ok: false, error: "El servidor no contestó en 10 segundos. ¿Está encendido y el túnel en marcha?" };
+    /* Un fallo de red aquí casi siempre es una de tres: dirección mal escrita, túnel caído, o
+       CORS (el puente no tiene tu dominio en la lista de permitidos). El navegador no dice cuál
+       — por seguridad —, así que se nombran las tres en vez de adivinar. */
+    return { ok: false, error: "No se pudo contactar con el servidor. Comprueba la dirección, que el túnel esté en marcha, y que tu dominio esté en BLOQUES_ORIGENES." + (msg ? " (" + msg + ")" : "") };
+  }
+}
+const puenteConfigurado = (cfg) => !!(cfg && cfg.url && cfg.token);
+
 async function fetchQuote(symbol, key) {
   try {
     const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${key}`);
@@ -5286,6 +5344,11 @@ function SetIcon({ name, color }) {
       {name === "camera" && (<g {...P}><rect x="3" y="6.5" width="18" height="13" rx="2.5" /><path d="M8.5 6.5L10 4h4l1.5 2.5" /><circle cx="12" cy="12.8" r="3.4" /></g>)}
       {name === "trash" && (<g {...P}><path d="M4 6.5h16" /><path d="M9 6.5V4.8A1.3 1.3 0 0 1 10.3 3.5h3.4A1.3 1.3 0 0 1 15 4.8v1.7" /><path d="M6 6.5l1 13a1.8 1.8 0 0 0 1.8 1.7h6.4a1.8 1.8 0 0 0 1.8-1.7l1-13" /><path d="M10 10.5v6M14 10.5v6" /></g>)}
       {name === "broom" && (<g {...P}><path d="M14.5 3.5L11 10" /><path d="M11 10l-6.5 6.5c-.9.9-1 2.3-.2 3.2.9.8 2.3.7 3.2-.2L14 13" /><path d="M11 10l3 3" /><path d="M6.5 20.5L10 17" /></g>)}
+      {/* v4.43: servidor propio — dos bandejas apiladas, el dibujo de siempre para "servidor" */}
+      {name === "server" && (<g {...P}><rect x="3.5" y="4" width="17" height="6.5" rx="1.8" /><rect x="3.5" y="13.5" width="17" height="6.5" rx="1.8" /><path d="M7 7.2h.01M7 16.8h.01" /></g>)}
+      {/* v4.43: mismo despiste que el de "bolt" en la v1.75 — la fila de Dividendos (v4.06) pasaba
+          icon="dividend", que solo existía en ActIcon, y llevaba desde entonces con el cuadrado vacío. */}
+      {name === "dividend" && (<g {...P}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.2v9.6M14.8 8.8c-.6-.9-1.7-1.4-2.8-1.4-1.6 0-2.9 1-2.9 2.3s1.3 2 2.9 2.3c1.6.3 2.9 1 2.9 2.3s-1.3 2.3-2.9 2.3c-1.1 0-2.2-.5-2.8-1.4" /></g>)}
     </svg>
   );
 }
@@ -9696,6 +9759,14 @@ function App() {
   const [avModalOpen, setAvModalOpen] = useState(false);
   const [avInput, setAvInput] = useState("");
   const [geminiInput, setGeminiInput] = useState("");
+  /* v4.43: servidor propio (puente a OpenD). Vive aparte de las API keys porque no es una key
+     de un servicio ajeno: es la puerta a una máquina suya, y no viaja al backup. */
+  const [puente, setPuente] = useState({ url: "", token: "" });
+  const [puenteModalOpen, setPuenteModalOpen] = useState(false);
+  const [puenteUrlIn, setPuenteUrlIn] = useState("");
+  const [puenteTokenIn, setPuenteTokenIn] = useState("");
+  const [puenteProbando, setPuenteProbando] = useState(false);
+  const [puenteMsg, setPuenteMsg] = useState(null); /* { ok:bool, texto } */
   const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
   const [pendingAutoRefresh, setPendingAutoRefresh] = useState(false); /* arranque: descarga directa de precios si hay key (v5.05) */
   const [updChecking, setUpdChecking] = useState(false);
@@ -9767,6 +9838,7 @@ function App() {
     try { if (localStorage.getItem(KEY_FINNHUB)) setPendingAutoRefresh(true); } catch (e) {}
     try { const gk = localStorage.getItem(KEY_GEMINI); if (gk) setGeminiKey(gk); } catch (e) {}
     try { const ak = localStorage.getItem(KEY_AVANTAGE); if (ak) setAvKey(ak); } catch (e) {}
+    try { const pu = localStorage.getItem(KEY_PUENTE); if (pu) { const o = JSON.parse(pu); if (o && typeof o === "object") setPuente({ url: o.url || "", token: o.token || "" }); } } catch (e) {}
     try { const s = localStorage.getItem(KEY_SNAP); if (s) setSnapshots(JSON.parse(s)); } catch (e) {}
     try { const bk = localStorage.getItem(KEY_BROKERS); if (bk) { const arr = JSON.parse(bk); if (Array.isArray(arr) && arr.length) setBrokers(arr); } } catch (e) {}
     let haveTr = false;
@@ -10252,6 +10324,40 @@ function App() {
     setAvKey(k);
     try { localStorage.setItem(KEY_AVANTAGE, k); } catch (e) {}
     setAvModalOpen(false);
+  };
+
+  /* ---------- servidor propio (v4.43) ---------- */
+  const openPuenteModal = () => {
+    setPuenteUrlIn(puente.url || "");
+    setPuenteTokenIn(puente.token || "");
+    setPuenteMsg(null);
+    setPuenteModalOpen(true);
+  };
+  /* Probar ANTES de guardar, sobre lo que hay escrito en los campos: si guardase primero, una
+     dirección mal escrita dejaría la app "configurada" contra un servidor que no existe. */
+  const probarPuente = async () => {
+    setPuenteProbando(true);
+    setPuenteMsg(null);
+    const r = await puenteFetch({ url: puenteUrlIn, token: puenteTokenIn.trim() }, "/salud", {});
+    setPuenteProbando(false);
+    if (r && r.ok) {
+      const abierto = r.mercado_us && r.mercado_us !== "?" ? " · mercado US: " + r.mercado_us : "";
+      setPuenteMsg({ ok: true, texto: "✅ Conectado. OpenD contesta" + abierto + "." });
+    } else {
+      setPuenteMsg({ ok: false, texto: (r && r.error) || "No se pudo conectar." });
+    }
+  };
+  const savePuente = () => {
+    const cfg = { url: puenteUrl(puenteUrlIn), token: puenteTokenIn.trim() };
+    setPuente(cfg);
+    try { localStorage.setItem(KEY_PUENTE, JSON.stringify(cfg)); } catch (e) {}
+    setPuenteModalOpen(false);
+  };
+  const borrarPuente = () => {
+    setPuente({ url: "", token: "" });
+    try { localStorage.removeItem(KEY_PUENTE); } catch (e) {}
+    setPuenteUrlIn(""); setPuenteTokenIn(""); setPuenteMsg(null);
+    setPuenteModalOpen(false);
   };
 
   /* v5.35: una posición histórica SIN campo broker no debe desaparecer al filtrar por un broker concreto —
@@ -11597,6 +11703,18 @@ function App() {
               <SettingsRow icon="dividend" tint={avKey ? T.tileGreen : T.tileAmber} iconColor={avKey ? T.green : T.gold} title="Dividendos" sub={avKey ? "Key guardada en este dispositivo" : "Sin key — añádela para ver el ex-dividend al rolar"} right={avKey ? "Cambiar" : "Activar"} onClick={openAvModal} last />
             </div>
 
+            {/* v4.43: servidor propio. Sección aparte de las API keys a propósito — no es una key
+                de un servicio de fuera, es la puerta a una máquina suya. Sin configurar, la fila
+                dice "Sin configurar" y no hace absolutamente nada; lo que desbloquea (precios de
+                opciones en vivo) solo aparece cuando hay servidor. */}
+            <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px" }}>Avanzado</div>
+              <SettingsRow icon="server" tint={puenteConfigurado(puente) ? T.tileGreen : T.tile} iconColor={puenteConfigurado(puente) ? T.green : T.sub}
+                title="Servidor propio"
+                sub={puenteConfigurado(puente) ? puenteUrl(puente.url).replace(/^https?:\/\//, "") : "Sin configurar"}
+                right={puenteConfigurado(puente) ? "Cambiar" : "Configurar"} onClick={openPuenteModal} last />
+            </div>
+
             <div style={{ background: T.card, borderRadius: 24, padding: "4px 14px 6px", boxShadow: T.shadow }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: T.red, letterSpacing: 0.5, textTransform: "uppercase", padding: "12px 6px 4px", opacity: 0.85 }}>Zona de riesgo</div>
               <SettingsRow danger icon="trash" tint={T.tileRed} iconColor={T.red} active={confirmClear} title={confirmClear ? "¿Seguro? Vacía toda la cartera" : "Limpiar cartera (Portfolio)"} sub={confirmClear ? "Pulsa otra vez para confirmar" : "Borra todas las posiciones"} right={confirmClear ? "Confirmar" : undefined} onClick={clearAll} last={trades.length === 0} />
@@ -11665,6 +11783,43 @@ function App() {
               <button onClick={() => setAvModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
               <button onClick={saveAvKey} style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
             </div>
+          </div>
+        </div>
+      )}
+      {puenteModalOpen && (
+        <div onClick={() => setPuenteModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+            <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>Servidor propio</div>
+            <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>
+              Conecta la app con tu propio servidor para traer precios de opciones en vivo. La dirección y la clave te las dio el instalador del puente. Se guardan solo en este dispositivo y <b style={{ color: T.ink }}>no viajan en el backup</b>.
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 5 }}>Dirección</div>
+            <input type="url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              value={puenteUrlIn} onChange={(e) => { setPuenteUrlIn(e.target.value); setPuenteMsg(null); }} placeholder="puente.midominio.com"
+              style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 12 }} />
+            <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 5 }}>Clave</div>
+            {/* type="password": la clave es larga y se teclea una vez; enseñarla en pantalla solo
+                sirve para que se cuele en una captura de las que él manda al chat. */}
+            <input type="password" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              value={puenteTokenIn} onChange={(e) => { setPuenteTokenIn(e.target.value); setPuenteMsg(null); }} placeholder="Pega aquí la clave del servidor"
+              style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 14, fontWeight: 600, color: T.ink, outline: "none", marginBottom: 12 }} />
+
+            <button onClick={probarPuente} disabled={puenteProbando || !puenteUrlIn.trim() || !puenteTokenIn.trim()}
+              style={{ width: "100%", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: "12px 0", fontSize: 14.5, fontWeight: 800, color: T.ink, cursor: puenteProbando ? "default" : "pointer", opacity: !puenteUrlIn.trim() || !puenteTokenIn.trim() ? 0.5 : 1, marginBottom: puenteMsg ? 10 : 14 }}>
+              {puenteProbando ? "Probando…" : "Probar conexión"}
+            </button>
+            {puenteMsg && (
+              <div style={{ background: puenteMsg.ok ? T.tileGreen : T.tileRed, color: puenteMsg.ok ? T.green : T.red, borderRadius: 12, padding: "10px 12px", fontSize: 12.5, fontWeight: 700, lineHeight: 1.45, marginBottom: 14 }}>{puenteMsg.texto}</div>
+            )}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setPuenteModalOpen(false)} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={savePuente} disabled={!puenteUrlIn.trim() || !puenteTokenIn.trim()}
+                style={{ flex: 1, background: T.green, border: "none", borderRadius: 14, padding: "13px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer", opacity: !puenteUrlIn.trim() || !puenteTokenIn.trim() ? 0.5 : 1, boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>Guardar</button>
+            </div>
+            {puenteConfigurado(puente) && (
+              <button onClick={borrarPuente} style={{ width: "100%", background: "transparent", border: "none", padding: "12px 0 2px", fontSize: 13, fontWeight: 700, color: T.red, cursor: "pointer" }}>Desconectar este servidor</button>
+            )}
           </div>
         </div>
       )}
@@ -11755,7 +11910,7 @@ function App() {
               <button onClick={downloadBackup} style={{ width: "100%", background: T.dark, border: "none", borderRadius: 14, padding: "14px 0", fontSize: 15, fontWeight: 700, color: "#fff", cursor: "pointer" }}>Descargar archivo</button>
               <button onClick={() => { const el = document.getElementById("backup-file-input"); if (el) el.click(); }} style={{ width: "100%", background: T.tile, border: "none", borderRadius: 14, padding: "14px 0", fontSize: 15, fontWeight: 700, color: T.ink, cursor: "pointer" }}>Importar archivo</button>
             </div>
-            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500, lineHeight: 1.45, margin: "10px 2px 0" }}>Guarda toda la app: posiciones, brokers, cuentas, snapshots y tus keys. Para cambiar de móvil: descarga aquí, importa en el otro.</div>
+            <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 500, lineHeight: 1.45, margin: "10px 2px 0" }}>Guarda toda la app: posiciones, brokers, cuentas, snapshots y tus keys. Para cambiar de móvil: descarga aquí, importa en el otro. El servidor propio no viaja en el backup — se vuelve a poner a mano.</div>
             <div style={{ minHeight: 18, margin: "8px 2px 0" }}>
               {copied && <span style={{ fontSize: 12.5, color: T.green, fontWeight: 700 }}>Copiado ✓ — guárdalo en Notas o email</span>}
               {restoreMsg === "ok" && <span style={{ fontSize: 12.5, color: T.green, fontWeight: 700 }}>Restaurado ✓</span>}

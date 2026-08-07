@@ -1,5 +1,61 @@
 # CHANGELOG — Bloques
 
+Bloques v4.43 — Conectar la app con tu propio servidor (el puente a OpenD)
+
+## De dónde viene
+Victor tiene OpenD corriendo en un VPS con su cuenta de moomoo, y lo prueban tres personas. Meter el
+tiempo real de opciones para los tres sería repartir un dato que solo está pagado para uno, y eso es
+justo lo que puede costar el acceso.
+
+La salida no es mantener dos apps: es **una sola app con un interruptor**. El servidor solo contesta
+a quien trae la clave, así que basta con que la clave esté en un único móvil. Para moomoo, del otro
+lado solo hay una persona.
+
+## Lo que trae
+**Ajustes → Avanzado → Servidor propio**: dirección, clave y **Probar conexión**.
+
+- **Se prueba antes de guardar**, sobre lo escrito en los campos. Si guardara primero, una dirección
+  mal tecleada dejaría la app "configurada" contra un servidor que no existe.
+- **Los cuatro desenlaces se distinguen y se explican**, en vez de un "error" genérico: conecta bien ·
+  la clave no es correcta (y dice el comando exacto para verla en el servidor) · el puente vive pero
+  OpenD no contesta · no se llega al servidor (dirección, túnel o CORS — el navegador no dice cuál,
+  así que se nombran las tres).
+- **Corta a los 10 segundos.** Sin eso, con el servidor apagado el botón se queda pensando para
+  siempre y parece que la app se ha colgado.
+- La clave viaja **en cabecera, no en la dirección**: así no acaba escrita en los registros del túnel
+  ni en el historial del navegador. Y el campo es de tipo contraseña — se teclea una vez, y enseñarla
+  en pantalla solo serviría para que se colara en una captura.
+
+## La decisión que importa: la clave NO va al backup
+Es la única credencial que abre una máquina suya, y los backups se comparten por chat — en este mismo
+proyecto ya ha pasado. Así que se queda en el dispositivo y punto. Al cambiar de móvil hay que
+volver a escribirla; son dos campos, y a cambio no viaja nunca dentro de un fichero. El texto del
+Backup lo avisa.
+
+En el móvil de quien no lo configure, la fila dice "Sin configurar" y no hace absolutamente nada.
+
+## De paso
+La fila de Dividendos (v4.06) llevaba desde entonces con el **cuadrado del icono vacío**: pasaba
+`icon="dividend"`, que solo existía en `ActIcon` y no en `SetIcon`. Mismo despiste que el de `bolt`
+en la v1.75. Dibujo añadido.
+
+## En el servidor
+`servidor/instalar.sh` (nuevo): monta el puente de un solo comando — usuario propio sin privilegios,
+servicio que arranca solo y se levanta si se cae, clave generada una sola vez (reejecutar el
+instalador no la regenera: dejaría el móvil desparejado sin avisar) y una comprobación final contra
+OpenD que explica el fallo en vez de callarse.
+
+## Verificación
+Chromium (viewport iPhone 390×844), con el puente simulado en sus cuatro estados:
+- Conecta bien → "✅ Conectado. OpenD contesta · mercado US: TRADING."
+- Clave mala (401) → "La clave no es correcta — revísala en el servidor con: sudo grep TOKEN…"
+- OpenD mudo (503) → "OpenD no contesta: conexión rechazada"
+- Servidor caído → el mensaje con las tres causas posibles.
+- Guardar → la fila pasa a verde con la dirección; sobrevive a recargar; "Desconectar" lo borra.
+- **Backup generado con el servidor configurado: 2.011 bytes, y no contiene ni la clave, ni la
+  dirección, ni la palabra "puente".**
+- Claro y oscuro. Sin errores de consola.
+
 Bloques v4.42 — Las ventas parciales de acciones no aparecían en el Histórico
 
 ## El síntoma
