@@ -96,6 +96,37 @@ Detalles ganados a base de iteración (no deshacer sin motivo):
 - **Gemini**: lector de capturas del Comparador.
 - Las tres keys viajan en el backup JSON.
 
+## El servidor propio (v4.43+) — la máquina es COMPARTIDA
+
+VPS de Hetzner (Ubuntu). Ahí viven **tres sistemas de Victor**, no solo el nuestro:
+`root` (earnings, y es quien corre OpenD), `agente` (venta de puts, sin sudo) y lo nuestro.
+Antes de tocar nada en esa máquina, leer `servidor/README.md` y `INFRA_SERVIDOR.md` (que él pasa
+por el chat). **Verificar con `ss -tlnp` / `systemctl status` antes de asumir que algo está montado**:
+ya ha habido cuatro piezas documentadas como existentes que no existían.
+
+Lo nuestro: `servidor/puente.py` (Flask, solo lectura) + `servidor/instalar.sh` (un comando, monta
+el servicio `bloques-puente` en `127.0.0.1:8777`). La app se conecta en Ajustes → Avanzado →
+Servidor propio. La clave **no viaja en el backup** a propósito (los backups se comparten por chat).
+
+Las cuatro reglas que NO se saltan, porque los límites de la API de Futu son **por cuenta y no por
+proceso** — lo que gaste nuestro puente se lo quita a los otros dos, en silencio:
+1. **Caché siempre.** Precios 20 s, cadenas de opciones 6 h (`get_option_chain`: 10 llamadas/30 s
+   para toda la cuenta).
+2. **Ritmo a la mitad** del límite documentado. El margen es de root y del agente.
+3. **Las suscripciones se devuelven** (máx 60, se sueltan a los 15 min sin usarse). El cupo también
+   es de la cuenta; la v1 suscribía y no soltaba nunca.
+4. **Ventanas de root sagradas**: 15:29-15:46 y 21:30-21:35 (Madrid) no se llama a OpenD.
+
+Y además: **el túnel de Cloudflare YA EXISTE**, corre como root y se configura desde el panel web
+(no hay `config.yml`). NUNCA crear un túnel nuevo ni reinstalar `cloudflared` — un segundo conector
+pelea con el que hay. Para publicar algo se añade un *Public Hostname*, tipo HTTP, a `127.0.0.1:<puerto>`.
+El 11111 (OpenD) no se expone jamás: es la puerta a la cuenta de trading.
+
+Dominio: **alphavext.com**. `puente.` es el nuestro (8777); `alertas.` es de otro servicio (8779).
+
+OPRA ya está contratado y entra por OpenD — no hay que integrar nada nuevo, pero tampoco hay una
+segunda vía: todo lo de arriba aplica igual a los datos de opciones.
+
 ## Semántica que confunde y ya se aclaró
 
 - Barra apilada del hero = **reparto del capital desplegado** (cuota de cada bloque sobre la suma
