@@ -1,5 +1,57 @@
 # CHANGELOG — Bloques
 
+Bloques v4.42 — Las ventas parciales de acciones no aparecían en el Histórico
+
+## El síntoma
+Victor pasó el backup de un amigo con el mismo problema del que veníamos: operaciones de compraventa
+que no aparecen en Cerradas. En la v4.41 arreglamos la reapertura, pero en ese backup no había ni un
+solo caso de ese fallo — y aun así faltaban operaciones.
+
+## La causa
+Una **venta parcial** —vendes parte de la posición y te quedas el resto— es una ida y vuelta
+terminada, con su compra, su venta y su resultado. Pero vive colgada de una posición que sigue
+**abierta**, así que:
+
+- en **Cerradas** no salía (la posición no está cerrada), y
+- en **Abiertas** la cifra que se enseña es el no realizado, así que ese dinero ya ganado tampoco
+  aparecía ahí.
+
+Resultado: dinero real, ya cobrado, invisible en todo el Histórico (solo contaba dentro de los
+totales de MTM). En el backup del amigo eran **8 ventas y +$3.320,16**: ACHR $53,90 · FN $2.215,64 ·
+FOXF $94,90 · MRVL $395,77 · OXY $559,95.
+
+## El arreglo
+Cada venta parcial pasa a ser **su propia operación cerrada** en el Histórico, con etiqueta verde
+**"Venta parcial"** para distinguirla de un cierre completo cuando el mismo ticker sale varias veces.
+
+- Es una entrada **derivada**: no se toca ni un dato de los guardados, se calcula al vuelo desde las
+  ventas que ya estaban registradas. Nada que migrar, nada que se pueda corromper.
+- Trae sus títulos, su precio de compra (el coste del lote), su precio y fecha de venta, su comisión
+  y su resultado realizado, y entra en el conteo, en el profit total y en el desglose por ticker.
+- No ofrece "Reabrir" ni "Volver a comprar" ni "Lotes": no es una posición, es el registro de una
+  venta. Para tocarla se va a la posición de origen.
+- La fecha de apertura es la del lote de origen (FIFO). La app no guarda de qué compra concreta salió
+  cada venta, así que tres ventas de una misma compra dirán las tres esa fecha. Acordado así.
+- Solo se generan desde posiciones **abiertas**: si la posición ya está cerrada del todo, sus ventas
+  ya están contadas dentro de ella y duplicarlas sería contar dos veces.
+
+De paso, dos cosas que salieron al verificar:
+
+- En el Histórico, la cifra que va delante de "× N acc" era siempre el último precio de mercado,
+  también en operaciones cerradas — o sea el precio de **hoy**, no el de la operación. Una venta de
+  FN a $730 se leía "564.73". En cerradas se enseña ahora el **precio de salida**.
+- El contador de la pestaña "Acciones" no contaba las ventas parciales: decía (27) mientras justo
+  debajo Abiertas (23) + Cerradas (12) sumaban 35. Ahora cuadra.
+
+## Verificación
+Chromium (viewport iPhone 390×844) con los datos reales del backup del amigo:
+- Histórico → Acciones: **Cerradas (4) → Cerradas (12)**; profit total **+$1.947 → +$5.267**;
+  media por operación +$439.
+- Aparecen los 9 tickers (SOI, RELY, AVGO, MRVL, FN, ACHR, OXY, GLW, FOXF); antes solo 4.
+- Filas correctas y etiquetadas: FN +$1.294 y +$922, MRVL +$318 y +$78, ACHR +$54, OXY +$560.
+- Ficha desplegada de la venta de FN: compra $622,08 → venta $730, +17,33% ROI, 27d, +$1.294.
+- Sin botones de acción en las derivadas. Sin errores de consola.
+
 Bloques v4.41 — Volver a comprar una acción borraba la operación anterior del Histórico
 
 ## El síntoma
