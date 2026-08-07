@@ -98,11 +98,18 @@ EnvironmentFile=$ENTORNO
 ExecStart=$DESTINO/.venv/bin/python3 $DESTINO/puente.py
 Restart=always
 RestartSec=5
-# Cinturones: el puente no necesita escribir en el disco ni ser administrador.
+# Cinturones: el puente no necesita ser administrador ni ver /home.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=256M
+# ProtectSystem=strict deja TODO el disco en solo lectura. La librería de moomoo escribe su
+# propio registro, así que sin un sitio donde hacerlo el servicio se cae al arrancar. systemd
+# crea y da permisos a /var/lib/bloques, y HOME apunta ahí para que escriba dentro.
+StateDirectory=bloques
+Environment=HOME=/var/lib/bloques
 
 [Install]
 WantedBy=multi-user.target
@@ -150,7 +157,10 @@ echo "    $CLAVE"
 echo
 echo "Para volver a verla más adelante:   sudo grep TOKEN $ENTORNO"
 echo
-echo "SIGUIENTE PASO: el túnel de Cloudflare, para que el iPhone llegue hasta"
-echo "aquí desde fuera de casa. El puente escucha en 127.0.0.1:$PUERTO — ese es"
-echo "el dato que pide Cloudflare."
+echo "SIGUIENTE PASO: en esta máquina el túnel de Cloudflare YA EXISTE y corre como root."
+echo "NO crees uno nuevo ni reinstales cloudflared — un segundo conector pelearía con el"
+echo "que ya hay y puede tirar abajo lo de root. Solo hay que añadir una ruta en el panel:"
+echo
+echo "    Zero Trust → Networks → Tunnels → (el túnel existente) → Public Hostname → Add"
+echo "    subdominio: puente   ·   tipo: HTTP   ·   URL: 127.0.0.1:$PUERTO"
 echo
