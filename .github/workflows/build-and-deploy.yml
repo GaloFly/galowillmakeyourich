@@ -1,5 +1,6 @@
 # El robot: cada empujón a main compila index.html (build.mjs) y publica dist/ en GitHub Pages.
-# La rutina de edición no cambia — sube index.html como siempre, de esto se encarga él.
+# Quien edita index.html y empuja a main es Claude, desde el chat con Victor. Él solo abre la app
+# en el iPhone y acepta la actualización.
 #
 # CÓMO SE PUBLICA: se empuja la carpeta dist/ a la rama `gh-pages`, y Pages sirve esa rama.
 #   (Settings → Pages → Source: "Deploy from a branch" → gh-pages · / (root))
