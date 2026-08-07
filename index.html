@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.41"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.42"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5642,7 +5642,35 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     if (t.includes("broken wing")) return "Broken Wings";
     return "Otras"; /* solo débitos genéricos */
   };
-  const catCount = (c, closed) => positions.filter((p) => categoryOf(p) === c && !!p.closed === closed).length;
+  /* v4.42 (Victor, con el backup de un amigo: "los movimientos de compraventa de acciones del mismo
+     ticker no quedan registrados en operaciones cerradas"). Una VENTA PARCIAL —vendes parte y te quedas
+     el resto— es una ida y vuelta terminada, pero vivía colgada de una posición que sigue abierta, así
+     que no salía en Cerradas; y en Abiertas la cifra que se enseña es el NO realizado, con lo que ese
+     dinero ya ganado no aparecía por ningún lado del Histórico (solo dentro de los totales de MTM).
+     En el backup del amigo eran 8 ventas y +$3.320 invisibles.
+     Cada venta pasa a ser su propia operación cerrada, derivada (no se toca el dato guardado):
+       · fecha de cierre = la de la venta · títulos y coste = los de esa venta
+       · fecha de apertura = la del lote de origen (FIFO); la app no sabe qué parte del lote se vendió,
+         así que tres ventas de una misma compra dirán las tres esa fecha de compra. Acordado así.
+     Solo se generan para posiciones ABIERTAS: si la posición ya está cerrada, sus ventas ya están
+     contadas dentro de ella y duplicarlas sería contar dos veces. */
+  const ventasParciales = useMemo(() => {
+    const out = [];
+    positions.forEach((p) => {
+      if (natOf(p) !== "ACC" || p.closed || !Array.isArray(p.soldLots)) return;
+      p.soldLots.forEach((s, i) => {
+        const realizado = (n(s.price) - n(s.cost)) * n(s.qty) - n(s.fee);
+        out.push({
+          ...p, id: p.id + "#venta" + (s.id || i), _venta: { ...s, realizado }, _origen: p.id,
+          qty: String(n(s.qty)), bep: String(n(s.cost)), lots: [], soldLots: [], dividends: [],
+          closed: true, closeDate: s.date || "", closePrice: String(n(s.price)),
+          closeComision: String(n(s.fee)), closeNote: "Venta parcial de " + (p.tkr || "la posición"),
+        });
+      });
+    });
+    return out;
+  }, [positions]);
+  const catCount = (c, closed) => (closed && c === "Acciones" ? ventasParciales.length : 0) + positions.filter((p) => categoryOf(p) === c && !!p.closed === closed).length;
 
   const primaSumOf = (p) => primaEvents.filter((e) => e.posId === p.id).reduce((s, e) => s + e.cash, 0);
   const mtmSumOf = (p) => mtmEvents.filter((e) => e.posId === p.id).reduce((s, e) => s + e.cash, 0);
@@ -5650,6 +5678,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
      opciones cortas normales → prima acumulada; Long Call y credit spreads → realizado MTM (neto contra
      apertura); acciones y débitos → MTM. Se usa para el resumen agregado de la pestaña de estrategia. */
   const closedResultOf = (p) => {
+    if (p._venta) return p._venta.realizado; /* v4.42: venta parcial — su realizado va en el propio objeto */
     if (!isOptionNat(p)) return mtmSumOf(p);
     const noOpenBooked = isLongCallPos(p) || isCreditSpread(p);
     return noOpenBooked ? mtmSumOf(p) : primaSumOf(p);
@@ -5696,7 +5725,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   };
   const isWinner = (p) => (p.closed ? closedGrade(p) === "W" : openResultOf(p) > 0);
   const isLoser = (p) => (p.closed ? closedGrade(p) === "L" : openResultOf(p) < 0);
-  const stratBase = positions.filter((p) => categoryOf(p) === stratCat && !!p.closed === (stratStatus === "Cerradas"))
+  const stratBase = [...positions, ...(stratStatus === "Cerradas" ? ventasParciales : [])]
+    .filter((p) => categoryOf(p) === stratCat && !!p.closed === (stratStatus === "Cerradas"))
     .filter((p) => stratCat !== "Earnings" || erKind === "Todo" || (erKind === "IC" ? !isSpreadTipo(p.tipo) : isSpreadTipo(p.tipo))); /* v3.64: el histórico de Earnings filtra IC vs Spreads */
   const stratTkrs = Array.from(new Set(stratBase.map((p) => (p.tkr || "").toUpperCase().trim()).filter(Boolean))).sort();
   const stratItems = stratBase
@@ -5951,7 +5981,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                (closedResultOf, mismo criterio que la tarjeta de cada operación) y distribución por
                estrategia (Short Puts, Covered Calls, etc.) con nº de operaciones y resultado de cada una. */
             const byTkr = {};
-            positions.forEach((p) => {
+            /* v4.42: las ventas parciales cuentan aquí igual que en "Por estrategia". En "Todas" NO se
+               añaden: su resultado ya viaja dentro del MTM de la posición abierta de la que salen, y
+               sumarlas otra vez las contaría dos veces. */
+            [...positions, ...(tikrStatus === "Cerradas" ? ventasParciales : [])].forEach((p) => {
               const cat = categoryOf(p);
               if (!cat) return;
               if (tikrStatus === "Abiertas" && p.closed) return; /* v1.03: filtro de estado */
@@ -6076,7 +6109,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
 
           <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
             {STRAT_CATS.map((c) => {
-              const cnt = positions.filter((p) => categoryOf(p) === c).length;
+              /* v4.42: las ventas parciales cuentan también aquí; si no, la pestaña decía (27) y
+                 debajo Abiertas (23) + Cerradas (12) sumaban 35. */
+              const cnt = positions.filter((p) => categoryOf(p) === c).length + (c === "Acciones" ? ventasParciales.length : 0);
               return (
                 <button key={c} onClick={() => { setStratCat(c); setStratTkr("Todos"); }} style={{
                   flex: "1 0 auto", border: "none", cursor: "pointer", borderRadius: 12, padding: "8px 12px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
@@ -6598,7 +6633,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const csPending = isCreditSpread(p) && !p.closed;
             const csCredit = isCreditSpread(p) ? vDisplayPrima(p) * n(p.qty) - n(p.comision) : NaN;
             const romNumer = csPending ? csCredit : primaBasis;
-            const result = isOpt ? primaBasis : mtmSumOf(p);
+            /* v4.42: una venta parcial no tiene eventos MTM propios (no es una posición guardada);
+               su realizado viaja en el propio objeto derivado. */
+            const result = p._venta ? p._venta.realizado : (isOpt ? primaBasis : mtmSumOf(p));
             /* riesgo de la estrategia para el histórico: en opciones cortas siempre BEP × acciones (contratos ×100),
                aunque en cartera compute 0 por estar cubierta — aquí interesa el capital que respaldó la operación.
                v5.15: el BEP de referencia es el ORIGINAL de apertura (strike original − prima de apertura), no el
@@ -6633,6 +6670,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             const isStock = natOf(p) === "ACC";
             const hasLast = p.last !== "" && p.last != null;
             const unrl = isStock && hasLast ? effPnl(p) : NaN;
+            /* v4.42: la cifra que va delante de "× N acc" era SIEMPRE el último precio de mercado, también
+               en operaciones ya cerradas — ahí eso es el precio de HOY, no el de la operación, y despista
+               (una venta de FN a $730 se leía "564.73"). En cerradas se enseña el precio de SALIDA. */
+            const precioFila = !isStock ? NaN : p.closed ? n(p.closePrice) || NaN : hasLast ? n(p.last) : NaN;
             const chain = p.rollChain || [];
             const open = expanded.has("strat-" + p.id);
             return (
@@ -6649,8 +6690,11 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                       {blk && <span style={{ fontSize: 9.5, fontWeight: 800, color: blk.color, background: blk.bg, borderRadius: 6, padding: "2px 5px" }}>{blk.name.replace("Bloque ", "B")}</span>}
                       {chain.length > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.purple, background: T.tile, borderRadius: 6, padding: "2px 5px", display: "inline-flex", alignItems: "center", gap: 3 }}><ActIcon name="roll" size={10} />×{chain.length}</span>}
                       {p.exercised && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.gold, background: T.tileAmber, borderRadius: 6, padding: "2px 5px" }}>Asignada</span>}
+                      {/* v4.42: una venta parcial se distingue de un cierre completo — si no, el mismo
+                          ticker aparece varias veces sin explicar por qué. */}
+                      {p._venta && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.green, background: T.tileGreen, borderRadius: 6, padding: "2px 5px" }}>Venta parcial</span>}
                     </div>
-                    <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{isStock && hasLast ? n(p.last).toFixed(2) + " · " : ""}× {qtyLabel} · {ibkrDate(p.entryDate)}{p.closed ? " → " + ibkrDate(p.closeDate) : " · abierta"}</div>
+                    <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{isFinite(precioFila) ? precioFila.toFixed(2) + " · " : ""}× {qtyLabel} · {ibkrDate(p.entryDate)}{p.closed ? " → " + ibkrDate(p.closeDate) : " · abierta"}</div>
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
                     {/* v1.88: en acciones ABIERTAS con precio, la cifra de la derecha es el unrealised (effPnl)
@@ -6667,7 +6711,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                           Él lo usaba para volver a comprar, que es otra cosa. Ahora esa acción tiene su
                           propio botón —"Volver a comprar", que abre una operación NUEVA y deja la anterior
                           archivada— y "Lotes" queda para corregir o deshacer una venta. */}
-                      {p.closed && isStock && (p.soldLots || []).length > 0 && !!onRebuy ? (
+                      {p._venta ? null : p.closed && isStock && (p.soldLots || []).length > 0 && !!onRebuy ? (
                         <>
                           {!!onEditLots && <button type="button" onClick={(ev) => { ev.stopPropagation(); onEditLots(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 700, color: T.sub, cursor: "pointer", padding: 0 }}>Lotes</button>}
                           <button type="button" onClick={(ev) => { ev.stopPropagation(); onRebuy(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 800, color: T.green, cursor: "pointer", padding: 0 }}>Volver a comprar</button>
