@@ -1,5 +1,38 @@
 # CHANGELOG — Bloques
 
+Publicación — método nuevo en marcha (no toca la app)
+
+## Qué se ha hecho
+Se completó la migración empezada el 6-ago. Publicar ya no pasa por la cola de despliegues de
+GitHub Pages: el robot **empuja la carpeta `dist/` a la rama `gh-pages`** y Pages sirve esa rama.
+
+## Por qué costó dos días
+Tres cosas, en este orden:
+
+1. **El permiso.** El token del robot estaba en solo-lectura, así que el primer empujón fallaba en
+   silencio. Y no se podía cambiar desde los ajustes del repositorio —la opción salía en gris—
+   porque estaba fijado en la **organización**: organizations/GaloFly/settings/actions.
+2. **Un fallo mío.** En el primer intento encadené el camino viejo detrás del nuevo con `needs:`.
+   Si el nuevo fallaba, el viejo ni se intentaba y la app no se publicaba por ningún lado. Corregido:
+   fueron independientes durante toda la transición.
+3. **GitHub.** Los dos intentos siguientes ni llegaron a arrancar: 15 minutos en cola y cancelados
+   solos.
+
+## Estado final
+- `gh-pages` creada y verificada: 10 ficheros, v4.40, compilado (0 rastros de `text/babel`, 0 CDN
+  externos), `app.js?v=3dbc2428ec`, `vendor/` local, `sw.js`, `manifest.webmanifest` y `.nojekyll`.
+- Settings → Pages apunta a `gh-pages` / (root).
+- **Camino viejo borrado** del workflow: ya solo queda el job `publicar`.
+- Comprobación previa reforzada: además de que `index.html` y `app.js` existan, no estén vacíos y
+  lleven marcador de versión, ahora también se rechaza publicar si el HTML viniera **sin compilar**
+  (con `text/babel`) — que es justo lo que se sirvió por error durante unos minutos al seleccionar
+  `main` en Pages cuando `gh-pages` aún no existía.
+
+## Verificación
+- YAML validado; queda un único job y `contents: write`.
+- Contenido de `gh-pages` inspeccionado fichero a fichero desde el repositorio.
+- La app no se toca: `APP_VERSION` sigue en 4.40.
+
 Publicación — se cambia el mecanismo (no toca la app)
 
 ## La pregunta

@@ -45,7 +45,15 @@ Playwright: usar `serviceWorkers: "block"` en el contexto (si no, el SW sirve ca
 - **Auto-actualización**: `UpdateOffer` comprueba al arrancar si hay versión nueva (busca por regex
   `const APP_VERSION = "x"` en el HTML servido) y OFRECE actualizar en una barrita — nunca recarga
   sola (eso causó un bucle). `build.mjs` inyecta ese marcador en el `<head>` compilado: no quitarlo.
-- **Despliegue**: `.github/workflows/build-and-deploy.yml` en cada push a `main` → GitHub Pages.
+- **Despliegue**: `.github/workflows/build-and-deploy.yml` en cada push a `main`. Compila y **empuja
+  `dist/` a la rama `gh-pages`** (force-push de un commit único; esa rama es un espejo del compilado,
+  no un historial). Pages sirve `gh-pages` / (root).
+  No usar `actions/deploy-pages`: se quitó el 7-ago-2026 porque no empuja ficheros —crea un
+  despliegue y espera en una cola compartida—, se rinde a los 10 min (techo duro, no se puede subir)
+  y **al rendirse cancela el despliegue, dejando ese commit inservible para siempre**. Un mal día de
+  Pages costó nueve intentos fallidos para ocho versiones, sin un solo fallo del código.
+  El token del robot necesita permiso de **escritura**, fijado en la ORGANIZACIÓN (no en el repo; por
+  eso la opción sale en gris en Settings del repo): organizations/GaloFly/settings/actions.
 
 ## Sistema de diseño (v4.11–v4.29)
 

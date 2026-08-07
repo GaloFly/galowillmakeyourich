@@ -1,34 +1,30 @@
 # El robot: cada empujón a main compila index.html (build.mjs) y publica dist/ en GitHub Pages.
 # La rutina de edición no cambia — sube index.html como siempre, de esto se encarga él.
 #
+# CÓMO SE PUBLICA: se empuja la carpeta dist/ a la rama `gh-pages`, y Pages sirve esa rama.
+#   (Settings → Pages → Source: "Deploy from a branch" → gh-pages · / (root))
+#
 # ---------------------------------------------------------------------------------------------
-# TRANSICIÓN EN CURSO (6-ago-2026). Ahora mismo se publica por DOS caminos a la vez, a propósito:
+# POR QUÉ ASÍ Y NO CON actions/deploy-pages (cambiado el 6-ago-2026)
 #
-#   · `deploy`   — el camino VIEJO (actions/deploy-pages). Es el que está sirviendo la web ahora.
-#   · `publicar` — el camino NUEVO: empuja dist/ a la rama `gh-pages`.
-#
-# Mientras Settings → Pages siga en "GitHub Actions", manda el viejo y la rama gh-pages solo se va
-# llenando, sin efecto. Cuando Victor pulse el ajuste de abajo, pasa a mandar el nuevo y entonces
-# hay que BORRAR el job `deploy` de este fichero (a partir de ahí siempre daría error).
-#
-# EL AJUSTE (una sola vez, lo tiene que pulsar una persona):
-#   Settings → Pages → "Build and deployment" → Source: "Deploy from a branch"
-#                                             → Branch: gh-pages · carpeta / (root) → Save
-#
-# POR QUÉ SE CAMBIA. actions/deploy-pages no empuja ficheros: crea un "despliegue" y espera a que la
-# cola de Pages lo procese. El 6-ago-2026 esa cola estuvo cerca de una hora parada y salieron a la
-# luz tres problemas encadenados:
+# Aquella acción no empuja ficheros: crea un "despliegue" y espera a que la cola de Pages lo
+# procese. Ese día la cola estuvo cerca de una hora parada y salieron tres problemas encadenados:
 #
 #   1. La acción se rinde a los 10 minutos. Es un TECHO DURO: subir el parámetro `timeout` se probó
 #      y la propia acción lo rechaza ("timeout set to the maximum of 600000 milliseconds").
 #   2. Al rendirse, CANCELA el despliegue. Y GitHub lo identifica por el commit, así que ese commit
-#      queda inservible para siempre: cualquier reintento contesta "Deployment cancelled" al
-#      instante. Un solo fallo obligaba a un commit nuevo entero.
-#   3. Encima depende del servicio de credenciales OIDC, que ese día devolvió 503 por saturación.
+#      quedaba inservible para siempre: cualquier reintento contestaba "Deployment cancelled" al
+#      instante. Un solo fallo obligaba a un commit nuevo entero — un tropiezo se volvía tres.
+#   3. Encima dependía del servicio de credenciales OIDC, que ese día devolvió 503 por saturación.
 #
 # Resultado: nueve intentos fallidos en una tarde para sacar ocho versiones, sin un solo fallo del
 # código. Empujar dist/ a una rama es un `git push` normal: sin cola, sin tope de 10 minutos y sin
-# quemar el commit si falla — el mismo commit se puede reintentar las veces que haga falta.
+# quemar el commit — el mismo commit se puede reintentar las veces que haga falta.
+#
+# REQUISITO (ya hecho, pero anotado por si se recrea el repo): el token del robot necesita permiso
+# de ESCRITURA. Estaba fijado a solo-lectura en la ORGANIZACIÓN (no en el repo, por eso la opción
+# salía en gris) → github.com/organizations/GaloFly/settings/actions → Workflow permissions →
+# "Read and write permissions". Sin eso el push devuelve 403 y la rama gh-pages no se crea.
 name: build-and-deploy
 
 on:
@@ -38,48 +34,14 @@ on:
 
 permissions:
   contents: write # write: hace falta para empujar la rama gh-pages
-  pages: write
-  id-token: write
 
-# cancel-in-progress: false a propósito (v4.35). Con `true`, si llega otro empujón mientras hay una
-# publicación a medias, se cancela la que estaba en vuelo. Mejor que espere su turno.
+# cancel-in-progress: false — si llega otro empujón mientras hay una publicación a medias, que
+# espere su turno en vez de cancelarla.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  # ---------------------------------------------------------------------------------------------
-  # CAMINO VIEJO — compila y deja el artefacto para actions/deploy-pages.
-  # Va SEPARADO del camino nuevo a propósito: si `publicar` falla, este tiene que seguir sacando la
-  # web igual. (En el primer intento los encadené con `needs` y fue un error mío: un fallo del
-  # camino nuevo habría dejado la app sin publicar por ningún sitio.)
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  # ⚠️ CAMINO VIEJO — BORRAR este job (y `build`) en cuanto Settings → Pages apunte a gh-pages.
-  # A partir de ese momento fallaría siempre ("Pages site not configured for GitHub Actions").
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
-
-  # ---------------------------------------------------------------------------------------------
-  # CAMINO NUEVO — empuja dist/ a la rama gh-pages. Independiente del de arriba.
   publicar:
     runs-on: ubuntu-latest
     steps:
@@ -90,18 +52,16 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      # Red de seguridad antes de publicar: si el compilado no está o vino vacío, parar aquí en vez
-      # de dejar la web en blanco. Con el camino viejo esto lo cubría la propia acción; ahora que
-      # empujamos ficheros a pelo, lo comprobamos nosotros.
+      # Red de seguridad: si el compilado no está o vino vacío, parar aquí en vez de publicar una
+      # web en blanco. Con la acción vieja esto lo cubría ella; empujando ficheros a pelo, nosotros.
       - name: Comprobar que el compilado está bien
         run: |
           test -s dist/index.html || { echo "::error::dist/index.html no existe o está vacío"; exit 1; }
           test -s dist/app.js     || { echo "::error::dist/app.js no existe o está vacío"; exit 1; }
           grep -q 'APP_VERSION' dist/index.html || { echo "::error::dist/index.html sin marcador de versión"; exit 1; }
+          grep -q 'text/babel'   dist/index.html && { echo "::error::dist/index.html sin compilar (lleva text/babel)"; exit 1; }
           echo "Publicando $(grep -o 'APP_VERSION = "[0-9.]*"' dist/index.html | head -1)"
 
-      # Aviso claro si el token viene en solo-lectura: es el fallo más probable la primera vez.
-      # Settings → Actions → General → Workflow permissions → "Read and write permissions".
       - name: Publicar dist/ en la rama gh-pages
         run: |
           set -e
@@ -116,7 +76,7 @@ jobs:
           # force-push de un único commit: gh-pages es un espejo del compilado, no un historial.
           # El historial de verdad vive en main.
           if ! git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages; then
-            echo "::error::No se pudo empujar gh-pages. Si el error es 403, el token del robot está en solo-lectura: Settings → Actions → General → Workflow permissions → Read and write permissions."
+            echo "::error::No se pudo empujar gh-pages. Si el error es 403, el token está en solo-lectura: github.com/organizations/GaloFly/settings/actions → Workflow permissions → Read and write permissions."
             exit 1
           fi
         env:
