@@ -171,7 +171,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.40"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.41"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3972,8 +3972,19 @@ function LotsEditor({ p, onSave, onClose }) {
   const [sellDate, setSellDate] = useState("");
   const [sellFee, setSellFee] = useState("");
   const [openLot, setOpenLot] = useState(null); // id del lote desplegado para editar (acordeón)
+  /* v4.41: al llegar aquí desde "Volver a comprar" la posición no tiene lotes todavía y se siembra uno
+     vacío. Se despliega solo para poder escribir de inmediato. */
+  useEffect(() => {
+    if (!hasLots(p) && lots.length === 1 && !n(lots[0].qty)) setOpenLot(lots[0].id);
+  }, []);
   const setLotF = (i, k) => (v) => setLots((ls) => ls.map((l, idx) => (idx === i ? { ...l, [k]: v } : l)));
-  const addLot = () => setLots((ls) => [...ls, mkLot(new Date().toISOString().slice(0, 10), "", "")]);
+  /* v4.41: el lote nuevo nace DESPLEGADO. Antes salía plegado y había que tocarlo antes de poder
+     escribir — un toque de más justo en el momento de meter la compra. */
+  const addLot = () => {
+    const l = mkLot(new Date().toISOString().slice(0, 10), "", "");
+    setLots((ls) => [...ls, l]);
+    setOpenLot(l.id);
+  };
   const delLot = (i) => setLots((ls) => ls.filter((_, idx) => idx !== i));
   const openSell = (i) => { setSellIdx(i); setOpenLot(lots[i].id || i); setSellQty(String(n(lots[i].qty))); setSellPrice(""); setSellDate(new Date().toISOString().slice(0, 10)); setSellFee(""); };
   const confirmSell = () => {
@@ -3999,9 +4010,37 @@ function LotsEditor({ p, onSave, onClose }) {
   const lastPx = n(p.last);
   const totUnrl = lastPx ? (lastPx - bep) * totQty : NaN;
   const totPct = lastPx && bep ? (lastPx / bep - 1) : NaN;
+  /* v4.41 (Victor: "si cierras queda el último, pero si vuelves a entrar en esa posición desaparece
+     del histórico"). Volver a comprar un ticker que ya habías cerrado RESUCITABA la posición cerrada
+     (`closed: false`), así que la operación terminada dejaba de existir como cerrada: se esfumaba del
+     Histórico y su compraventa se mezclaba con la nueva en un único registro con el BEP promediado.
+     Ahora una operación cerrada NO se resucita nunca: se queda cerrada con sus ventas, y los lotes
+     nuevos nacen como POSICIÓN NUEVA. Cada ida y vuelta es su propia operación, que es lo que el
+     Histórico cuenta. */
+  /* Se distingue CORREGIR de VOLVER A ENTRAR mirando las ventas: si se ha pulsado "Deshacer" en
+     alguna (hay menos que al abrir el editor), es una corrección y la posición vuelve a abrirse como
+     siempre. Si las ventas siguen igual y aparecen lotes nuevos, es una reentrada. */
+  const ventasOriginales = Array.isArray(p.soldLots) ? p.soldLots.length : 0;
+  const deshaciendoVenta = sales.length < ventasOriginales;
+  const reentrada = !!p.closed && !deshaciendoVenta && lots.reduce((a, l) => a + n(l.qty), 0) > 0;
   const save = () => {
     const cleanSales = sales.filter((s) => n(s.qty) > 0);
     const remainingQty = lots.reduce((a, l) => a + n(l.qty), 0);
+    if (reentrada) {
+      /* la cerrada conserva sus ventas (y por tanto su resultado realizado y su sitio en el Histórico) */
+      const cerrada = { ...p, soldLots: cleanSales };
+      /* la nueva arranca limpia: sin las ventas ni los dividendos de la anterior, sin fechas de cierre
+         y sin el vínculo de asignación, que pertenecía a la operación ya terminada */
+      const { soldLots: _sl, dividends: _dv, assignedFrom: _af, entryNote: _en, ...base } = p;
+      const nueva = {
+        ...applyLots(base, lots), id: newId(),
+        closed: false, closeDate: "", closePrice: "", closeComision: "", closeNote: "",
+        pnl: "", mktValue: "",
+      };
+      onSave(cerrada, nueva);
+      onClose();
+      return;
+    }
     let next = { ...applyLots(p, lots), soldLots: cleanSales };
     if (cleanSales.length && remainingQty <= 0) {
       /* todo vendido → posición cerrada. El P&L realizado se registra vía soldLots (Movimientos/MTM);
@@ -4009,7 +4048,8 @@ function LotsEditor({ p, onSave, onClose }) {
       const lastDate = cleanSales.map((s) => s.date).filter(Boolean).sort().slice(-1)[0] || next.entryDate;
       next = { ...next, qty: "0", closed: true, closeDate: lastDate, closePrice: "", closeComision: "" };
     } else if (p.closed && remainingQty > 0) {
-      next = { ...next, closed: false };
+      /* corrección: se ha deshecho una venta y vuelven a quedar acciones → la posición se reabre */
+      next = { ...next, closed: false, closeDate: "", closePrice: "", closeComision: "" };
     }
     onSave(next);
     onClose();
@@ -4118,6 +4158,16 @@ function LotsEditor({ p, onSave, onClose }) {
               ))}
             </div>
             <div style={{ fontSize: 10.5, color: T.sub, lineHeight: 1.45, marginTop: 6 }}>Cada venta aparece en Movimientos → MTM con su P&L realizado. "Deshacer" devuelve esas acciones a un lote abierto.</div>
+          </div>
+        )}
+
+        {/* v4.41: avisa de que volver a comprar sobre una posición ya cerrada NO la reabre — abre una
+            operación nueva y la cerrada se queda en el Histórico con su resultado. Antes pasaba lo
+            contrario y en silencio. */}
+        {reentrada && (
+          <div style={{ marginTop: 14, background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.gold, lineHeight: 1.45 }}>Vuelves a entrar en {p.tkr || "esta acción"}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: T.gold, lineHeight: 1.45, marginTop: 3, opacity: 0.92 }}>Se creará una operación NUEVA con estos lotes. La anterior se queda cerrada en el Histórico con su resultado — no se mezclan ni se promedia el BEP.</div>
           </div>
         )}
 
@@ -5291,7 +5341,7 @@ function SettingsRow({ icon, tint, iconColor, title, sub, right, onClick, danger
   );
 }
 
-function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, snapshots, flows, saveSnapshot, deleteSnapshot }) {
+function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, onRebuy, snapshots, flows, saveSnapshot, deleteSnapshot }) {
   const [sub, setSub] = useState("primas");
   const [blockFilter, setBlockFilter] = useState("all"); /* v3.31: filtro por bloque en Primas/MTM (Todos · Bn) */
   const [stratCat, setStratCat] = useState("Acciones");
@@ -6610,7 +6660,19 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                     ); })()}
                     <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
                       {isOpt && !!onEditChain && <button type="button" onClick={(ev) => { ev.stopPropagation(); onEditChain(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 700, color: T.purple, cursor: "pointer", padding: 0 }}>Editar</button>}
-                      {p.closed && !!reopenPos && <button type="button" onClick={(ev) => { ev.stopPropagation(); reopenPos(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 700, color: T.purple, cursor: "pointer", padding: 0 }}>Reabrir</button>}
+                      {/* v4.41 (Victor: "si vuelves a entrar en esa posición desaparece del histórico").
+                          En una acción vendida del todo, el ÚNICO botón que había aquí era "Reabrir", que
+                          pone closed:false — y con eso la operación terminada dejaba de ser una cerrada:
+                          se esfumaba del Histórico y sus ventas se arrastraban a la posición reabierta.
+                          Él lo usaba para volver a comprar, que es otra cosa. Ahora esa acción tiene su
+                          propio botón —"Volver a comprar", que abre una operación NUEVA y deja la anterior
+                          archivada— y "Lotes" queda para corregir o deshacer una venta. */}
+                      {p.closed && isStock && (p.soldLots || []).length > 0 && !!onRebuy ? (
+                        <>
+                          {!!onEditLots && <button type="button" onClick={(ev) => { ev.stopPropagation(); onEditLots(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 700, color: T.sub, cursor: "pointer", padding: 0 }}>Lotes</button>}
+                          <button type="button" onClick={(ev) => { ev.stopPropagation(); onRebuy(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 800, color: T.green, cursor: "pointer", padding: 0 }}>Volver a comprar</button>
+                        </>
+                      ) : (p.closed && !!reopenPos && <button type="button" onClick={(ev) => { ev.stopPropagation(); reopenPos(p.id); }} style={{ background: "transparent", border: "none", fontSize: 11, fontWeight: 700, color: T.purple, cursor: "pointer", padding: 0 }}>Reabrir</button>)}
                     </div>
                   </div>
                 </div>
@@ -10271,7 +10333,13 @@ function App() {
   const [summaryPos, setSummaryPos] = useState(null); // v2.14: posición recién cerrada → tarjeta-resumen (ROI/DIT), sin salir del menú
   const [editDivId, setEditDivId] = useState(null); // id de la posición cuyos dividendos se editan
   const editDivPos = editDivId ? positions.find((x) => x.id === editDivId) : null;
-  const savePositionEdit = (next) => setPositions((ps) => ps.map((p) => (p.id === next.id ? next : p)));
+  /* v4.41: admite un SEGUNDO argumento opcional con una posición nueva a añadir. Lo usa el editor de
+     lotes cuando se vuelve a comprar un ticker ya cerrado: la cerrada se guarda tal cual (sigue en el
+     Histórico) y la reentrada entra como operación aparte. Los demás llamadores pasan uno solo. */
+  const savePositionEdit = (next, nueva) => setPositions((ps) => {
+    const mapped = ps.map((p) => (p.id === next.id ? next : p));
+    return nueva ? [...mapped, nueva] : mapped;
+  });
   const sheetPos = sheetPosId ? positions.find((x) => x.id === sheetPosId) : null;
   /* v4.35 (Victor: "los botones de Resolver no hacen nada"): esta función espera la POSICIÓN entera,
      pero el banner de vencidas de Vencimientos le pasaba el id suelto — `p.id` salía undefined y el
@@ -10656,6 +10724,23 @@ function App() {
     if (closedObj) setSummaryPos(closedObj); /* v2.14: resumen de cierre sin salir del menú actual */
   };
   const reopenPos = (id) => setPositions((ps) => ps.map((p) => (p.id === id ? { ...p, closed: false } : p)));
+  /* v4.41: volver a comprar una acción ya vendida del todo. NO resucita la operación cerrada —esa se
+     queda archivada en el Histórico con su resultado—: abre una posición NUEVA del mismo ticker,
+     bloque y broker, sin las ventas ni los dividendos de la anterior, y salta directo al editor de
+     lotes para meter la compra en dos toques. */
+  const rebuyStock = (id) => {
+    const p = positions.find((x) => x.id === id);
+    if (!p) return;
+    const { soldLots: _sl, dividends: _dv, assignedFrom: _af, entryNote: _en, ...base } = p;
+    const nueva = {
+      ...base, id: newId(), lots: [], qty: "", bep: "",
+      entryDate: new Date().toISOString().slice(0, 10),
+      closed: false, closeDate: "", closePrice: "", closeComision: "", closeNote: "",
+      pnl: "", mktValue: "",
+    };
+    setPositions((ps) => [...ps, nueva]);
+    setEditLotsId(nueva.id);
+  };
   const clearAll = () => {
     if (!confirmClear) { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); return; }
     setPositions([]); setEditSet(new Set()); setConfirmClear(false);
@@ -11424,7 +11509,7 @@ function App() {
           })()}
           <MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} /></>)}
 
-        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
+        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} onRebuy={rebuyStock} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
         {view === "ajustes" && (
           /* v1.15: ajustes rediseñados — 4 tarjetas de lista agrupada estilo iOS (icono tintado,

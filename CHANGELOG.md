@@ -1,5 +1,50 @@
 # CHANGELOG — Bloques
 
+Bloques v4.41 — Volver a comprar una acción borraba la operación anterior del Histórico
+
+## El síntoma
+Victor: *"los movimientos de compraventa de acciones del mismo ticker no quedan registrados en
+operaciones cerradas; si cierras queda el último, pero si vuelves a entrar en esa posición desaparece
+del histórico"*.
+
+## La causa
+En una acción vendida del todo, el Histórico ofrecía **un único botón: "Reabrir"**. Y `reopenPos` hace
+literalmente `closed: false`. Con eso la operación terminada dejaba de ser una cerrada: se esfumaba de
+Histórico → Cerradas y sus ventas se arrastraban a la posición reabierta, mezclando dos idas y vueltas
+distintas en un solo registro con el BEP promediado.
+
+El botón no estaba mal: "Reabrir" es para deshacer un cierre por error. Lo que faltaba era el botón
+para lo que él quería hacer —volver a comprar—, así que usaba el único que había.
+
+**Descartado por el camino** (verificado, no supuesto): crear la posición nueva desde el asistente
+**sí** conserva la cerrada. El problema era solo la reapertura.
+
+## El arreglo
+En una acción cerrada con ventas registradas, el Histórico ofrece ahora dos botones en vez de uno:
+
+- **"Volver a comprar"** — abre una operación **nueva** (mismo ticker, bloque y broker, sin las ventas
+  ni los dividendos de la anterior) y salta directo al editor de lotes con la fila desplegada, para
+  meter la compra en dos toques. La anterior se queda archivada con su resultado.
+- **"Lotes"** — para corregir: ver las ventas y deshacer una, que sí reabre la posición.
+
+Y el editor de lotes distingue las dos intenciones por sí solo: si se ha pulsado "Deshacer" en alguna
+venta es una corrección (reabre); si las ventas siguen igual y aparecen lotes nuevos es una reentrada
+(nace posición nueva, con aviso en pantalla explicándolo).
+
+De paso, el lote nuevo **nace desplegado**: antes salía plegado y había que tocarlo antes de escribir.
+
+## Verificación
+Chromium (viewport iPhone 390×844), por la interfaz real:
+- **Reentrada**: NVO cerrada (100 @ $40 → vendidas @ $50, +$1.000) → "Volver a comprar" 50 @ $55.
+  Quedan **dos** posiciones: la cerrada intacta con su venta, y la nueva con 50 acciones, BEP 55 y
+  **sin** ventas heredadas. Histórico → Cerradas la sigue mostrando.
+- **Acumulación** (lo que él echaba en falta): con dos idas y vueltas cerradas, Histórico → Acciones
+  marca **Cerradas (2)**, las lista por separado y suma **+$1.240** (+$1.000 y +$240), win rate 100%.
+  "Por ticker" da el mismo acumulado.
+- **Corrección**: abrir "Lotes" en la cerrada y pulsar "Deshacer" reabre **esa misma** posición con sus
+  100 acciones y sin la venta — no crea ninguna nueva, y no sale el aviso de reentrada.
+- Sin errores en consola. `npm run build` ok (`app v4.41`), `node --check dist/app.js` pasa.
+
 Publicación — método nuevo en marcha (no toca la app)
 
 ## Qué se ha hecho
