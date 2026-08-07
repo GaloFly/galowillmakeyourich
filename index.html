@@ -47,6 +47,9 @@ const T_LIGHT = {
   /* v4.22: elevación mínima para chips/filas pequeñas (selectores, totales por mes) */
   raiseSm: "0 1px 3px rgba(93,82,62,0.16)",
   edge: "1px solid #ECE6DA",
+  /* v4.44: el velo de detrás de un diálogo, y el filete del propio diálogo. Sobre crema, un velo
+     negro al 50% ya separa de sobra y el desenfoque es solo un adorno. */
+  veil: "rgba(20,18,14,0.5)", veilBlur: "blur(2px)", modalEdge: "1px solid #ECE6DA",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
 /* paleta oscura (v4.11, "cabina nocturna"): negro azulado profundo con tarjetas elevadas, en vez de
@@ -67,6 +70,15 @@ const T_DARK = {
   raise: "inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.4), 0 6px 16px rgba(0,0,0,0.45)",
   raiseSm: "0 1px 3px rgba(0,0,0,0.5)",
   edge: "1px solid #2C2D33",
+  /* v4.44 (Victor, con capturas del asistente: "cuando abres nuevas posiciones con el modo oscuro no
+     se ven"). El problema no era el texto —todo pasaba el contraste— sino que el DIÁLOGO no se
+     separaba de la página: un velo negro al 50% sobre un fondo ya casi negro no oscurece nada, y la
+     sombra del panel (negra) tampoco dibuja contorno sobre negro. Resultado: el cuadro se disolvía
+     en la página y se leía todo junto. Mismo fallo que las filas de posiciones en la v4.37.
+     Arreglo: velo MUCHO más opaco + desenfoque (que sí separa: lo de detrás pierde el foco) y un
+     filete claro en el borde del diálogo — negro sobre negro, la sombra sola no basta, igual que
+     T.edge existe porque blanco sobre blanco tampoco. */
+  veil: "rgba(0,0,0,0.72)", veilBlur: "blur(8px) saturate(0.8)", modalEdge: "1px solid #3A3B45",
   sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,'Segoe UI',Roboto,sans-serif",
 };
 /* T, HEX, BLOCKS, TABS, PALETTE dependen todos del tema activo. Son "let" (no "const") y se reconstruyen
@@ -176,7 +188,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.43"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.44"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2102,8 +2114,8 @@ function InfoModal({ type, onClose }) {
     body: "Mide cuánto capital tienes desplegado en riesgo (market value de las posiciones, sin contar el cash de B0) respecto al valor real de la cuenta (NLV). Por debajo de 1× tienes parte de la cuenta en liquidez; por encima de 1× estás usando margen.",
   };
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 420, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, border: T.modalEdge, padding: 20, maxWidth: 420, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: T.ink }}>{data.title}</div>
         {data.sub && <div style={{ fontSize: 13, fontWeight: 700, color: T.green, marginTop: 2 }}>{data.sub}</div>}
         <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5, margin: "10px 0 14px" }}>{data.body}</div>
@@ -3912,8 +3924,8 @@ function RollChainEditor({ p, onSave, onClose }) {
   const dateStyle = { width: "100%", boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: T.ink, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none" };
   return (
     <div onClick={onClose} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-      style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+      style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="edit" size={19} />Editar {p.tkr || "posición"}</div>
@@ -4114,8 +4126,8 @@ function LotsEditor({ p, onSave, onClose }) {
   };
   return (
     <div onClick={onClose} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-      style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+      style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="lots" size={19} />Lotes de {p.tkr || "acciones"}</div>
@@ -4252,8 +4264,8 @@ function DividendsEditor({ p, onSave, onClose }) {
   const save = () => { onSave({ ...p, dividends: divs.filter((d) => n(d.amount) !== 0 || n(d.ret) !== 0 || n(d.fee) !== 0).map((d) => ({ id: d.id, date: d.date || "", amount: String(n(d.amount)), ret: String(n(d.ret)), fee: String(n(d.fee)) })) }); onClose(); };
   return (
     <div onClick={onClose} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-      style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+      style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="dividend" size={19} />Dividendos de {p.tkr || "acciones"}</div>
@@ -4331,8 +4343,8 @@ function PosSummaryCard({ p, onClose }) {
   };
   return (
     <div onClick={onClose} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-      style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 75, padding: "calc(14px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom))" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: "18px 18px 16px", width: "100%", maxWidth: 440, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+      style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 75, padding: "calc(14px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom))" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, border: T.modalEdge, padding: "18px 18px 16px", width: "100%", maxWidth: 440, maxHeight: "88vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 800, color: T.green, textTransform: "uppercase", letterSpacing: 0.5 }}>{p.exercised ? "Posición asignada" : "Posición cerrada"}</div>
@@ -5000,8 +5012,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         const willClose = legMode === "close" && (S ? p.noLong : p.noShort);
         return (
           <div onClick={() => setLegSheet(null)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-            style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+            style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />{title}</div>
@@ -5051,8 +5063,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         const ok = rollStrike && rollExpiry && rollDate;
         return (
           <div onClick={() => setRolling(false)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-            style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+            style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="roll" size={19} />{isPMCC(p) && p.noShort ? "Vender call · " + p.tkr : "Rolar " + p.tkr}</div>
@@ -5128,8 +5140,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           : ((closePriceV === "" && !closeExpira) ? NaN : (opt ? (shortSide ? (n(p.prima) - px) * q : (px - n(p.prima)) * q) : (px - effBep(p)) * sellQty));
         return (
           <div onClick={() => setClosing(false)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-            style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+            style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>✕ Cerrar {p.tkr || "posición"}</div>
@@ -6231,8 +6243,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
           )}
 
           {filterOpen && (
-            <div onClick={() => setFilterOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 70 }}>
-              <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: "26px 26px 0 0", padding: "18px 18px calc(22px + env(safe-area-inset-bottom))", width: "100%", maxWidth: 560, boxSizing: "border-box", boxShadow: "0 -20px 60px rgba(0,0,0,0.35)" }}>
+            <div onClick={() => setFilterOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 70 }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: "26px 26px 0 0", border: T.modalEdge, padding: "18px 18px calc(22px + env(safe-area-inset-bottom))", width: "100%", maxWidth: 560, boxSizing: "border-box", boxShadow: "0 -20px 60px rgba(0,0,0,0.35)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: T.ink }}>Filtrar · {stratCat}</div>
                   <button onClick={() => setFilterOpen(false)} style={{ background: T.tile, border: "none", borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, color: T.sub, cursor: "pointer" }}>✕</button>
@@ -8893,8 +8905,8 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           const wr = isFinite(d.pop) ? ((d.pop - 0.10) * 100).toFixed(1) + "%" : "—";
           const ratioLoss = d.dyn > 0 ? ((d.w - d.dyn) / d.dyn).toFixed(1) : "—";
           return (
-            <div onClick={() => setMinInfo(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,25,0.45)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-              <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: "22px 22px 0 0", padding: "18px 18px 28px", maxWidth: 560, width: "100%", maxHeight: "82vh", overflowY: "auto", boxShadow: T.shadow }}>
+            <div onClick={() => setMinInfo(null)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: "22px 22px 0 0", border: T.modalEdge, padding: "18px 18px 28px", maxWidth: 560, width: "100%", maxHeight: "82vh", overflowY: "auto", boxShadow: T.shadow }}>
                 <div style={{ fontSize: 16, fontWeight: 800, color: T.ink }}>Cómo se calcula el crédito mínimo</div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, lineHeight: 1.6, marginTop: 10, display: "grid", gap: 10 }}>
                   <div><b style={{ color: T.ink }}>1 · La probabilidad que manda.</b> {ic ? "En el cóndor es la POP OPEN SUAVIZADA (Laplace: (M−X+1)/(M+2) — con pocos earnings y 0 roturas, el 100% crudo no es certeza)." : minInfo.d.place === "D30" ? "En un spread Δ30 es la Δ EMPÍRICA suavizada: cuántos opens reales respetaron la corta (" + d.fav + " de " + d.M + ")." : "En un spread ATM es la DIRECCIONAL suavizada: cuántas veces fue a favor del lado " + (d.side === "P" ? "PUT" : "CALL") + " (" + d.fav + " de " + d.M + ")."} Aquí: <b style={{ color: T.ink }}>{popTxt}</b>.</div>
@@ -11732,8 +11744,8 @@ function App() {
 
       <InfoModal type={info} onClose={() => setInfo(null)} />
       {refreshChoiceOpen && (
-        <div onClick={() => setRefreshChoiceOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 380, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setRefreshChoiceOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, border: T.modalEdge, padding: 20, maxWidth: 380, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>Precios</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 16 }}>Ya tienes una API key guardada en este dispositivo.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -11745,8 +11757,8 @@ function App() {
         </div>
       )}
       {keyModalOpen && (
-        <div onClick={() => setKeyModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setKeyModalOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, border: T.modalEdge, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{apiKey ? "Cambiar la key de precios" : "Key de precios"}</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en finnhub.io/register. Se guarda en este dispositivo. Solo cubre tickers de bolsas US.</div>
             <input type="text" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="Pega aquí tu API key"
@@ -11759,8 +11771,8 @@ function App() {
         </div>
       )}
       {geminiModalOpen && (
-        <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setGeminiModalOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, border: T.modalEdge, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{geminiKey ? "Cambiar la key del lector" : "Key del lector de capturas"}</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en aistudio.google.com/apikey. Se guarda en este dispositivo. Sin ella, "Leer captura" del Comparador no puede leer nada. Si se agota el cupo gratuito de un modelo (429), prueba automáticamente con Flash-Lite (cupo aparte) antes de rendirse.</div>
             <input type="text" value={geminiInput} onChange={(e) => setGeminiInput(e.target.value)} placeholder="Pega aquí tu API key"
@@ -11773,8 +11785,8 @@ function App() {
         </div>
       )}
       {avModalOpen && (
-        <div onClick={() => setAvModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setAvModalOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, border: T.modalEdge, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>{avKey ? "Cambiar la key de dividendos" : "Key de dividendos"}</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Gratis en alphavantage.co/support/#api-key (solo pide un email). Se guarda en este dispositivo. Con ella, la hoja de Rolar enseña la fecha del próximo dividendo del subyacente. Límite del plan gratis: 25 consultas/día.</div>
             <input type="text" value={avInput} onChange={(e) => setAvInput(e.target.value)} placeholder="Pega aquí tu API key"
@@ -11787,8 +11799,8 @@ function App() {
         </div>
       )}
       {puenteModalOpen && (
-        <div onClick={() => setPuenteModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,16,10,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setPuenteModalOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 22, border: T.modalEdge, padding: 20, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 40px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: T.ink, marginBottom: 6 }}>Servidor propio</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>
               Conecta la app con tu propio servidor para traer precios de opciones en vivo. La dirección y la clave te las dio el instalador del puente. Se guardan solo en este dispositivo y <b style={{ color: T.ink }}>no viajan en el backup</b>.
@@ -11824,8 +11836,8 @@ function App() {
         </div>
       )}
       {brokerModalOpen && (
-        <div onClick={() => setBrokerModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 420, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setBrokerModalOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, border: T.modalEdge, padding: 22, maxWidth: 420, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink, marginBottom: 6 }}>Brokers</div>
             <div style={{ fontSize: 13.5, color: T.sub, lineHeight: 1.5, marginBottom: 16 }}>Añade un broker o quítalo. Al quitar uno con posiciones, sus posiciones se mueven al broker que elijas.</div>
 
@@ -11880,8 +11892,8 @@ function App() {
         </div>
       )}
       {exportOpen && (
-        <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, border: T.modalEdge, padding: 22, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink, marginBottom: 8 }}>Exportar cartera</div>
             <div style={{ fontSize: 14, color: T.sub, lineHeight: 1.5, marginBottom: 14 }}>Copia este texto y pégalo en el chat cuando quieras feedback semanal o mensual. Incluye IBKR + DEGIRO completo, sin importar el filtro actual.</div>
             <textarea id="export-ta" value={exportText} readOnly spellCheck={false} style={{ width: "100%", boxSizing: "border-box", height: 260, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 14, padding: 12, fontSize: 12, fontFamily: "ui-monospace,Menlo,Consolas,monospace", color: T.ink, lineHeight: 1.5, resize: "vertical", outline: "none" }} />
@@ -11896,8 +11908,8 @@ function App() {
         </div>
       )}
       {backupOpen && (
-        <div onClick={() => setBackupOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div onClick={() => setBackupOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 24, border: T.modalEdge, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "calc(100vh - 36px)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             <div style={{ position: "sticky", top: 0, background: T.card, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "18px 20px 10px", borderRadius: "24px 24px 0 0", zIndex: 3 }}>
               <div style={{ fontSize: 21, fontWeight: 800, color: T.ink }}>Backup de datos</div>
               <button onClick={() => setBackupOpen(false)} aria-label="Cerrar" style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
@@ -12016,8 +12028,8 @@ function App() {
           );
         };
         return (
-          <div onClick={() => setSheetPosId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+          <div onClick={() => setSheetPosId(null)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -12082,8 +12094,8 @@ function App() {
 
       {/* ASISTENTE NUEVA POSICIÓN */}
       {wizOpen && (
-        <div onClick={() => setWizOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,18,14,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>{/* v5.10: el asistente pasa de hoja inferior a ventana centrada, con las 4 esquinas redondeadas */}
-          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "84vh", overflowY: "auto", overscrollBehavior: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+        <div onClick={() => setWizOpen(false)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))" }}>{/* v5.10: el asistente pasa de hoja inferior a ventana centrada, con las 4 esquinas redondeadas */}
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "84vh", overflowY: "auto", overscrollBehavior: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {wizStep > 1 && <button onClick={() => { if (wizStep === 3 && DCDD_STRATS.has(wizStrat) && wizSub > 1) { setWizSub(wizSub - 1); } else { setWizStep(wizStep - 1); setWizSub(1); } }} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 16, color: T.ink, cursor: "pointer" }}>‹</button>}
