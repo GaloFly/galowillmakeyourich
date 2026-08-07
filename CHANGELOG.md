@@ -1,5 +1,46 @@
 # CHANGELOG — Bloques
 
+Bloques v4.44 — En oscuro, el asistente de nueva posición se disolvía en la página
+
+## El síntoma
+Victor, con dos capturas del asistente: *"cuando abres nuevas posiciones con el modo oscuro no se
+ven"*.
+
+## La causa
+Medido antes de tocar nada: **ningún texto fallaba de contraste** — todos por encima de 3:1 en los
+tres pasos. El problema no era leer las letras, era que **el diálogo no se separaba de la página**.
+
+Dos cosas que funcionan en claro y no hacen nada en oscuro:
+
+- El **velo** de detrás era `rgba(20,18,14,0.5)`. Un velo negro al 50% sobre un fondo que ya es casi
+  negro (`#0C0D10`) no oscurece prácticamente nada.
+- La **sombra** del panel es negra. Sobre negro no dibuja ningún contorno.
+
+Resultado: el cuadro flotante tenía el mismo color que las tarjetas de detrás, sin borde ni sombra
+que lo delimitara, y se leía todo junto — el "VALOR DE LA CUENTA" de la página parecía parte del
+asistente. Es el mismo fallo que las filas de posiciones en la v4.37, en otro sitio.
+
+## El arreglo
+Dos tokens nuevos, aplicados a los **20 diálogos** de la app de una vez (no solo al asistente: el
+fallo era de todos):
+
+- `T.veil` + `T.veilBlur` — en oscuro, velo al 72% **y desenfoque del fondo**. El desenfoque es lo
+  que de verdad separa: lo de detrás pierde el foco y el diálogo salta a primer plano. En claro se
+  queda como estaba (allí el velo ya bastaba) con un desenfoque leve.
+- `T.modalEdge` — filete claro en el borde del panel. Misma lógica por la que existe `T.edge`: si
+  blanco sobre blanco necesita un filete porque la sombra no basta, negro sobre negro también.
+
+## Verificación
+Chromium (viewport iPhone 390×844), midiendo el contraste real de cada texto contra el fondo que
+tiene detrás, en los tres pasos del asistente:
+- Antes y después: **cero textos por debajo de 3:1** — confirma que el fallo no era el texto.
+- Capturas antes/después en oscuro: el panel pasa de fundirse con la página a recortarse contra un
+  fondo desenfocado, con su filete visible.
+- Modo claro comprobado: el diálogo sigue igual de legible, ahora con el fondo levemente
+  desenfocado.
+- Los otros diálogos (Servidor propio, Backup, Brokers…) revisados con el cambio. Sin errores de
+  consola.
+
 Bloques v4.43 — Conectar la app con tu propio servidor (el puente a OpenD)
 
 ## De dónde viene
