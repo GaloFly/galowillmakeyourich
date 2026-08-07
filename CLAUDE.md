@@ -6,7 +6,12 @@ Un solo archivo fuente: **`index.html`** (~12.300 líneas, JSX + React 18 compil
 ## El usuario
 
 Victor (@vdonado), **piloto, no técnico**. Hablarle **en español, sin jerga**.
-- Su rutina no cambia: edita/sube `index.html` por la web de GitHub y el robot compila y publica.
+- **Él no toca el código ni GitHub.** Pide los cambios por el chat y Claude los hace de punta a
+  punta: editar `index.html`, verificar, commit, PR, merge y confirmar que se publicó. Victor solo
+  abre la app en el iPhone y acepta la actualización. (Antes subía él el archivo por la web de
+  GitHub; ya no — lo dijo el 7-ago-2026: *"ya me lo haces tú lo de subir el nuevo index cada vez"*.)
+- Corolario: si algo del despliegue requiere pulsar un ajuste en GitHub (permisos, Pages…), hay que
+  dárselo **paso a paso y sin jerga**, y avisar de las consecuencias antes de que lo pulse.
 - Trabaja desde el **iPhone**, con la app **guardada en la pantalla de inicio** (modo standalone).
   Casi todos los bugs de layout que reporta son específicos de ese modo — comprobarlos con
   Chromium en viewport iPhone antes de dar nada por bueno.
