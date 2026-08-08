@@ -188,7 +188,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.44"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.45"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1482,6 +1482,17 @@ async function puenteFetch(cfg, ruta, params) {
   }
 }
 const puenteConfigurado = (cfg) => !!(cfg && cfg.url && cfg.token);
+/* v4.45: OpenD devuelve el estado del mercado con el nombre interno de Futu — "AFTER_HOURS_END",
+   "PRE_MARKET_BEGIN"… Eso en pantalla no dice nada. Si el estado no está en la tabla NO se enseña
+   el nombre crudo: se calla. Enseñar jerga es peor que no enseñar nada. */
+const MERCADO_US = {
+  MORNING: "mercado abierto", AFTERNOON: "mercado abierto", TRADING: "mercado abierto",
+  CLOSED: "mercado cerrado", REST: "mercado en pausa",
+  PRE_MARKET_BEGIN: "pre-apertura", PRE_MARKET_END: "pre-apertura terminada",
+  AFTER_HOURS_BEGIN: "after hours", AFTER_HOURS_END: "after hours terminado",
+  WAITING_OPEN: "a punto de abrir", AUCTION: "subasta",
+};
+const mercadoEnCristiano = (s) => MERCADO_US[String(s || "").toUpperCase()] || "";
 
 async function fetchQuote(symbol, key) {
   try {
@@ -10353,8 +10364,8 @@ function App() {
     const r = await puenteFetch({ url: puenteUrlIn, token: puenteTokenIn.trim() }, "/salud", {});
     setPuenteProbando(false);
     if (r && r.ok) {
-      const abierto = r.mercado_us && r.mercado_us !== "?" ? " · mercado US: " + r.mercado_us : "";
-      setPuenteMsg({ ok: true, texto: "✅ Conectado. OpenD contesta" + abierto + "." });
+      const estado = mercadoEnCristiano(r.mercado_us);
+      setPuenteMsg({ ok: true, texto: "✅ Conectado. OpenD contesta" + (estado ? " · " + estado : "") + "." });
     } else {
       setPuenteMsg({ ok: false, texto: (r && r.error) || "No se pudo conectar." });
     }
