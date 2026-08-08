@@ -1,5 +1,36 @@
 # CHANGELOG — Bloques
 
+Bloques v4.45 — El servidor propio hablaba en jerga de moomoo
+
+## El síntoma
+Primera conexión real del puente desde el iPhone, y el mensaje decía:
+
+> ✅ Conectado. OpenD contesta · mercado US: **AFTER_HOURS_END**.
+
+## La causa
+OpenD devuelve el estado del mercado con el nombre interno de Futu, y la app lo pintaba tal cual.
+`AFTER_HOURS_END`, `PRE_MARKET_BEGIN`, `WAITING_OPEN`… son etiquetas de programador; en pantalla no
+dicen nada.
+
+## El arreglo
+Tabla de traducción: `AFTER_HOURS_END` → "after hours terminado", `CLOSED` → "mercado cerrado",
+`MORNING`/`AFTERNOON` → "mercado abierto", y así.
+
+Lo importante es qué pasa con lo que NO está en la tabla: **no se enseña el nombre crudo, se calla**.
+Queda "✅ Conectado. OpenD contesta." y punto. Enseñar jerga es peor que no enseñar nada — si mañana
+Futu añade un estado nuevo, el mensaje seguirá siendo legible en vez de escupir una constante.
+
+## Verificación
+- Con el puente simulado devolviendo `AFTER_HOURS_END`: *"✅ Conectado. OpenD contesta · after hours
+  terminado."*
+- Estados conocidos (`CLOSED`, `MORNING`) traducidos.
+- Estados desconocidos (`FUTURE_DAY_OPEN`, `?`, vacío, nulo): la frase queda limpia, sin restos.
+- El resto de desenlaces del botón (clave mala, OpenD mudo, servidor caído) siguen igual.
+
+## Nota de contexto
+Esta es la primera versión con el puente funcionando de verdad de punta a punta: iPhone → Cloudflare
+→ túnel → VPS → puente → OpenD, con el mercado americano contestando en vivo.
+
 Bloques v4.44 — En oscuro, el asistente de nueva posición se disolvía en la página
 
 ## El síntoma
