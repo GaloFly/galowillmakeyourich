@@ -131,7 +131,7 @@ Chromium (viewport iPhone 390×844), con el puente simulado en sus cuatro estado
 Bloques v4.42 — Las ventas parciales de acciones no aparecían en el Histórico
 
 ## El síntoma
-Victor pasó el backup de un amigo con el mismo problema del que veníamos: operaciones de compraventa
+Victor pasó un backup ajeno con el mismo problema del que veníamos: operaciones de compraventa
 que no aparecen en Cerradas. En la v4.41 arreglamos la reapertura, pero en ese backup no había ni un
 solo caso de ese fallo — y aun así faltaban operaciones.
 
@@ -145,8 +145,8 @@ terminada, con su compra, su venta y su resultado. Pero vive colgada de una posi
   aparecía ahí.
 
 Resultado: dinero real, ya cobrado, invisible en todo el Histórico (solo contaba dentro de los
-totales de MTM). En el backup del amigo eran **8 ventas y +$3.320,16**: ACHR $53,90 · FN $2.215,64 ·
-FOXF $94,90 · MRVL $395,77 · OXY $559,95.
+totales de MTM). En el backup de prueba eran ocho ventas de cinco subyacentes distintos, todas
+invisibles.
 
 ## El arreglo
 Cada venta parcial pasa a ser **su propia operación cerrada** en el Histórico, con etiqueta verde
@@ -166,19 +166,23 @@ Cada venta parcial pasa a ser **su propia operación cerrada** en el Histórico,
 De paso, dos cosas que salieron al verificar:
 
 - En el Histórico, la cifra que va delante de "× N acc" era siempre el último precio de mercado,
-  también en operaciones cerradas — o sea el precio de **hoy**, no el de la operación. Una venta de
-  FN a $730 se leía "564.73". En cerradas se enseña ahora el **precio de salida**.
-- El contador de la pestaña "Acciones" no contaba las ventas parciales: decía (27) mientras justo
-  debajo Abiertas (23) + Cerradas (12) sumaban 35. Ahora cuadra.
+  también en operaciones cerradas — o sea el precio de **hoy**, no el de la operación. Una venta
+  cerrada a $730 se leía con el precio de hoy, muy por debajo. En cerradas se enseña ahora el
+  **precio de salida**.
+- El contador de la pestaña "Acciones" no contaba las ventas parciales: la pestaña decía un número y
+  las dos sub-pestañas de debajo sumaban otro. Ahora cuadra.
 
 ## Verificación
-Chromium (viewport iPhone 390×844) con los datos reales del backup del amigo:
-- Histórico → Acciones: **Cerradas (4) → Cerradas (12)**; profit total **+$1.947 → +$5.267**;
-  media por operación +$439.
-- Aparecen los 9 tickers (SOI, RELY, AVGO, MRVL, FN, ACHR, OXY, GLW, FOXF); antes solo 4.
-- Filas correctas y etiquetadas: FN +$1.294 y +$922, MRVL +$318 y +$78, ACHR +$54, OXY +$560.
-- Ficha desplegada de la venta de FN: compra $622,08 → venta $730, +17,33% ROI, 27d, +$1.294.
+Chromium (viewport iPhone 390×844) con una cartera real de prueba:
+- Histórico → Acciones: el contador de Cerradas **triplica**, y el profit total sube en consecuencia;
+  la media por operación se recalcula sola.
+- Aparecen todos los subyacentes con ventas parciales; antes solo salían los cerrados del todo.
+- Filas correctas y etiquetadas, con su resultado realizado cada una.
+- Ficha desplegada de una venta parcial: precio de compra, precio de venta, ROI, días y P&L, todo
+  coherente entre sí.
 - Sin botones de acción en las derivadas. Sin errores de consola.
+
+*(Las cifras concretas de esa cartera no se reproducen aquí: era el backup de otra persona.)*
 
 Bloques v4.41 — Volver a comprar una acción borraba la operación anterior del Histórico
 
