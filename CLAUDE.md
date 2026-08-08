@@ -118,15 +118,17 @@ proceso** — lo que gaste nuestro puente se lo quita a los otros dos, en silenc
 4. **Ventanas de root sagradas**: 15:29-15:46 y 21:30-21:35 (Madrid) no se llama a OpenD.
 
 Y además: **el túnel de Cloudflare YA EXISTE**, corre como root y se configura desde el panel web
-(no hay `config.yml`). NUNCA crear un túnel nuevo ni reinstalar `cloudflared`. Ese túnel sirve hoy
-**Super Calculator en producción** (`agent.supercalcapp.com` → `127.0.0.1:8788`), la otra app de
-Victor: romperlo tira una app en uso. Añadir un *Public Hostname* (tipo HTTP, a `127.0.0.1:<puerto>`)
+(no hay `config.yml`). NUNCA crear un túnel nuevo ni reinstalar `cloudflared`. Ese túnel es el mismo que se montó para
+**Super Calculator**, la otra app de Victor: desde el 8-ago-2026 esa app corre en otra máquina
+(`minima-agent` ya no existe aquí), pero el túnel puede conservar sus rutas en el panel — destruirlo
+o recrearlo puede tirar una app en uso. Añadir un *Public Hostname* (tipo HTTP, a `127.0.0.1:<puerto>`)
 sí es seguro — es aditivo, en caliente y no toca las rutas que ya hay. Requiere que el dominio esté
 en la MISMA cuenta de Cloudflare que el túnel.
 El 11111 (OpenD) no se expone jamás: es la puerta a la cuenta de trading.
 
-Puertos ocupados en esa máquina: 8788 minima-agent (Super Calculator) · 8779 puente-alertas ·
-8777 el nuestro · 11111 OpenD (root) · 22 SSH. Solo el 22 se asoma al exterior.
+Puertos en esa máquina (verificado el 8-ago-2026: solo escuchaba el 11111): 8777 el nuestro ·
+8779 puente-alertas · 11111 OpenD (root) · 22 SSH. Solo el 22 se asoma al exterior. El 8788 quedó
+libre al mudarse Super Calculator.
 RAM total 3,7 GB compartida entre los tres sistemas — de ahí el tope de memoria del servicio.
 
 Dominio: **alphavext.com**. `puente.` es el nuestro (8777); `alertas.` es de otro servicio (8779).
