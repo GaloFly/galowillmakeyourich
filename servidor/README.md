@@ -112,7 +112,15 @@ En esta máquina `cloudflared` ya corre como root, arrancado en el boot, configu
 de Cloudflare** (no hay `config.yml` en el disco).
 
 **No crees un túnel nuevo ni reinstales `cloudflared`.** Un segundo conector con otro token pelearía
-con el que hay y puede tirar abajo lo de root.
+con el que hay. Y ese túnel no es un experimento: hoy sirve **Super Calculator en producción**
+(`agent.supercalcapp.com` → `127.0.0.1:8788`). Tocarlo mal tira una app que está en uso.
+
+Añadir un Public Hostname es **aditivo y en caliente**: no reinicia el conector, no toca las rutas
+existentes y no hace falta entrar en el servidor. La configuración vive en el panel, no en disco.
+
+**Condición previa:** `alphavext.com` tiene que estar en la **misma cuenta de Cloudflare** que el
+túnel. Si al desplegar el selector de dominio no aparece, es que el dominio está en otra cuenta —
+y entonces hay que moverlo antes, no crear un túnel aparte.
 
 Lo único que hay que hacer es añadir una ruta en el panel:
 

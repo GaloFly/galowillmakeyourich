@@ -103,8 +103,14 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-RestrictAddressFamilies=AF_INET AF_INET6
-MemoryMax=256M
+# AF_UNIX va incluido a propósito: sin él, la resolución de nombres y el registro por
+# socket local fallan de formas difíciles de diagnosticar.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# 512M, no 256M: la librería de moomoo arrastra pandas y numpy y se planta en 200-300 MB
+# ella sola. Con el tope demasiado bajo, systemd mata el servicio y lo relanza en bucle —
+# y como Restart=always, el bucle no para. La máquina tiene 3,7 GB y comparte con otros dos
+# sistemas, así que medio giga es lo que se puede coger sin molestar.
+MemoryMax=512M
 # ProtectSystem=strict deja TODO el disco en solo lectura. La librería de moomoo escribe su
 # propio registro, así que sin un sitio donde hacerlo el servicio se cae al arrancar. systemd
 # crea y da permisos a /var/lib/bloques, y HOME apunta ahí para que escriba dentro.
