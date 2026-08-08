@@ -112,8 +112,9 @@ En esta máquina `cloudflared` ya corre como root, arrancado en el boot, configu
 de Cloudflare** (no hay `config.yml` en el disco).
 
 **No crees un túnel nuevo ni reinstales `cloudflared`.** Un segundo conector con otro token pelearía
-con el que hay. Y ese túnel no es un experimento: hoy sirve **Super Calculator en producción**
-(`agent.supercalcapp.com` → `127.0.0.1:8788`). Tocarlo mal tira una app que está en uso.
+con el que hay. Y ese túnel no es solo nuestro: es el mismo que se montó para **Super Calculator**,
+que hoy corre en otra máquina pero puede seguir teniendo rutas en la configuración del panel.
+Destruirlo o recrearlo puede tirar una app en uso. Añadirle una ruta, no.
 
 Añadir un Public Hostname es **aditivo y en caliente**: no reinicia el conector, no toca las rutas
 existentes y no hace falta entrar en el servidor. La configuración vive en el panel, no en disco.
