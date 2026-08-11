@@ -1,5 +1,50 @@
 # CHANGELOG — Bloques
 
+Bloques v4.48 — El carrusel del calendario se quedaba entre dos días
+
+## El síntoma
+Victor, sobre la v4.47: *"el scrolling lateral se queda a veces en el medio"*. En su captura, dos
+días del calendario partidos por la mitad.
+
+## La causa
+**Regresión mía de la v4.47.** Al hacer que el carrusel adoptase la altura del día visible, esa
+altura se recalculaba **en mitad del gesto**: cada evento de scroll cambiaba el índice, y con él la
+altura del contenedor. Cambiarle el tamaño al contenedor mientras el navegador está decidiendo dónde
+engancharse le hace abandonar el enganche y quedarse a medio camino.
+
+## El arreglo
+Tres cosas, todas en `SnapCarousel`:
+
+- **La altura no se toca mientras el dedo desliza.** Se aplaza hasta 160 ms después del último
+  movimiento, cuando el carrusel ya ha asentado. El índice y los puntitos siguen actualizándose al
+  instante, que eso no estorba.
+- **La animación de altura se apaga durante el gesto** y vuelve al soltar.
+- **`scrollSnapStop: always`** — cada pasada de dedo cae en UN día, sin saltarse ninguno.
+
+Y de paso: el scroll vertical de cada tarjeta solo se activa cuando de verdad hay tope de altura. Un
+`overflow` permanente le robaba el gesto al deslizamiento lateral.
+
+## Verificación
+Chromium (viewport iPhone 390×844), cuatro días muy desiguales (12 tickers, 1, 2, 1). Se suelta el
+carrusel **a propósito entre dos días** y se mira dónde asienta:
+
+| Soltado en | Asienta en | Desvío |
+|---|---|---|
+| 145 px | 0 | 0 px |
+| 435 px | 290 | 0 px |
+| 102 px | 0 | 0 px |
+| 725 px | 825 (tope) | 0 px |
+| 522 px | 581 | 1 px |
+
+Las cinco veces engancha en un día, y la altura acompaña (279 / 87 / 279 / 87 / 128 px).
+
+**Aviso honesto:** el navegador de escritorio no reproduce la inercia del dedo en iOS. Esto prueba
+que el mecanismo ya no estorba al enganche, pero la prueba definitiva es el iPhone.
+
+*(De camino, otra vez el fallo de los comentarios `{/* … */}` dentro de un `map` que devuelve JSX:
+rompe el compilado. Y el `node --check` dio verde sobre el `dist/` VIEJO — hay que mirar la línea
+`build … ok` del propio compilado, no fiarse del check.)*
+
 Bloques v4.47 — Un día con muchos earnings echaba la calculadora fuera de la pantalla
 
 ## El síntoma
