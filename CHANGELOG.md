@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+Bloques v4.47 — Un día con muchos earnings echaba la calculadora fuera de la pantalla
+
+## El síntoma
+Victor, tras dar con la causa él mismo: *"si la lista en un día era muy larga se llevaba el
+calculador abajo"*. En su captura, un vacío negro de media pantalla entre el calendario y la
+calculadora.
+
+## La causa
+El carrusel del Calendario de aperturas pone las tarjetas de cada día en fila con `flex`, y por
+defecto **los hijos de un flex se estiran a la altura del más alto**. Basta con que UN día tenga
+muchos resultados para que TODOS los días midan lo mismo, incluidos los que tienen un solo ticker.
+
+Medido, con un día de 14 tickers y otro de 1, en pantalla de 664 px:
+
+| Día | Contenido real | Altura que ocupaba |
+|---|---|---|
+| 14 tickers | 620 px | 620 px |
+| **1 ticker** | **87 px** | **620 px** |
+
+533 px de vacío, y la calculadora empujada casi una pantalla entera hacia abajo. Fallo latente desde
+siempre: solo se manifiesta cuando un día se carga de earnings, por eso apareció ahora.
+
+## El arreglo
+Dos remedios, los dos en `SnapCarousel`:
+
+1. **`alignItems: flex-start`** — cada día ocupa su altura real, no la del más gordo.
+2. **El carrusel adopta la altura de la página que se está viendo**, con transición suave al
+   deslizar, **y un tope del 42% de la pantalla**: el día cargado hace scroll dentro de su propia
+   tarjeta en vez de empujar lo que viene debajo.
+
+La medida se recalcula al deslizar, al cambiar el número de días y —con `ResizeObserver`— cuando el
+contenido de una tarjeta crece o encoge; sin eso, desplegar algo dentro de un día habría dejado la
+altura vieja y recortado el contenido.
+
+## Verificación
+Chromium (viewport iPhone 390×844), sembrando un día con 14 tickers y otro con 1:
+
+| Situación | Antes | Después |
+|---|---|---|
+| Viendo el día de 14 | 620 px | **279 px** (tope) con scroll propio |
+| Viendo el día de 1 | 620 px | **87 px** |
+
+- Deslizar entre días sigue funcionando y la altura acompaña.
+- El día que no se está viendo se comprime y conserva su scroll interno.
+- Sin errores de consola.
+
+`SnapCarousel` solo se usa en este calendario, así que el cambio no alcanza a ninguna otra pantalla.
+
 Bloques v4.46 — La calculadora de earnings desaparecía sin decir por qué
 
 ## El síntoma
