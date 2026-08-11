@@ -188,7 +188,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.46"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.47"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7798,11 +7798,22 @@ function AlertsToolContent({ apiKey }) {
    el histórico de tablas. No choca con el swipe entre bloques: ese gesto ya ignora los toques que
    empiezan dentro de un contenedor con scroll horizontal (hasHScrollAncestor), y en Herramientas
    ni siquiera aplica. Con una sola tarjeta no hay scroll ni dots. */
-function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey }) {
+function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxFrac = 0.42 }) {
   /* v1.37: dos carruseles se sincronizan por CLAVE (el ticker): al deslizar uno, el padre recibe
      onActiveKey y le pasa activeKey al otro, que hace scroll suave hasta su tarjeta de ese ticker.
      progRef evita el bucle: mientras el scroll es programático, onScroll no re-emite onActiveKey. */
   const [idx, setIdx] = useState(0);
+  /* v4.47 (Victor: "si la lista en un día era muy larga se llevaba el calculador abajo"). El track
+     es flex, y por defecto los hijos se ESTIRAN a la altura del más alto: bastaba un día de
+     resultados con 14 tickers para que TODOS los días midieran lo mismo. Medido en el calendario de
+     Earnings: día de 14 tickers 620 px (contenido real 620) y día de 1 ticker 620 px con solo 87 de
+     contenido — 533 px de vacío, en una pantalla de 664. La calculadora se iba fuera de la vista.
+     Dos remedios juntos:
+       · el carrusel toma la altura de la página que se está VIENDO, no la de la más alta;
+       · con un tope (maxFrac de la pantalla) y scroll dentro de la propia tarjeta, para que ni el
+         peor día del trimestre empuje lo que viene debajo.
+     Se mide el contenido real (scrollHeight) del hijo, no del envoltorio, que ya viene estirado. */
+  const [alto, setAlto] = useState(null);
   const scRef = useRef(null);
   const progRef = useRef(false);
   const kids = React.Children.toArray(children);
@@ -7826,15 +7837,42 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey }) {
     const t = setTimeout(() => { progRef.current = false; }, 550);
     return () => clearTimeout(t);
   }, [activeKey, kids.length]);
+  /* v4.47: altura = la de la página activa, con tope. Se recalcula al deslizar, al cambiar el
+     número de páginas y cuando el contenido de una tarjeta crece o encoge (ResizeObserver: sin él,
+     desplegar algo dentro de un día dejaría la altura vieja y recortaría). */
+  const medir = () => {
+    const el = scRef.current;
+    const pag = el && el.children[idx];
+    if (!pag) return;
+    const dentro = pag.firstElementChild;
+    const real = dentro ? dentro.scrollHeight : pag.scrollHeight;
+    const tope = Math.max(200, Math.round((window.innerHeight || 700) * maxFrac));
+    if (real > 0) setAlto(Math.min(real, tope));
+  };
+  useEffect(medir, [idx, kids.length, activeKey]);
+  useEffect(() => {
+    const el = scRef.current;
+    if (!el) return;
+    window.addEventListener("resize", medir);
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(medir);
+      Array.from(el.children).forEach((c) => { if (c.firstElementChild) ro.observe(c.firstElementChild); });
+    }
+    return () => { window.removeEventListener("resize", medir); if (ro) ro.disconnect(); };
+  }, [idx, kids.length]);
   if (!kids.length) return null;
   return (
     <div style={{ minWidth: 0, maxWidth: "100%" }}>{/* v1.36: como hijo de un grid, sin minWidth:0 el track
       crecía al max-content (todas las tarjetas en fila) y la página entera se salía del móvil */}
       <div ref={scRef} onScroll={onScroll} className="no-scrollbar"
         style={{ display: "flex", gap: 10, overflowX: kids.length > 1 ? "auto" : "hidden", scrollSnapType: "x mandatory",
-          margin: "0 -" + bleed + "px", padding: "0 " + bleed + "px", scrollPaddingLeft: bleed }}>
+          margin: "0 -" + bleed + "px", padding: "0 " + bleed + "px", scrollPaddingLeft: bleed,
+          /* alignItems flex-start: sin esto los hijos se estiran al más alto — la causa del vacío */
+          alignItems: "flex-start", height: alto ? alto + "px" : undefined, transition: "height .22s ease" }}>
         {kids.map((k, i) => (
-          <div key={i} style={{ flex: "0 0 auto", width: kids.length > 1 ? "86%" : "100%", minWidth: 0, scrollSnapAlign: "start", display: "flex" }}>{k}</div>
+          <div key={i} style={{ flex: "0 0 auto", width: kids.length > 1 ? "86%" : "100%", minWidth: 0, scrollSnapAlign: "start", display: "flex",
+            maxHeight: alto ? alto + "px" : undefined, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>{k}</div>
         ))}
       </div>
       {kids.length > 1 && (
