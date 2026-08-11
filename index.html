@@ -188,7 +188,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.47"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.48"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7816,6 +7816,13 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxF
   const [alto, setAlto] = useState(null);
   const scRef = useRef(null);
   const progRef = useRef(false);
+  /* v4.48 (Victor: "el scrolling lateral se queda a veces en el medio"). Culpa del alto variable de
+     la v4.47: al deslizar se recalculaba la altura EN MEDIO del gesto, y cambiar el tamaño del
+     contenedor mientras el navegador está decidiendo dónde engancharse le hace abandonar el enganche
+     y quedarse a medio camino entre dos días. La medida se aplaza hasta que el dedo para: `quieto`
+     marca que hay un scroll en curso y se vuelve a medir 160 ms después del último movimiento. */
+  const quietoRef = useRef(null);
+  const [midiendo, setMidiendo] = useState(false);
   const kids = React.Children.toArray(children);
   const cardW = (el) => (el.firstChild ? el.firstChild.offsetWidth + 10 : 1);
   const onScroll = () => {
@@ -7826,7 +7833,11 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxF
       setIdx(i);
       if (!progRef.current && onActiveKey && keys && keys[i] != null) onActiveKey(keys[i]);
     }
+    if (quietoRef.current) clearTimeout(quietoRef.current);
+    setMidiendo(true);
+    quietoRef.current = setTimeout(() => { quietoRef.current = null; setMidiendo(false); }, 160);
   };
+  useEffect(() => () => { if (quietoRef.current) clearTimeout(quietoRef.current); }, []);
   useEffect(() => {
     if (!keys || activeKey == null) return;
     const i = keys.indexOf(activeKey);
@@ -7841,6 +7852,7 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxF
      número de páginas y cuando el contenido de una tarjeta crece o encoge (ResizeObserver: sin él,
      desplegar algo dentro de un día dejaría la altura vieja y recortaría). */
   const medir = () => {
+    if (quietoRef.current) return; /* v4.48: no se toca la altura mientras el dedo desliza */
     const el = scRef.current;
     const pag = el && el.children[idx];
     if (!pag) return;
@@ -7849,7 +7861,7 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxF
     const tope = Math.max(200, Math.round((window.innerHeight || 700) * maxFrac));
     if (real > 0) setAlto(Math.min(real, tope));
   };
-  useEffect(medir, [idx, kids.length, activeKey]);
+  useEffect(medir, [idx, kids.length, activeKey, midiendo]);
   useEffect(() => {
     const el = scRef.current;
     if (!el) return;
@@ -7869,10 +7881,17 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxF
         style={{ display: "flex", gap: 10, overflowX: kids.length > 1 ? "auto" : "hidden", scrollSnapType: "x mandatory",
           margin: "0 -" + bleed + "px", padding: "0 " + bleed + "px", scrollPaddingLeft: bleed,
           /* alignItems flex-start: sin esto los hijos se estiran al más alto — la causa del vacío */
-          alignItems: "flex-start", height: alto ? alto + "px" : undefined, transition: "height .22s ease" }}>
+          /* v4.48: la transición se apaga mientras se desliza — animar el alto en pleno gesto es lo
+             que descolocaba el enganche y dejaba el carrusel entre dos días. */
+          alignItems: "flex-start", height: alto ? alto + "px" : undefined,
+          transition: midiendo ? "none" : "height .22s ease" }}>
         {kids.map((k, i) => (
-          <div key={i} style={{ flex: "0 0 auto", width: kids.length > 1 ? "86%" : "100%", minWidth: 0, scrollSnapAlign: "start", display: "flex",
-            maxHeight: alto ? alto + "px" : undefined, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>{k}</div>
+          /* v4.48: scrollSnapStop always — cada pasada de dedo cae en UN día, no se salta ninguno
+             ni se queda entre dos. Y el scroll vertical de dentro solo se activa si de verdad sobra
+             contenido: un overflow permanente le robaba el gesto al deslizamiento lateral. */
+          <div key={i} style={{ flex: "0 0 auto", width: kids.length > 1 ? "86%" : "100%", minWidth: 0,
+            scrollSnapAlign: "start", scrollSnapStop: "always", display: "flex",
+            maxHeight: alto ? alto + "px" : undefined, overflowY: alto ? "auto" : "visible", WebkitOverflowScrolling: "touch" }}>{k}</div>
         ))}
       </div>
       {kids.length > 1 && (
