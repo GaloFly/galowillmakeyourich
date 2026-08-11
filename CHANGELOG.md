@@ -1,5 +1,50 @@
 # CHANGELOG — Bloques
 
+Bloques v4.46 — La calculadora de earnings desaparecía sin decir por qué
+
+## El síntoma
+Victor: *"la herramienta de earnings se ha roto, si pulsas en un ticker no sale nada"*. Y luego:
+*"es la herramienta que modelaba los iron condors y los spreads"*.
+
+## La causa
+**No estaba rota.** Toda la parte de abajo de la calculadora —los strikes, el selector de estrategia,
+el ancho del ala, "Generar spreads" y el sizing entero— cuelga de una sola condición:
+
+```js
+const emOk = isFinite(spot) && spot > 0 && isFinite(em) && em > 0;
+```
+
+Al tocar un ticker en "Resumen por ticker" se carga el **expected move** desde el histórico, pero el
+**spot no**: ese hay que traerlo con "Obtener spot" (que necesita la key de precios) o escribirlo a
+mano. Si no hay spot, `emOk` es falso y **desaparecen 10 de las 13 piezas de la pantalla, en
+silencio**.
+
+Y lo que queda arriba —POP, gráfico de earnings pasados, "Estrategia sugerida: Iron Condor"— sigue
+saliendo perfecto. Así que la herramienta *parece* funcionar mientras la mitad útil no está. De ahí
+"pulso y no sale nada".
+
+Medido, no supuesto: con spot, 12 de 13 piezas presentes; sin spot, solo 3.
+
+## El arreglo
+Un aviso ámbar que aparece exactamente en el hueco donde debería estar lo que falta, y dice **qué**
+falta y **cómo** arreglarlo: *"Falta el precio del subyacente (spot) para poder calcular. Sin eso no
+se pueden colocar los strikes ni calcular el sizing, así que esa parte de la pantalla no aparece.
+Pulsa 'Obtener spot' arriba, o escribe el precio a mano en el campo SPOT $."*
+
+Cubre los tres casos: falta el spot, falta el expected move, o faltan los dos. Y desaparece solo en
+cuanto hay ambos.
+
+No se toca `emOk` ni la lógica de cálculo: sin spot no se pueden colocar strikes, y eso es correcto.
+Lo que estaba mal era callarse.
+
+## Verificación
+Chromium (viewport iPhone 390×844), con un histórico de 11 trimestres sembrado:
+- **Sin spot**: el aviso sale, y sigue faltando el resto (como debe).
+- **Con spot**: el aviso desaparece y vuelven SELECCIONAR ESTRATEGIA, SHORT PUT/CALL, ANCHO DEL ALA
+  y Generar spreads.
+- El sizing sigue apareciendo solo cuando además hay crédito, que es lo correcto.
+- Sin errores de consola en ninguno de los dos casos.
+
 Bloques v4.45 — El servidor propio hablaba en jerga de moomoo
 
 ## El síntoma
