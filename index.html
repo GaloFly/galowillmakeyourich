@@ -188,7 +188,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.45"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.46"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8993,6 +8993,34 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
                   <b style={{ color: T.ink }}>La POP que manda en un spread es la DIRECCIONAL:</b> a favor del lado {side === "P" ? "PUT" : "CALL"} abrió {dirFav}/{Mh} y cerró {dirFavC}/{Mh}. {place === "D30" ? <span>Y la corta a {distPct.toFixed(1)}% la habrían respetado <b style={{ color: resp / Mh >= 0.7 ? T.green : resp / Mh >= 0.5 ? T.gold : T.red }}>{resp}/{Mh}</b> opens reales — tu Δ empírica: {(100 - resp / Mh * 100).toFixed(0)}.</span> : <span>Con la corta ATM el edge viene entero de la dirección: exige que ese hit rate supere claramente el 50%.</span>}
                 </div>
               )}
+            </div>
+          );
+        })()}
+        {(() => {
+          /* v4.46 (Victor: "la herramienta que modelaba los iron condors se ha roto, si pulsas en un
+             ticker no sale nada"). No estaba rota: TODA la calculadora —strikes, selector de
+             estrategia, ancho del ala, generar spreads y el sizing entero— cuelga de `emOk`, que
+             exige spot Y expected move. Al pulsar un ticker se rellena el EM desde el histórico,
+             pero el SPOT no: ese hay que traerlo con "Obtener spot" o escribirlo. Si eso falla o no
+             se pulsa, desaparecen 10 de las 13 piezas de la pantalla SIN DECIR POR QUÉ, y lo que
+             queda arriba (POP, gráfico, estrategia sugerida) parece que la herramienta va bien.
+             Aquí se dice qué falta y cómo arreglarlo, en vez de dejar la pantalla muda. */
+          if (emOk) return null;
+          const faltaEm = !(isFinite(em) && em > 0);
+          const faltaSpot = !(isFinite(spot) && spot > 0);
+          if (!faltaEm && !faltaSpot) return null;
+          const que = faltaEm && faltaSpot ? "el precio del subyacente (spot) y el expected move"
+            : faltaSpot ? "el precio del subyacente (spot)" : "el expected move";
+          const como = faltaSpot
+            ? 'Pulsa "Obtener spot" arriba, o escribe el precio a mano en el campo SPOT $.'
+            : "Escríbelo en el campo EXPECTED MOVE %, o cárgalo tocando el ticker en el Resumen por ticker.";
+          return (
+            <div style={{ background: T.tileAmber, borderRadius: 14, padding: "12px 14px", display: "grid", gap: 5 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: T.gold }}>Falta {que} para poder calcular</div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: T.gold, lineHeight: 1.45, opacity: 0.95 }}>
+                Sin eso no se pueden colocar los strikes ni calcular el sizing, así que esa parte de la
+                pantalla no aparece. {como}
+              </div>
             </div>
           );
         })()}
