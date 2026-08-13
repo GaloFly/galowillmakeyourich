@@ -386,9 +386,33 @@ def opcion():
             return {"ok": False, "error": f"OpenD no devolvió datos para {codigo}. "
                                           f"¿El código está bien escrito?"}, 404
         f = filas[0]
+        # v3 (14-ago-2026): la HORQUILLA. Para decidir qué put vender, el último precio no
+        # vale: en un contrato poco líquido puede ser de hace horas. Lo que se negocia es el
+        # punto medio entre lo que te pagan (bid) y lo que piden (ask).
+        # get_stock_quote no siempre trae bid/ask, así que se pide el snapshot —que no gasta
+        # suscripción— y si tampoco los da, se devuelven nulos y la app usa el último precio.
+        bid = ask = None
+        try:
+            ret_s, snap = contexto().get_market_snapshot([codigo])
+            if ret_s == RET_OK:
+                fs = snap.to_dict("records")
+                if fs:
+                    bid = fs[0].get("bid_price")
+                    ask = fs[0].get("ask_price")
+        except Exception:
+            pass  # el snapshot es un extra: si falla, no se rompe la consulta
+        medio = None
+        try:
+            if bid is not None and ask is not None and float(bid) > 0 and float(ask) > 0:
+                medio = round((float(bid) + float(ask)) / 2, 4)
+        except (TypeError, ValueError):
+            medio = None
         return {"ok": True, "opcion": {
             "codigo": codigo,
             "ultimo": f.get("last_price"),
+            "bid": bid,
+            "ask": ask,
+            "medio": medio,
             "cierre_anterior": f.get("prev_close_price"),
             "volumen": f.get("volume"),
             "interes_abierto": f.get("option_open_interest"),
@@ -406,21 +430,30 @@ def opcion():
 @app.route("/cadena")
 def cadena():
     """
-    Cadena de opciones de un vencimiento.  /cadena?codigo=US.TMDX&vencimiento=2026-09-18
-    Sirve para descubrir el código exacto de cada contrato.
+    Cadena de opciones.  Un vencimiento suelto o un RANGO de fechas:
+        /cadena?codigo=US.TMDX&vencimiento=2026-09-18
+        /cadena?codigo=US.TMDX&desde=2026-09-01&hasta=2026-11-15
 
-    Se cachea 6 horas a propósito: la LISTA de contratos de un vencimiento no cambia
-    durante la sesión, y `get_option_chain` solo admite 10 llamadas cada 30 s para toda
-    la cuenta — compartidas con root. Los precios de esos contratos se piden con /opcion,
-    que sí es fresco.
+    El rango (v3, 14-ago-2026) es lo que permite a la app DESCUBRIR qué vencimientos
+    existen: para comparar puts a ~30, ~45 y ~60 días no se puede adivinar la fecha —
+    hay semanales, mensuales y ninguna regla fiable. Con una sola llamada se ven todas
+    las que hay en la ventana, y la app elige las tres más cercanas a lo que pidió.
+    Además se devuelve `vencimientos`, la lista ordenada de fechas distintas.
+
+    Se cachea 6 horas a propósito: la LISTA de contratos no cambia durante la sesión, y
+    `get_option_chain` solo admite 10 llamadas cada 30 s para toda la cuenta —
+    compartidas con root. Los precios se piden con /opcion, que sí es fresco.
     """
     subyacente = request.args.get("codigo", "").strip().upper()
     vto = request.args.get("vencimiento", "").strip()
-    if not subyacente or not vto:
-        return error("Faltan parámetros. Ejemplo: /cadena?codigo=US.TMDX&vencimiento=2026-09-18")
+    desde = request.args.get("desde", "").strip() or vto
+    hasta = request.args.get("hasta", "").strip() or vto
+    if not subyacente or not desde or not hasta:
+        return error("Faltan parámetros. Ejemplos: /cadena?codigo=US.TMDX&vencimiento=2026-09-18 "
+                     "· /cadena?codigo=US.TMDX&desde=2026-09-01&hasta=2026-11-15")
 
     def traer():
-        ret, data = contexto().get_option_chain(code=subyacente, start=vto, end=vto)
+        ret, data = contexto().get_option_chain(code=subyacente, start=desde, end=hasta)
         if ret != RET_OK:
             return {"ok": False, "error": f"OpenD devolvió un error al pedir la cadena: {data}"}, 502
         contratos = [{
@@ -429,9 +462,12 @@ def cadena():
             "strike": r.get("strike_price"),
             "vencimiento": r.get("strike_time"),
         } for r in data.to_dict("records")]
-        return {"ok": True, "contratos": contratos, "total": len(contratos)}, 200
+        # la fecha viene como "2026-09-18 00:00:00" en algunas versiones: se queda el día
+        vencimientos = sorted({str(c["vencimiento"])[:10] for c in contratos if c.get("vencimiento")})
+        return {"ok": True, "contratos": contratos, "total": len(contratos),
+                "vencimientos": vencimientos}, 200
 
-    payload, http = con_cache(f"cadena:{subyacente}:{vto}", TTL_CADENA, "chain", traer)
+    payload, http = con_cache(f"cadena:{subyacente}:{desde}:{hasta}", TTL_CADENA, "chain", traer)
     return jsonify(payload), http
 
 

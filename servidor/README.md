@@ -4,8 +4,19 @@ OpenD (moomoo/Futu) habla un idioma propio y solo escucha dentro del servidor, a
 no puede preguntarle nada. El **puente** (`puente.py`) se sienta a su lado, le pregunta los precios y
 los sirve de una forma que la app sí sabe leer.
 
-**Qué da:** precio de acciones, precio de un contrato de opciones concreto (con IV, delta, theta e
-interés abierto) y la cadena de opciones de un vencimiento.
+**Qué da:** precio de acciones, precio de un contrato de opciones concreto (con **horquilla**, IV,
+delta, theta e interés abierto) y la cadena de opciones de un vencimiento **o de un rango de fechas**.
+
+Dos añadidos del 14-ago-2026, para el comparador automático de puts:
+
+- **`/cadena` acepta un rango** (`?desde=…&hasta=…`) y devuelve además `vencimientos`, la lista de
+  fechas distintas que hay dentro. Sin esto la app no puede saber qué vencimientos existen: hay
+  semanales y mensuales y no hay regla fiable para adivinarlos, así que habría que ir probando fechas
+  a ciegas — y cada intento gasta del cupo de `get_option_chain`, que es de 10 cada 30 s para toda la
+  cuenta. Con el rango, **una sola llamada** los descubre todos.
+- **`/opcion` devuelve `bid`, `ask` y `medio`.** Para decidir qué put vender, el último precio no
+  vale: en un contrato poco líquido puede ser de hace horas. Se piden con `get_market_snapshot`, que
+  **no gasta suscripción**; si no vinieran, se devuelven nulos y la app sigue con el último precio.
 
 **Decisiones de diseño, a propósito:**
 
