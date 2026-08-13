@@ -60,6 +60,43 @@ Playwright: usar `serviceWorkers: "block"` en el contexto (si no, el SW sirve ca
   El token del robot necesita permiso de **escritura**, fijado en la ORGANIZACIÓN (no en el repo; por
   eso la opción sale en gris en Settings del repo): organizations/GaloFly/settings/actions.
 
+## La mudanza a dominio propio (13-ago-2026) — DOS sitios a la vez
+
+Desde la v4.50 la app se publica en **dos** direcciones desde el MISMO commit de `main`:
+
+| Dirección | Quién la publica | Estado |
+|---|---|---|
+| `galofly.github.io/galowillmakeyourich` | GitHub Actions → rama `gh-pages` | la vieja; se apagará |
+| **`app.alphavext.com`** | **Cloudflare Pages** (proyecto `galowillmakeyourich`) | la definitiva |
+
+Cloudflare Pages: rama `main`, framework **None**, `npm run build`, salida `dist`, Node 22 vía
+`.nvmrc`. El CNAME `app` → `galowillmakeyourich.pages.dev` está proxied en la zona `alphavext.com`.
+
+**Por qué hay prisa cero y a la vez cuidado:** el repo pasará a privado cuando los tres usuarios se
+hayan mudado, y **GitHub Pages solo publica gratis desde repos públicos** — el día que se cierre, la
+dirección vieja deja de abrir. Los datos no se pierden (viven en cada iPhone) pero **el botón de
+Backup vive DENTRO de la app**: si no abre, no hay forma de sacarlos. De ahí `MudanzaAviso` (v4.50),
+que solo se pinta si `location.hostname` acaba en `github.io` y no se puede descartar.
+
+Dos trampas ya pisadas, para no repetirlas:
+
+- **Cloudflare empuja al asistente de Workers, no al de Pages.** Se distinguen por un campo: Workers
+  pide *Deploy command* + *API token*; **Pages pide "Build output directory"**. Si ese campo no está
+  en pantalla, es el flujo equivocado. Enlace directo al bueno:
+  `dash.cloudflare.com/?to=/:account/pages/new/provider/github`.
+- **La franja "This project is disconnected from your Git account" NO es cosmética.** Con ella, el
+  proyecto compila una sola vez (la del asistente) y **ningún push posterior dispara nada**: el sitio
+  nuevo se queda congelado en silencio mientras el viejo sí se actualiza. Se arregla en
+  Settings → Build → Git repository → **Manage** (que abre GitHub y re-concede el acceso al repo).
+  **Nunca `Disconnect`**: eso desengancha el repo del proyecto y hay que rehacerlo con dominio y todo.
+
+Comprobación de que la tubería está entera: subir a `main` y ver aparecer **una fila nueva** en
+Deployments con ese commit. Si solo está la vieja, está cortada — el ✓ verde de una entrega anterior
+no dice nada del enganche.
+
+Falta: añadir `https://app.alphavext.com` a `BLOQUES_ORIGENES` en `/etc/bloques/entorno` del VPS y
+reiniciar `bloques-puente`, o la app en el dominio nuevo no podrá hablar con el puente (CORS).
+
 ## Sistema de diseño (v4.11–v4.29)
 
 Regla base: **lo interactivo se ELEVA, lo estático se HUNDE.**

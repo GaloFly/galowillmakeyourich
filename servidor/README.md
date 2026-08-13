@@ -94,15 +94,23 @@ sudo systemctl restart bloques-puente
 
 ---
 
-## Cuando tengas dominio propio para la app
+## El dominio propio de la app (pendiente de aplicar)
 
-En `/etc/bloques/entorno`, añade tu dominio a la lista de direcciones permitidas, separado por comas:
+Desde el 13-ago-2026 la app se sirve también en **`https://app.alphavext.com`** (Cloudflare Pages).
+Mientras esa dirección no esté en la lista de orígenes permitidos, el navegador **bloquea** las
+llamadas al puente y la app dirá que no conecta aunque el servidor esté perfecto.
+
+En `/etc/bloques/entorno`, las dos direcciones separadas por coma (la vieja sigue mientras dure):
 
 ```
-BLOQUES_ORIGENES=https://galofly.github.io,https://app.tudominio.com
+BLOQUES_ORIGENES=https://galofly.github.io,https://app.alphavext.com
 ```
 
-Y reinicia el puente.
+Y reiniciar:
+
+```bash
+sudo systemctl restart bloques-puente
+```
 
 ---
 
