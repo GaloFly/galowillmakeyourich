@@ -427,6 +427,100 @@ def opcion():
     return jsonify(payload), http
 
 
+@app.route("/opciones")
+def opciones():
+    """
+    Precio de VARIOS contratos de una vez.  /opciones?codigos=US.NVDA260918P170000,US.NVDA260918P175000
+
+    Por qué existe (14-ago-2026): el comparador de puts necesita el precio de ~18 contratos
+    para poner tres vencimientos en fila. Con /opcion serían 18 llamadas a OpenD; con
+    `get_market_snapshot` es UNA sola, porque admite hasta 400 códigos de golpe.
+    En una cuenta compartida con root y con el agente, esa diferencia no es una optimización:
+    es la diferencia entre poder usar la herramienta y no poder.
+
+    Además el snapshot **no gasta suscripción**, que también es cupo de la cuenta.
+
+    Se cachea POR CÓDIGO y con la misma clave que /opcion, así que los dos se aprovechan
+    mutuamente: lo que ya está fresco no se vuelve a pedir.
+    """
+    crudos = request.args.get("codigos", "")
+    codigos = [c.strip().upper() for c in crudos.split(",") if c.strip()]
+    if not codigos:
+        return error("Falta 'codigos' (separados por comas). "
+                     "Ejemplo: /opciones?codigos=US.NVDA260918P170000,US.NVDA260918P175000")
+    if len(codigos) > 200:
+        return error(f"Demasiados contratos de una vez ({len(codigos)}). Máximo 200: "
+                     "pedir menos y más veces es peor para el cupo, pero pedir 400 de golpe "
+                     "deja sin aire a los otros sistemas de la máquina.")
+
+    # lo que ya esté fresco en caché no se vuelve a pedir
+    salida, faltan = {}, []
+    for c in codigos:
+        v, edad = cache_get("opcion:" + c, TTL_OPCION)
+        if v is not None and v.get("opcion"):
+            salida[c] = {**v["opcion"], "cacheado": True, "edad_s": round(edad, 1)}
+        else:
+            faltan.append(c)
+
+    aviso = None
+    if faltan:
+        franja = ventana_de_root()
+        if franja:
+            # en las ventanas de root no se llama: se sirve lo caducado si lo hay
+            for c in faltan:
+                v, edad = cache_vencida("opcion:" + c)
+                if v is not None and v.get("opcion"):
+                    salida[c] = {**v["opcion"], "cacheado": True, "edad_s": round(edad, 1)}
+            aviso = (f"Entre {franja} (hora de Madrid) el servidor está ocupado con otra tarea "
+                     f"y no se consulta a OpenD.")
+        else:
+            espera = pedir_turno("quote")
+            with _candado:
+                try:
+                    ret, data = contexto().get_market_snapshot(faltan)
+                except Exception as e:
+                    soltar_contexto()
+                    return jsonify({"ok": False, "error": f"Se perdió la conexión con OpenD: {e}"}), 503
+                if ret != RET_OK:
+                    return jsonify({"ok": False, "error": f"OpenD devolvió un error: {data}"}), 502
+                filas = data.to_dict("records")
+            for f in filas:
+                cod = f.get("code")
+                if not cod:
+                    continue
+                bid, ask = f.get("bid_price"), f.get("ask_price")
+                medio = None
+                try:
+                    if bid is not None and ask is not None and float(bid) > 0 and float(ask) > 0:
+                        medio = round((float(bid) + float(ask)) / 2, 4)
+                except (TypeError, ValueError):
+                    medio = None
+                o = {
+                    "codigo": cod,
+                    "ultimo": f.get("last_price"),
+                    "bid": bid, "ask": ask, "medio": medio,
+                    "cierre_anterior": f.get("prev_close_price"),
+                    "volumen": f.get("volume"),
+                    "interes_abierto": f.get("option_open_interest"),
+                    "iv": f.get("option_implied_volatility"),
+                    "delta": f.get("option_delta"),
+                    "theta": f.get("option_theta"),
+                    "gamma": f.get("option_gamma"),
+                    "vega": f.get("option_vega"),
+                    "fecha_dato": f.get("update_time"),
+                }
+                cache_set("opcion:" + cod, {"ok": True, "opcion": o})
+                salida[cod] = {**o, "cacheado": False, "edad_s": 0}
+            if espera > 0.5:
+                aviso = f"El servidor esperó {espera:.1f} s para no pasarse del cupo de OpenD."
+
+    resp = {"ok": True, "opciones": salida, "pedidos": len(codigos),
+            "de_cache": len(codigos) - len(faltan), "sin_datos": [c for c in codigos if c not in salida]}
+    if aviso:
+        resp["aviso"] = aviso
+    return jsonify(resp)
+
+
 @app.route("/cadena")
 def cadena():
     """
