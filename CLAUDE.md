@@ -163,6 +163,12 @@ sí es seguro — es aditivo, en caliente y no toca las rutas que ya hay. Requie
 en la MISMA cuenta de Cloudflare que el túnel.
 El 11111 (OpenD) no se expone jamás: es la puerta a la cuenta de trading.
 
+Desde el 13-ago-2026, `puente.alphavext.com` lleva delante una **regla WAF de Cloudflare** que exige
+la cabecera `x-bloques-token` y bloquea todo lo demás **en el borde**, antes de tocar el VPS — con
+excepción explícita para `OPTIONS`, o el preflight del navegador moriría y la app no conectaría
+nunca. Se descartó **Cloudflare Access** a propósito: pone un login delante y al puente le habla la
+app por `fetch`, no una persona. Detalle completo en `servidor/README.md`.
+
 Puertos en esa máquina (verificado el 8-ago-2026: solo escuchaba el 11111): 8777 el nuestro ·
 8779 puente-alertas · 11111 OpenD (root) · 22 SSH. Solo el 22 se asoma al exterior. El 8788 quedó
 libre al mudarse Super Calculator.
