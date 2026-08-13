@@ -1,5 +1,74 @@
 # CHANGELOG — Bloques
 
+Bloques v4.51 — El P&L de las opciones deja de ser una estimación
+
+## Lo que pidió
+Victor, tras conectar su servidor: *"ahora que puedo hacer con la app teniendo el servidor
+conectado"*. La respuesta honesta era: **nada todavía**. La tubería estaba puesta y los grifos sin
+conectar — la app solo le pedía al puente `/salud`, el "¿estás ahí?" del botón de probar conexión.
+
+De las tres cosas que sabe dar el puente, eligió la que más cambia lo que ve cada día: **el precio
+real de sus contratos**.
+
+## El problema que arregla
+La app nunca supo lo que vale una opción. Para las cortas **simulaba** el P&L *a vencimiento* sobre
+el spot (short put: spot − BEP, con techo en la prima). Eso significa que una put muy fuera de
+dinero enseñaba SIEMPRE toda la prima como ganancia, aunque el contrato todavía valiera la mitad de
+lo cobrado y recomprarlo costara dinero de verdad.
+
+Con OpenD detrás del puente ya se puede preguntar cuánto vale ahora mismo cada contrato.
+
+Ejemplo real de la prueba — TMDX short put 70, cobrada a 7,72, con el subyacente en 76,49:
+
+| | P&L del bloque B2 |
+|---|---|
+| Como hasta ahora (simulado) | **+$1.012** |
+| Con el precio real (put a 3,10, call a 4,80) | **+$222** |
+
+Los dos números son correctos: uno dice *"si expira así, me quedo esto"*; el otro, *"si cierro hoy,
+me llevo esto"*. El segundo es el que sirve para decidir si recomprar.
+
+## Cómo se ve
+En la fila: `70P SEP 18 '26 · ×1 contr. · vale 3.10` — el precio del contrato en violeta.
+Y la etiqueta del P&L pasa de decir `P&L` a decir **`P&L · REAL`**, también en violeta. Cuando el
+número cambia de significado, hay que decirlo: si no, cambia a espaldas de quien lo mira.
+
+## Qué cubre y qué no
+**Sí:** puts vendidas, calls cubiertas, long calls — todo lo de **una sola pata**.
+**No:** condors, spreads, DC/DD y PMCC. Son varias patas en una sola fila, y un contrato no tiene un
+precio: tiene cuatro. La app sí guarda los strikes de cada pata, así que se puede hacer — queda
+apuntado, no descartado. Esas siguen exactamente como estaban.
+
+## Detalles que importan
+- **Si no hay servidor propio, no cambia nada.** Ni una llamada, ni una etiqueta nueva. Los otros dos
+  usuarios ven la app idéntica a ayer.
+- **Si el servidor se cae, tampoco se rompe nada.** Los subyacentes llegan igual (Finnhub), el P&L
+  vuelve a la estimación de siempre y sale un aviso **ámbar** — no rojo: es perder precisión, no una
+  avería.
+- **Una posición rolada descarta sola su marca vieja.** Junto al precio se guarda el código del
+  contrato (`US.TMDX260918P70000`); si Victor cambia strike o vencimiento, el código deja de
+  coincidir y el precio guardado se ignora, en vez de seguir mintiendo con el de un contrato que ya
+  no tiene.
+- **Una llamada por contrato distinto**, con pausa entre ellas. El cupo de OpenD es de la CUENTA, y
+  ahí dentro viven también el sistema de earnings de root y el agente de puts. El puente ya cachea
+  20 s por su lado.
+- Se guardan además IV, delta, theta e interés abierto. La delta se probó en la fila y **no cabe**:
+  `70P SEP 18 '26 · ×1 contr. · vale 3.10 · Δ -0.22` se parte y deja el "-0.22" solo en una línea.
+  Esperan a tener un sitio donde quepan.
+
+## Verificación
+Playwright en iPhone 13, con el puente simulado (`ctx.route`), tres escenarios:
+
+| Escenario | P&L del bloque B2 | `vale` | `P&L · REAL` | Consultas al puente |
+|---|---|---|---|---|
+| Con servidor propio | **+$222** | sí | sí | las 2 correctas |
+| Sin servidor configurado | +$1.012 | no | no | **ninguna** |
+| Servidor caído | +$1.012 | no | no | + aviso ámbar |
+
+Los códigos que salieron por el cable fueron exactamente `US.TMDX260918P70000` y
+`US.NVDA260918C175000`. Cero errores de consola en los dos primeros; en el tercero, solo los
+`ERR_CONNECTION_REFUSED` esperados del servidor apagado. Comprobado en claro y en oscuro.
+
 Bloques v4.50 — Aviso de mudanza en la dirección vieja
 
 ## Por qué
