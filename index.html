@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.49"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.50"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2532,6 +2532,48 @@ function UpdateOffer() {
       <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: T.ink }}>Versión nueva: v{newVer}</div>
       <button onClick={applyUpdate} disabled={busy} style={{ background: T.green, border: "none", borderRadius: 11, padding: "8px 13px", fontSize: 12.5, fontWeight: 800, color: "#fff", cursor: "pointer", flexShrink: 0, opacity: busy ? 0.6 : 1 }}>{busy ? "Bajando…" : "Actualizar"}</button>
       <button onClick={() => setNewVer(null)} style={{ background: "transparent", border: "none", color: T.sub, fontSize: 15, fontWeight: 800, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>✕</button>
+    </div>
+  );
+}
+/* ---------- v4.50: aviso de mudanza ----------
+   La app se muda a su propio dominio y el repositorio pasará a privado. GitHub Pages solo publica
+   gratis desde repositorios PÚBLICOS: el día que se cierre, la dirección vieja deja de abrir. Los
+   datos no se pierden (viven en el localStorage/IndexedDB de cada iPhone), pero el botón de Backup
+   vive DENTRO de la app — si no abre, no hay forma de sacarlos. De ahí este aviso.
+   Tres decisiones: (1) solo se pinta en la dirección VIEJA (github.io), para que en la nueva no
+   estorbe; (2) NO se puede descartar — es el único aviso que verán los otros dos usuarios; (3) el
+   botón de descargar la copia va PRIMERO, antes que el enlace a la casa nueva: si se van sin copia,
+   el viaje no sirve de nada. */
+const DIR_NUEVA = "app.alphavext.com";
+const enSitioViejo = () => { try { return /(^|\.)github\.io$/i.test(location.hostname); } catch (e) { return false; } };
+
+function MudanzaAviso({ onBackup }) {
+  if (!enSitioViejo()) return null;
+  const Boton = ({ onClick, texto, primario }) => (
+    <button type="button" onClick={onClick}
+      style={{ width: "100%", border: "none", borderRadius: 13, padding: "13px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer",
+        background: primario ? T.dark : T.card, color: primario ? "#fff" : T.ink, boxShadow: primario ? "none" : T.raiseSm }}>
+      {texto}
+    </button>
+  );
+  return (
+    <div style={{ background: T.tileAmber, borderRadius: 18, overflow: "hidden", marginBottom: 14, boxShadow: T.raise, border: T.edge }}>
+      <div style={{ height: 3, background: T.orange }} />
+      <div style={{ padding: "13px 14px 14px", display: "grid", gap: 11 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 15.5, fontWeight: 800, color: T.ink, letterSpacing: -0.2 }}>La app se ha mudado</div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.5, opacity: 0.85 }}>
+            Esta dirección dejará de funcionar. La nueva es <b>{DIR_NUEVA}</b>. Tus datos están en este iPhone, no en internet: para llevártelos hay que descargar la copia <b>antes</b> de que esta dirección se apague.
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <Boton primario onClick={onBackup} texto="1 · Descargar mi copia" />
+          <Boton onClick={() => { try { window.open("https://" + DIR_NUEVA, "_blank", "noopener"); } catch (e) { location.href = "https://" + DIR_NUEVA; } }} texto={"2 · Abrir " + DIR_NUEVA} />
+        </div>
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+          Allí: Ajustes → Backup → <b>Importar archivo</b>, y elige la copia que acabas de descargar. Después vuelve a guardar la app en la pantalla de inicio desde la dirección nueva.
+        </div>
+      </div>
     </div>
   );
 }
@@ -11585,6 +11627,8 @@ function App() {
         </div>
       )}
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
+
+        <MudanzaAviso onBackup={openBackup} />
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 8 }}>
           <div style={{ minWidth: 0 }}>
