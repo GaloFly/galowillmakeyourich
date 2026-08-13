@@ -97,7 +97,7 @@ no dice nada del enganche.
 Falta: añadir `https://app.alphavext.com` a `BLOQUES_ORIGENES` en `/etc/bloques/entorno` del VPS y
 reiniciar `bloques-puente`, o la app en el dominio nuevo no podrá hablar con el puente (CORS).
 
-## Precios reales de opciones (v4.51–v4.52) y lo que falta
+## Precios reales de opciones (v4.51–v4.53) y lo que falta
 
 Con el puente conectado, el 🔄 Precios pregunta a OpenD cuánto vale AHORA cada contrato y el P&L deja
 de ser una simulación. Código de Futu: `US.TICKER + AAMMDD + P|C + strike×1000`.
@@ -106,14 +106,22 @@ de ser una simulación. Código de Futu: `US.TICKER + AAMMDD + P|C + strike×100
 |---|---|
 | Short put · covered call · long call (una pata) | **real** desde v4.51 |
 | Spread vertical (2 patas, `sK`/`lK`/`sP`/`lP`) | **real** desde v4.52 — antes era 100% manual |
-| Calendar · DC/DD (`dcdd.legs`, 4 patas, DOS vencimientos) | manual |
-| PMCC / Diagonal (`p.long`, 2 vencimientos) | manual |
-| Iron Condor · Iron Fly · Broken Wing | manual (no guardan patas estructuradas) |
+| DC/DD (`dcdd.legs`, 4 patas, DOS vencimientos: shorts en `p.expiry`, longs en `dcdd.expiryLong`) | **real** desde v4.53 |
+| PMCC / Diagonal (corta en `p.*`, larga en `p.long`, dos vencimientos) | **real** desde v4.53 |
+| Iron Condor · Iron Fly · Broken Wing · Calendar suelto | manual (no guardan patas estructuradas) |
 
 Reglas que gobiernan esto y no se tocan:
 
+- **UN solo camino para todas las estructuras** (v4.53). `patasDePosicion(p)` devuelve la lista de
+  patas —contrato, lo cobrado/pagado por acción, y signo (+1 corta, −1 larga)— y con eso dos fórmulas
+  sirven para todo: P&L = Σ signo × (entrada − marca), y coste de cerrar = Σ signo × marca. Antes
+  había un camino por estructura, casi idénticos: es donde se crían los bugs silenciosos.
 - **O están TODAS las marcas de una posición, o no se usa ninguna.** Un P&L medio real y medio
-  inventado es peor que el manual, porque parece exacto. (`pnlVerticalReal` devuelve NaN si falta una.)
+  inventado es peor que el manual, porque parece exacto. (`marcasDeTodasLasPatas` devuelve null si
+  falta una sola, y la posición cae a su cálculo de antes.)
+- **Las primas se toman en valor absoluto.** Según por dónde entren (asistente, lector de capturas,
+  campos antiguos) las de las patas cortas pueden venir con signo o sin él; el signo real lo pone
+  `signo`, no el dato guardado.
 - **Las marcas se guardan indexadas por código** (`p.optMarks`) y la tabla se **reemplaza** entera en
   cada refresco. Así una posición rolada descarta sola el precio del contrato que ya no tiene, sin
   código de migración ni limpieza.

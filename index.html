@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.52"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.53"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -695,84 +695,116 @@ const esUnaPata = (p) => {
   if (!p || p.closed || !isOptionNat(p)) return false;
   const nat = natOf(p);
   if (nat !== "CRED" && nat !== "DEB") return false;
-  if (isVertical(p) || isPMCC(p) || p.long || p.legs || p.sK || p.lK) return false; /* multi-pata */
+  if (isVertical(p) || isPMCC(p) || isDCDD(p) || p.long || p.legs || p.sK || p.lK) return false; /* multi-pata */
   return !!(p.tkr && (p.right === "C" || p.right === "P") && p.expiry && n(p.strike) > 0);
 };
-const codigoOpcion = (p) => {
-  if (!esUnaPata(p)) return null;
-  const m = String(p.expiry).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  const mils = Math.round(n(p.strike) * 1000);
-  if (!(mils > 0)) return null;
-  return "US." + String(p.tkr).trim().toUpperCase() + m[1].slice(2) + m[2] + m[3] + p.right + mils;
+/* el código de Futu de UN contrato: US.TICKER + AAMMDD + P|C + strike×1000 */
+const codContrato = (tkr, expiry, right, strike) => {
+  const m = String(expiry || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m || !tkr || (right !== "C" && right !== "P")) return null;
+  const mils = Math.round(n(strike) * 1000);
+  return mils > 0 ? "US." + String(tkr).trim().toUpperCase() + m[1].slice(2) + m[2] + m[3] + right + mils : null;
 };
-/* la marca guardada, SOLO si sigue siendo del contrato que hoy tiene la posición */
+const codigoOpcion = (p) => (esUnaPata(p) ? codContrato(p.tkr, p.expiry, p.right, p.strike) : null);
+/* ---------- v4.53: TODA posición se describe como una lista de patas ----------
+   Hasta la v4.52 había un camino para "una pata" y otro para los verticales, casi idénticos. Con
+   DC/DD y PMCC entrando serían cuatro caminos paralelos haciendo la misma cuenta — y ahí es donde se
+   crían los bugs silenciosos. Ahora hay UNO: cada posición devuelve sus patas, y cada pata dice el
+   contrato, lo que se cobró/pagó por acción, y si es corta (+1, se cobró) o larga (−1, se pagó).
+
+   Con eso, dos cuentas valen para todas las estructuras:
+     P&L no realizado por acción = Σ signo × (entrada − marca)
+     coste de cerrar hoy         = Σ signo × marca        (positivo = hay que pagar para salir)
+
+   Las primas se toman en valor absoluto: según por dónde entren (asistente, lector de capturas,
+   campos antiguos) las de las patas cortas pueden venir con signo o sin él, y el signo real lo pone
+   ya `signo`. */
+const patasDePosicion = (p) => {
+  if (!p || p.closed) return [];
+  const una = codigoOpcion(p);
+  if (una) return [{ cod: una, entrada: Math.abs(n(p.prima)), signo: natOf(p) === "CRED" ? 1 : -1 }];
+
+  const salida = [];
+  const mete = (cod, entrada, signo) => { if (cod && isFinite(entrada)) salida.push({ cod, entrada: Math.abs(entrada), signo }); };
+
+  /* vertical: dos strikes, un vencimiento, un lado. Las patas ya cerradas por separado
+     (noShort/noLong) no entran: su resultado está reservado en el realizado. */
+  if (isVertical(p) && vHasLegData(p)) {
+    if (!p.noShort) mete(codContrato(p.tkr, p.expiry, p.right, p.sK), n(p.sP), 1);
+    if (!p.noLong) mete(codContrato(p.tkr, p.expiry, p.right, p.lK), n(p.lP), -1);
+    return salida;
+  }
+  /* PMCC / Diagonal: la corta en p.*, la larga en p.long — DOS vencimientos distintos */
+  if (isPMCC(p) && p.long) {
+    const lg = p.long || {};
+    mete(codContrato(p.tkr, p.expiry, p.right, p.strike), n(p.prima), 1);
+    mete(codContrato(p.tkr, lg.expiry, lg.right || p.right, lg.strike), n(lg.prima), -1);
+    return salida.length === 2 ? salida : [];
+  }
+  /* DC/DD: cuatro patas y dos vencimientos — las shorts vencen en p.expiry, las longs en
+     dcdd.expiryLong. Una pata que no exista simplemente no entra (un Calendar de un solo lado). */
+  if (isDCDD(p)) {
+    const d = dcddOf(p);
+    [["sp", "P", 1, p.expiry], ["sc", "C", 1, p.expiry],
+     ["lp", "P", -1, d.expiryLong], ["lc", "C", -1, d.expiryLong]].forEach(([k, right, signo, exp]) => {
+      const leg = dcLeg(d, k);
+      const strike = numOrNaN(leg.k), prima = numOrNaN(leg.p);
+      if (isFinite(strike) && isFinite(prima)) mete(codContrato(p.tkr, exp, right, strike), prima, signo);
+    });
+    return salida;
+  }
+  return salida;
+};
+const codigosDePosicion = (p) => patasDePosicion(p).map((x) => x.cod);
+/* la marca de un contrato tal como está guardada hoy en la posición */
+const marcaDe = (p, cod) => {
+  const ms = p && p.optMarks && typeof p.optMarks === "object" ? p.optMarks : null;
+  const v = ms ? numOrNaN(ms[cod]) : NaN;
+  if (isFinite(v) && v >= 0) return v;
+  /* v4.51 guardaba una sola marca en el par optCodigo/optLast; se sigue leyendo para no perder las
+     que ya estén en el móvil de Victor. */
+  if (p && p.optCodigo === cod && p.optLast != null && p.optLast !== "") {
+    const w = n(p.optLast);
+    if (isFinite(w) && w >= 0) return w;
+  }
+  return NaN;
+};
+/* REGLA DURA: o están TODAS las marcas de la posición, o no se usa ninguna. Un P&L medio real y
+   medio inventado es peor que uno manual, porque parece exacto. */
+const marcasDeTodasLasPatas = (p) => {
+  const patas = patasDePosicion(p);
+  if (!patas.length) return null;
+  const out = [];
+  for (const x of patas) {
+    const m = marcaDe(p, x.cod);
+    if (!isFinite(m)) return null;
+    out.push({ ...x, marca: m });
+  }
+  return out;
+};
+const pnlPatasReal = (p) => {
+  const patas = marcasDeTodasLasPatas(p);
+  if (!patas) return NaN;
+  return patas.reduce((s, x) => s + x.signo * (x.entrada - x.marca), 0) * n(p.qty);
+};
+/* lo que costaría cerrar hoy la posición entera, por acción (positivo = pagas tú) */
+const cierrePosicion = (p) => {
+  const patas = marcasDeTodasLasPatas(p);
+  if (!patas || patas.length < 2) return NaN; /* con una sola pata se enseña "vale X", no "cerrar X" */
+  return patas.reduce((s, x) => s + x.signo * x.marca, 0);
+};
+/* el precio del contrato, solo cuando la posición es de una pata */
 const marcaOpcion = (p) => {
   const cod = codigoOpcion(p);
-  if (!cod) return NaN;
-  /* v4.52: la tabla por código (optMarks) es la fuente nueva; el par optCodigo/optLast de la v4.51
-     se sigue leyendo para no perder las marcas ya guardadas en el móvil. */
-  const enTabla = p.optMarks && typeof p.optMarks === "object" ? numOrNaN(p.optMarks[cod]) : NaN;
-  if (isFinite(enTabla) && enTabla >= 0) return enTabla;
-  if (p.optLast == null || p.optLast === "" || p.optCodigo !== cod) return NaN;
-  const v = n(p.optLast);
-  return isFinite(v) && v >= 0 ? v : NaN;
-};
-/* ---------- v4.52: los verticales, pata a pata ----------
-   Un "Spread" son DOS contratos del mismo vencimiento y el mismo lado (put o call): la corta que
-   cobró `sP` y la larga que costó `lP`. Hasta ahora su P&L lo escribía Victor a mano — nat=DEF, así
-   que ni siquiera pasaba por el cálculo automático.
-
-   Con las dos marcas ya se puede: lo no realizado por acción es (sP − marca corta) + (marca larga −
-   lP). Cada pata aporta su parte, y las patas que Victor ya cerró por separado (noShort/noLong) no
-   cuentan aquí — su resultado se reservó en su momento y vive en el realizado (vBookedSum).
-
-   Regla dura: **o están TODAS las marcas que hacen falta, o no se usa ninguna.** Un P&L medio real y
-   medio inventado es peor que el manual de siempre, porque parece exacto. */
-const codigosVertical = (p) => {
-  if (!p || p.closed || !isVertical(p) || !vHasLegData(p)) return null;
-  const m = String(p.expiry || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m || !(p.right === "C" || p.right === "P") || !p.tkr) return null;
-  const cod = (k) => {
-    const mils = Math.round(n(k) * 1000);
-    return mils > 0 ? "US." + String(p.tkr).trim().toUpperCase() + m[1].slice(2) + m[2] + m[3] + p.right + mils : null;
-  };
-  const corto = p.noShort ? null : cod(p.sK);
-  const largo = p.noLong ? null : cod(p.lK);
-  return corto || largo ? { corto, largo } : null;
-};
-/* lo que costaría CERRAR hoy las patas vivas, por acción (positivo = hay que pagar) */
-const cierreVertical = (p) => {
-  const c = codigosVertical(p);
-  const ms = c && p.optMarks && typeof p.optMarks === "object" ? p.optMarks : null;
-  if (!ms) return NaN;
-  let neto = 0;
-  if (c.corto) { const m = numOrNaN(ms[c.corto]); if (!isFinite(m)) return NaN; neto += m; }
-  if (c.largo) { const m = numOrNaN(ms[c.largo]); if (!isFinite(m)) return NaN; neto -= m; }
-  return neto;
-};
-const pnlVerticalReal = (p) => {
-  const c = codigosVertical(p);
-  const ms = c && p.optMarks && typeof p.optMarks === "object" ? p.optMarks : null;
-  if (!ms) return NaN;
-  let porAccion = 0;
-  if (c.corto) { const m = numOrNaN(ms[c.corto]); if (!isFinite(m)) return NaN; porAccion += n(p.sP) - m; }
-  if (c.largo) { const m = numOrNaN(ms[c.largo]); if (!isFinite(m)) return NaN; porAccion += m - n(p.lP); }
-  return porAccion * n(p.qty);
-};
-/* todos los contratos que hay que preguntarle al servidor por una posición (0, 1 o 2) */
-const codigosDePosicion = (p) => {
-  const uno = codigoOpcion(p);
-  if (uno) return [uno];
-  const v = codigosVertical(p);
-  return v ? [v.corto, v.largo].filter(Boolean) : [];
+  return cod ? marcaDe(p, cod) : NaN;
 };
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
 const effPnl = (p) => {
-  /* v4.52: un vertical con las dos marcas deja de ser manual. Va ANTES del corte de isAutoPnl porque
-     los verticales son nat=DEF y ese corte los mandaría a p.pnl sin mirar. */
-  const vReal = pnlVerticalReal(p);
-  if (isFinite(vReal)) return vReal;
+  /* v4.52/v4.53: con TODAS las marcas de sus patas, la posición deja de ser manual. Va ANTES del
+     corte de isAutoPnl porque verticales y DC/DD son nat=DEF y ese corte los mandaría a p.pnl sin
+     mirar siquiera. */
+  const real = pnlPatasReal(p);
+  if (isFinite(real)) return real;
   if (!isAutoPnl(p)) return n(p.pnl);
   /* v4.51: con precio real del contrato no hay nada que simular — el P&L es la diferencia entre lo
      que cobraste (o pagaste) y lo que vale ahora. Corta: prima − marca. Larga: marca − prima. */
@@ -4583,7 +4615,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const marca = marcaOpcion(p);
   /* v4.52: en un vertical no hay "un" precio — hay lo que costaría cerrar las dos patas de golpe.
      Positivo = hay que pagar para salir (lo normal en un credit spread); negativo = te pagan a ti. */
-  const cierre = isFinite(marca) ? NaN : cierreVertical(p);
+  const cierre = cierrePosicion(p);
   const conMarca = isFinite(marca) || isFinite(cierre);
   const pnlBasis = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || cap;
   const pnlPct = pnlBasis ? pnlVal / pnlBasis : NaN;
