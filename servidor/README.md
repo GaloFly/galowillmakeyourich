@@ -13,10 +13,21 @@ Dos añadidos del 14-ago-2026, para el comparador automático de puts:
   fechas distintas que hay dentro. Sin esto la app no puede saber qué vencimientos existen: hay
   semanales y mensuales y no hay regla fiable para adivinarlos, así que habría que ir probando fechas
   a ciegas — y cada intento gasta del cupo de `get_option_chain`, que es de 10 cada 30 s para toda la
-  cuenta. Con el rango, **una sola llamada** los descubre todos.
+  cuenta.
+  **Futu no sirve más de 30 días por llamada** (`the requested time span cannot exceed 30 days`,
+  comprobado en el VPS el 14-ago-2026), así que el puente parte el rango en tramos de 30, **pide
+  turno antes de cada uno** y los junta. Máximo 3 tramos (90 días): para elegir entre 30/45/60 días
+  sobran dos. Si un tramo falla pero otro trajo datos, se devuelve lo que hay con un `aviso` en vez
+  de tirarlo todo.
 - **`/opcion` devuelve `bid`, `ask` y `medio`.** Para decidir qué put vender, el último precio no
   vale: en un contrato poco líquido puede ser de hace horas. Se piden con `get_market_snapshot`, que
   **no gasta suscripción**; si no vinieran, se devuelven nulos y la app sigue con el último precio.
+  Verificado en el VPS: `{"ask":46.9,"bid":46.1,"medio":46.5,"ultimo":46.2}`.
+
+**Y un límite que conviene tener presente:** fuera del horario de mercado, OpenD devuelve **precio
+pero no griegas** — `delta`, `iv`, `theta` e `interes_abierto` vienen a `null`, y `hora_dato` es la
+del cierre. No es un fallo del puente ni de la app: es lo que hay. Por eso la app conserva las
+últimas griegas conocidas y las etiqueta como "DEL CIERRE" (v4.57) en vez de quedarse en blanco.
 
 **Decisiones de diseño, a propósito:**
 
