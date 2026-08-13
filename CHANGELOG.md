@@ -1,5 +1,49 @@
 # CHANGELOG — Bloques
 
+Bloques v4.56 — Candado: sin servidor propio, ni una marca
+
+## Lo que dijo Victor
+*"No quiero que a mis amigos les salga, o sea, si no tienen esa funcionalidad, que no desaparezca el
+menú."*
+
+Lo primero ya estaba bien: sin servidor configurado, la tarjeta de griegas no existe (no sale vacía
+ni deja hueco), y las 18 cifras de la prueba salen idénticas. Pero al comprobarlo apareció **un
+agujero real** que él no había visto y yo tampoco.
+
+## El agujero
+El backup se lleva **todo** lo que tiene una posición (`...p`), y desde la v4.51 eso incluye las
+marcas y las griegas que trae el servidor. Los backups se comparten por chat — es la razón por la
+que la clave del puente se dejó fuera a propósito.
+
+O sea: el día que Victor le pasara su copia a un amigo, ese amigo habría visto **`P&L · REAL`** y la
+tarjeta de griegas, con **precios de Victor congelados hace semanas**. Números que parecen en vivo y
+llevan muertos desde el día del backup. Eso es peor que no tener el dato: parece exacto.
+
+## El arreglo, por los dos lados
+1. **Candado.** Sin servidor propio configurado **no se usa ni una marca**, esté guardada o no. La
+   app se comporta exactamente como antes de la v4.51, venga de donde venga el dato. Por defecto
+   está cerrado, que es el lado seguro mientras se carga la configuración.
+2. **Las marcas dejan de viajar en el backup.** Son dato de MERCADO, re-descargable con un 🔄
+   Precios — igual que el % del día, que tampoco se guarda nunca. Quitarlas no rompe nada: si
+   faltan, la posición calcula como siempre.
+
+El primero solo hace falta por el segundo (los backups viejos ya llevan marcas dentro), pero se
+quedan los dos: uno tapa el origen y el otro la consecuencia.
+
+## Verificación
+Se simuló el caso exacto: **el backup de Victor abierto en el móvil de un amigo sin servidor.**
+
+| | Amigo (sin servidor) | Victor (con servidor) |
+|---|---|---|
+| P&L de la TMDX | **+$772** — el simulado de siempre | **+$462** — el real |
+| Etiqueta `P&L · REAL` | **no** | sí |
+| `vale 3.10` en la fila | **no** | sí |
+| Tarjeta de griegas | **no existe** | sí |
+| Llamadas al servidor | **ninguna** | 1 |
+| ¿Su backup lleva marcas? | **no** | **no** |
+
+Y `npm run prueba` sigue en verde: las 18 cifras, idénticas.
+
 Bloques v4.55 — La tarjeta de griegas dice por qué no hay datos, en vez de desaparecer
 
 ## Síntoma

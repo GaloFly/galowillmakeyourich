@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.55"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.56"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -756,8 +756,20 @@ const patasDePosicion = (p) => {
   return salida;
 };
 const codigosDePosicion = (p) => patasDePosicion(p).map((x) => x.cod);
+/* ---------- v4.56: el candado ----------
+   Victor: *"no quiero que a mis amigos les salga… si no tienen esa funcionalidad"*. Y encontró un
+   agujero de verdad: el backup se lleva las marcas dentro (`...p` copia todo). Si él le pasa su
+   copia a un amigo por el chat —que ya lo han hecho—, ese amigo vería `P&L · REAL` y la tarjeta de
+   griegas con precios de Victor congelados hace semanas. Números que parecen en vivo y están muertos.
+
+   Regla: **sin servidor propio configurado no se usa NI UNA marca**, esté guardada o no. La app se
+   comporta exactamente como antes de la v4.51, pase lo que pase con los datos. Se asigna en el
+   cuerpo de App, que corre antes de que se pinte ningún hijo; por defecto false, que es el lado
+   seguro mientras se carga la configuración. */
+let HAY_PUENTE = false;
 /* la marca de un contrato tal como está guardada hoy en la posición */
 const marcaDe = (p, cod) => {
+  if (!HAY_PUENTE) return NaN;
   const ms = p && p.optMarks && typeof p.optMarks === "object" ? p.optMarks : null;
   const v = ms ? numOrNaN(ms[cod]) : NaN;
   if (isFinite(v) && v >= 0) return v;
@@ -10234,6 +10246,7 @@ function App() {
      de un servicio ajeno: es la puerta a una máquina suya, y no viaja al backup. */
   const [puente, setPuente] = useState({ url: "", token: "" });
   puenteRef.current = puente;
+  HAY_PUENTE = puenteConfigurado(puente); /* v4.56: el candado de arriba, al día en cada render */
   const [puenteModalOpen, setPuenteModalOpen] = useState(false);
   const [puenteUrlIn, setPuenteUrlIn] = useState("");
   const [puenteTokenIn, setPuenteTokenIn] = useState("");
@@ -10459,7 +10472,11 @@ function App() {
     const snap = buildSnapshot();
     const nextSnaps = [...snapshots.filter((s) => s.date !== snap.date), snap];
     setSnapshots(nextSnaps);
-    const posOut = positions.map((p) => ({
+    /* v4.56: las marcas y griegas del servidor NO viajan en el backup. Son dato de MERCADO
+       —re-descargable con un 🔄 Precios—, igual que el % del día, que tampoco se guarda. Y sobre
+       todo: los backups se comparten por chat, y un amigo sin servidor no debe heredar precios
+       congelados de otro. Quitarlas no rompe nada: si faltan, la posición calcula como siempre. */
+    const posOut = positions.map(({ optMarks, optGriegas, optLast, optCodigo, optTs, optIv, optDelta, optTheta, optOi, ...p }) => ({
       ...p,
       margen: p.margen != null ? p.margen : "",
       margenPct: p.margenPct != null ? p.margenPct : "100",
