@@ -132,11 +132,21 @@ Reglas que gobiernan esto y no se tocan:
   en violeta). Cuando un número cambia de significado hay que avisar, o cambia a espaldas de quien mira.
 - Una llamada por contrato DISTINTO y con pausa: el cupo de OpenD es de la cuenta compartida.
 
-**Pendiente pedido por Victor (13-ago-2026):** *"estaría bien sacar de aquí el portfolio theta y delta,
-saber qué theta diario sacamos, pero no sé dónde lo podríamos incluir"*. Delta, theta, IV e interés
-abierto **ya se guardan** (`p.optGriegas`, por código). Falta (a) decidir dónde caben —en la fila NO:
-`… · vale 3.10 · Δ -0.22` se parte y deja el número solo en una línea— y (b) que las estructuras
-multi-pata den griegas, o el theta de la cartera saldría corto en silencio. Por eso va después.
+**Theta y delta de la cartera (v4.54)** — lo que pidió Victor, hecho ya que las multi-pata dan
+griegas. Tarjeta propia bajo el hero, `GriegasCard`, solo si hay griegas de verdad (quien no tiene
+servidor no ve ni un hueco). Dos decisiones de fondo:
+
+- **Theta en $/día** (`−signo × theta × qty`; la theta de OpenD es por acción y día). Sumar $/día
+  entre tickers sí tiene sentido.
+- **Delta en DÓLARES, no en acciones** (`−signo × delta × qty × spot`). Sumar "acciones
+  equivalentes" de NVDA y SGOV no significa nada. Las acciones entran con delta 1: sin ellas una
+  covered call saldría bajista y la cartera parecería lo que no es.
+- **La cobertura se dice SIEMPRE**, no solo cuando falta algo: "de N de tus M posiciones". Un theta
+  que dice 40 cuando son 70 es peor que no tenerlo, y si solo se avisara al fallar, el día que
+  faltara una posición nadie se daría cuenta.
+
+Sigue pendiente: IV agregada, y las griegas por posición en la fila (`Δ -0.22` NO cabe ahí — se
+probó en la v4.51 y parte la línea).
 
 ## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
 
