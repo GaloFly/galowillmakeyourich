@@ -1,5 +1,62 @@
 # CHANGELOG — Bloques
 
+Bloques v4.54 — Theta y delta de la cartera
+
+## Lo que pidió
+Victor, el 13-ago: *"estaría bien sacar de aquí el portfolio theta y delta, saber qué theta diario
+sacamos, pero no sé dónde lo podríamos incluir"*. Se dejó pendiente a propósito hasta que las
+estructuras de varias patas dieran griegas (v4.53): antes, un condor habría entrado como cero y el
+theta de la cartera habría salido **corto en silencio**, que es la peor forma de estar mal.
+
+## Cómo queda
+Una tarjeta propia justo bajo el valor de la cuenta, con dos cifras:
+
+- **Theta / día** — lo que recoges (o pagas) cada día por el paso del tiempo, en dólares. Debajo, a
+  cuánto equivale al año *a ese ritmo*.
+- **Delta en $** — tu exposición direccional. Positiva = te mueves como si fueras largo.
+
+Y debajo, **siempre**, de cuántas posiciones sale.
+
+## Las tres decisiones que importan
+
+**1. Theta en dólares al día, no en unidades de theta.** La que da OpenD es por acción y por día
+(−0,08 = ese contrato pierde 8 céntimos por acción al día). Lo que gana la POSICIÓN es
+`−signo × theta × qty`: una corta con theta −0,08 y 100 acciones recoge +8 $/día; una larga los
+paga. Sumar dólares/día entre tickers distintos sí significa algo.
+
+**2. Delta en DÓLARES, no en acciones equivalentes.** Sumar 22 "acciones" de TMDX y −44 de NVDA no
+dice nada: no son el mismo riesgo. La cifra comparable es `delta × qty × precio`. Y **las acciones
+entran con delta 1**, porque son su propio delta: sin ellas, una covered call saldría bajista y la
+cartera parecería justo lo contrario de lo que es.
+
+**3. La cobertura se dice siempre, no solo cuando falla.** Si solo se avisara cuando falta algo, el
+día que faltase una posición nadie se daría cuenta de que el número se ha quedado corto. Con todas:
+*"De las 2 posiciones de opciones que tienes, todas."* Con alguna fuera, en ámbar: *"Sale de 2 de
+tus 3 posiciones de opciones. Sin precio del servidor: SPX — el theta real es mayor que este."*
+
+## Verificación
+Playwright en iPhone 13, claro y oscuro, con las cuentas hechas a mano para contrastar:
+
+| | Cuenta | Esperado | Salió |
+|---|---|---|---|
+| TMDX short put (δ −0,22 · θ −0,08 · 100 acc · spot 76,49) | θ +8,00 · δ +22 acc = +1.682,78 $ | | |
+| NVDA covered call (δ +0,44 · θ −0,11 · 100 acc · spot 168,20) | θ +11,00 · δ −44 acc = −7.400,80 $ | | |
+| NVDA 100 acciones a 168,20 | δ = +16.820 $ | | |
+| **Theta de la cartera** | 8 + 11 | **+$19 / día** | +$19 ✓ |
+| **Delta de la cartera** | 1.682,78 − 7.400,80 + 16.820 | **+$11.102** | +$11.102 ✓ |
+
+Y los cuatro casos de borde:
+
+| Caso | Esperado | Salió |
+|---|---|---|
+| Con un Iron Condor (nunca tendrá griegas) | mismo theta + aviso ámbar nombrando SPX | ✓ |
+| Con el botón de privacidad activado | importes tapados | ✓ |
+| **Sin servidor propio** | **la tarjeta no existe** | ✓ |
+| Ancho de la página | no desborda (390 = 390) | ✓ |
+
+`npm run prueba` (la red de seguridad de quien no tiene servidor) sigue en verde: las 18 cifras
+idénticas. Cero errores de consola en las cinco pasadas.
+
 13-ago-2026 — Red de seguridad para quien no tiene servidor propio
 *(no cambia la app: no sube APP_VERSION. Es una prueba automática que corre antes de publicar.)*
 

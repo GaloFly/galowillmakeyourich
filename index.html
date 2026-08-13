@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.53"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.54"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -797,6 +797,64 @@ const cierrePosicion = (p) => {
 const marcaOpcion = (p) => {
   const cod = codigoOpcion(p);
   return cod ? marcaDe(p, cod) : NaN;
+};
+/* ---------- v4.54: theta y delta de la CARTERA ----------
+   Pedido por Victor: *"estaría bien sacar de aquí el portfolio theta y delta, saber qué theta diario
+   sacamos, pero no sé dónde lo podríamos incluir"*. Se dejó para después a propósito hasta que las
+   estructuras multi-pata dieran griegas (v4.53): antes, un condor habría entrado como cero y el
+   theta de la cartera habría salido CORTO EN SILENCIO, que es la peor forma de estar mal.
+
+   Las dos cuentas, y por qué así:
+
+   · THETA en dólares al día. La theta que da OpenD es por acción y por día (−0,08 = ese contrato
+     pierde 8 céntimos por acción cada día). Lo que gana o pierde la POSICIÓN al día es
+     −signo × theta × qty: una corta (signo +1) con theta −0,08 y 100 acciones recoge +8 $/día;
+     una larga los paga. Sumar dólares/día entre tickers distintos sí tiene sentido.
+
+   · DELTA en dólares, no en acciones. Sumar "acciones equivalentes" de NVDA y de SGOV no significa
+     nada — 100 acciones de cada una no son el mismo riesgo. La exposición direccional comparable es
+     delta × qty × precio del subyacente. Las acciones entran con delta 1 (son su propio delta): sin
+     ellas, una covered call saldría bajista y la cartera parecería lo que no es.
+
+   COBERTURA: se devuelve de cuántas posiciones de opciones se tiene griega y de cuántas no. Un
+   theta que dice "recoges 40 al día" cuando en realidad son 70 es peor que no tener el dato, así
+   que el número NUNCA se enseña solo: va siempre con cuántas posiciones lo componen. */
+const griegasDePosicion = (p) => {
+  const patas = marcasDeTodasLasPatas(p);
+  const tabla = p && p.optGriegas && typeof p.optGriegas === "object" ? p.optGriegas : null;
+  if (!patas || !tabla) return null;
+  const spot = n(p.last);
+  let theta = 0, deltaAcc = 0;
+  for (const x of patas) {
+    const g = tabla[x.cod];
+    const th = g ? numOrNaN(g.theta) : NaN;
+    const dl = g ? numOrNaN(g.delta) : NaN;
+    if (!isFinite(th) || !isFinite(dl)) return null; /* o todas, o ninguna */
+    theta += -x.signo * th * n(p.qty);
+    deltaAcc += -x.signo * dl * n(p.qty);
+  }
+  return { theta, deltaAcc, deltaUsd: isFinite(spot) && spot > 0 ? deltaAcc * spot : NaN };
+};
+const griegasDeCartera = (posiciones) => {
+  let theta = 0, deltaUsd = 0, conGriegas = 0, sinGriegas = 0, sinSpot = 0;
+  const faltan = [];
+  (posiciones || []).forEach((p) => {
+    if (!p || p.closed) return;
+    if (natOf(p) === "ACC") {
+      /* las acciones son su propio delta: 1 por acción */
+      const px = n(p.last);
+      if (isFinite(px) && px > 0) deltaUsd += n(p.qty) * px;
+      return;
+    }
+    if (!isOptionNat(p)) return; /* liquidez y demás no tienen griegas */
+    const g = griegasDePosicion(p);
+    if (!g) { sinGriegas++; if (p.tkr && faltan.length < 6 && !faltan.includes(p.tkr)) faltan.push(p.tkr); return; }
+    conGriegas++;
+    theta += g.theta;
+    if (isFinite(g.deltaUsd)) deltaUsd += g.deltaUsd; else sinSpot++;
+  });
+  if (!conGriegas) return null; /* sin una sola griega no se enseña nada */
+  return { theta, deltaUsd, conGriegas, sinGriegas, sinSpot, faltan };
 };
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
 const effPnl = (p) => {
@@ -2703,6 +2761,54 @@ function MudanzaAviso({ onBackup }) {
         <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
           Allí: Ajustes → Backup → <b>Importar archivo</b>, y elige la copia que acabas de descargar. Después vuelve a guardar la app en la pantalla de inicio desde la dirección nueva.
         </div>
+      </div>
+    </div>
+  );
+}
+/* ---------- v4.54: la tarjeta de theta y delta ----------
+   Dónde ponerlo era la mitad del problema ("no sé dónde lo podríamos incluir"). Va JUSTO BAJO el
+   hero, antes de las pestañas de bloque: es un dato de toda la cartera, no de un bloque, y ahí se ve
+   sin buscarlo. Solo se pinta si hay griegas de verdad — quien no tenga servidor propio no ve nada
+   nuevo, ni un hueco.
+
+   Lo que NO se hace: enseñar el theta a secas. Debajo va siempre de cuántas posiciones sale, y si
+   alguna se queda fuera se dice cuál. Un número que parece de toda la cartera y es de la mitad
+   engaña más que no ponerlo. */
+function GriegasCard({ g, privado }) {
+  if (!g) return null;
+  const tapa = (txt) => (privado ? "••••" : txt);
+  const thetaAnual = g.theta * 365;
+  const Tile = ({ etiqueta, valor, pie, color }) => (
+    <div style={{ background: T.tile, borderRadius: 14, padding: "11px 12px", boxShadow: T.inset, display: "grid", gap: 3, minWidth: 0 }}>
+      <span style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>{etiqueta}</span>
+      <span style={{ fontSize: 19, fontWeight: 800, color: color || T.ink, letterSpacing: -0.5, fontVariantNumeric: "tabular-nums" }}>{valor}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.35 }}>{pie}</span>
+    </div>
+  );
+  return (
+    <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 11, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>Griegas de la cartera</span>
+        <span style={{ fontSize: 10, fontWeight: 800, color: T.purple, background: T.tilePurple, borderRadius: 6, padding: "2px 6px" }}>EN VIVO</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
+        <Tile etiqueta="Theta / día" color={g.theta >= 0 ? T.green : T.red}
+          valor={tapa((g.theta >= 0 ? "+$" : "-$") + money2(Math.abs(g.theta)))}
+          pie={privado ? "" : (g.theta >= 0 ? "recoges" : "pagas") + " " + (g.theta >= 0 ? "+$" : "-$") + money(Math.abs(thetaAnual)) + " al año a este ritmo"} />
+        <Tile etiqueta="Delta en $"
+          valor={tapa((g.deltaUsd >= 0 ? "+$" : "-$") + money(Math.abs(g.deltaUsd)))}
+          pie={g.deltaUsd >= 0 ? "te mueves como si fueras largo" : "te mueves como si fueras corto"} />
+      </div>
+      {/* la cobertura va SIEMPRE, no solo cuando falta algo: si no, un día que falte una posición
+          nadie se dará cuenta de que el número se ha quedado corto */}
+      <div style={{ fontSize: 11, fontWeight: 600, color: g.sinGriegas ? T.gold : T.sub, lineHeight: 1.45,
+        background: g.sinGriegas ? T.tileAmber : "transparent", borderRadius: 10, padding: g.sinGriegas ? "7px 9px" : "0 2px" }}>
+        {g.sinGriegas
+          ? "Sale de " + g.conGriegas + " de tus " + (g.conGriegas + g.sinGriegas) + " posiciones de opciones. " +
+            "Sin precio del servidor: " + g.faltan.join(", ") + (g.sinGriegas > g.faltan.length ? " y alguna más" : "") +
+            " — el theta real es mayor que este."
+          : "De las " + g.conGriegas + " posiciones de opciones que tienes, todas. La delta incluye tus acciones."}
+        {g.sinSpot ? " (" + g.sinSpot + " sin cotización del subyacente no suman a la delta.)" : ""}
       </div>
     </div>
   );
@@ -10836,6 +10942,10 @@ function App() {
   /* v4.11: distribución por bloques para la barra compacta del hero. CUOTA DEL DESPLEGADO (cada
      bloque sobre la suma de todos), no % del NLV: con opciones apalancadas los % de NLV suman más
      de 100 y una barra apilada mentiría. El % contra objetivo sigue en las tarjetas del Resumen. */
+  /* v4.54: theta y delta de toda la cartera. Se recalcula cuando cambian las posiciones — que es
+     cuando llegan marcas nuevas del 🔄 Precios. Devuelve null si no hay ni una griega, y entonces la
+     tarjeta no se pinta: quien no tiene servidor propio no ve nada. */
+  const griegasCartera = useMemo(() => griegasDeCartera(positions), [positions]);
   const blockDist = useMemo(() => {
     const caps = BLOCKS.map((b) => ({ id: b.id, color: b.color, cap: active.filter((p) => p.block === b.id).reduce((s, p) => s + capDesplegado(p), 0) }));
     const total = caps.reduce((s, c) => s + c.cap, 0);
@@ -11982,6 +12092,8 @@ function App() {
           broker={broker} brokers={brokers} accounts={accounts} setAccField={setAccField}
           accOpen={accOpen} setAccOpen={setAccOpen} onOpenInfo={setInfo}
           snapshots={snapshots} blockDist={blockDist} privado={privado} togglePrivado={togglePrivado} />
+
+        <GriegasCard g={griegasCartera} privado={privado} />
 
         {/* TABS: BLOQUES + EXPOSICIÓN. v4.20: la fila deslizable RECORTABA la sombra de las pestañas
            en seco (overflow) y se veía una línea recta bajo ellas — padding interior para que la

@@ -132,11 +132,60 @@ Reglas que gobiernan esto y no se tocan:
   en violeta). Cuando un número cambia de significado hay que avisar, o cambia a espaldas de quien mira.
 - Una llamada por contrato DISTINTO y con pausa: el cupo de OpenD es de la cuenta compartida.
 
-**Pendiente pedido por Victor (13-ago-2026):** *"estaría bien sacar de aquí el portfolio theta y delta,
-saber qué theta diario sacamos, pero no sé dónde lo podríamos incluir"*. Delta, theta, IV e interés
-abierto **ya se guardan** (`p.optGriegas`, por código). Falta (a) decidir dónde caben —en la fila NO:
-`… · vale 3.10 · Δ -0.22` se parte y deja el número solo en una línea— y (b) que las estructuras
-multi-pata den griegas, o el theta de la cartera saldría corto en silencio. Por eso va después.
+**Theta y delta de la cartera (v4.54)** — lo que pidió Victor, hecho ya que las multi-pata dan
+griegas. Tarjeta propia bajo el hero, `GriegasCard`, solo si hay griegas de verdad (quien no tiene
+servidor no ve ni un hueco). Dos decisiones de fondo:
+
+- **Theta en $/día** (`−signo × theta × qty`; la theta de OpenD es por acción y día). Sumar $/día
+  entre tickers sí tiene sentido.
+- **Delta en DÓLARES, no en acciones** (`−signo × delta × qty × spot`). Sumar "acciones
+  equivalentes" de NVDA y SGOV no significa nada. Las acciones entran con delta 1: sin ellas una
+  covered call saldría bajista y la cartera parecería lo que no es.
+- **La cobertura se dice SIEMPRE**, no solo cuando falta algo: "de N de tus M posiciones". Un theta
+  que dice 40 cuando son 70 es peor que no tenerlo, y si solo se avisara al fallar, el día que
+  faltara una posición nadie se daría cuenta.
+
+Sigue pendiente: IV agregada, y las griegas por posición en la fila (`Δ -0.22` NO cabe ahí — se
+probó en la v4.51 y parte la línea).
+
+## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
+
+Preocupación de Victor (13-ago-2026): *"esto a la gente que no tenga el servidor le va a afectar,
+porque si vamos a estar tocando cómo se graban los iron condors… les va a salir todo mal, ¿no?"*.
+Tiene razón, y el riesgo no es del servidor: es de **tocar el formato de los datos**. Sus dos amigos
+usan el MISMO `index.html` y no pueden avisar de nada.
+
+`pruebas/sin-servidor.mjs` carga `pruebas/datos-amigo.mjs` —una cartera fea a propósito, con una de
+cada tipo: acciones, cerrada, short put, covered call, long call, PMCC, Spread (con y sin pata
+cerrada), DC, Iron Condor, Iron Fly, Calendar, P&L manual forzado y liquidez— **sin configurar el
+servidor**, y compara todas las cifras de las seis pestañas contra `pruebas/linea-base.json`.
+
+Decisiones del diseño de la prueba, para que no mienta:
+
+- **Retrato numérico, no texto.** Se capturan todos los importes y porcentajes en orden. Así un
+  cambio de redacción no la rompe, pero un número que se mueve sí. Se capturan además las etiquetas
+  del P&L (`auto` / `REAL` / `MANUAL`): si algo dijera `REAL` sin servidor, salta.
+- **Reloj congelado** (`HOY` en los datos): hay cifras que dependen de los DTE y una prueba que
+  cambia de resultado cada mañana no sirve.
+- **Cualquier llamada a un puente queda registrada** y hace fallar la prueba: sin servidor
+  configurado tienen que ser CERO.
+- **Control de que navega de verdad**: si dos pestañas dieran el mismo retrato, avisa — estaría
+  midiendo la misma pantalla varias veces y pasando siempre.
+- **Playwright NO es dependencia del proyecto** a propósito (`npm ci` lo instalaría en cada
+  compilación de Cloudflare, +100 MB para nada). El script lo busca donde esté instalado.
+
+Comprobado que detecta de verdad: con un céntimo por acción de más en el P&L de las cortas, 6 de 18
+retratos se movieron; forzando un `REAL` falso, 2 de 18.
+
+`npm run prueba -- --fijar` reescribe la línea base. Es un **acto deliberado**: si se cambia, hay que
+decir en el CHANGELOG por qué, o nadie sabrá si fue a propósito.
+
+Las tres reglas que esto protege, y que van con el formato de datos:
+1. **Solo se añade, nunca se quita ni se reescribe** un campo guardado. (Precedente: la v5.09 dejó
+   los campos planos `shortPremium`/`strikePut` como respaldo al pasar las DC/DD a cuatro patas.)
+2. **Los campos nuevos son opcionales**: si faltan, la posición se comporta como antes. Nunca
+   "falta un dato → sale mal".
+3. **O están todas las marcas de una posición, o no se usa ninguna.**
 
 ## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
 
