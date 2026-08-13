@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.50"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.51"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -677,9 +677,50 @@ const effMargen = (p) => (natOf(p) === "CASH" ? 0 : (isPctMargin(p) ? Math.abs(e
 /* P&L auto: (Último − BEP) × Cantidad para acciones, o simulación a vencimiento para opciones cortas.
    Las estrategias de riesgo definido (DEF · B3: DC/DD, credit spreads, débito genérico, Long Call) NUNCA
    son auto: el BEP no es una referencia de precio válida para ellas, así que su P&L es manual (o 0). */
+/* ---------- v4.51: precio REAL del contrato, desde el servidor propio ----------
+   Hasta ahora la app nunca supo lo que vale una opción. Para las cortas simulaba el P&L *a
+   vencimiento* sobre el spot (short put: spot − BEP, con techo en la prima) y para las estructuras
+   de varias patas el número lo escribía Victor a mano. Las dos cosas son aproximaciones: si la
+   volatilidad se desploma y la put vale hoy la mitad, la simulación no se entera.
+
+   Con OpenD detrás del puente sí se puede preguntar cuánto vale AHORA cada contrato. Solo se aplica
+   a posiciones de UNA PATA (short put, covered call, long call): un condor son cuatro contratos y no
+   tiene "un" precio — esas siguen como estaban.
+
+   El código de Futu es US.TICKER + AAMMDD + P|C + strike×1000 (TMDX put 70 del 18-sep-2026 →
+   US.TMDX260918P70000). Se guarda junto a la marca (p.optCodigo): si Victor rola la posición y
+   cambia strike o vencimiento, el código deja de coincidir y la marca vieja se descarta sola en vez
+   de seguir mintiendo con el precio de un contrato que ya no tiene. */
+const esUnaPata = (p) => {
+  if (!p || p.closed || !isOptionNat(p)) return false;
+  const nat = natOf(p);
+  if (nat !== "CRED" && nat !== "DEB") return false;
+  if (isVertical(p) || isPMCC(p) || p.long || p.legs || p.sK || p.lK) return false; /* multi-pata */
+  return !!(p.tkr && (p.right === "C" || p.right === "P") && p.expiry && n(p.strike) > 0);
+};
+const codigoOpcion = (p) => {
+  if (!esUnaPata(p)) return null;
+  const m = String(p.expiry).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const mils = Math.round(n(p.strike) * 1000);
+  if (!(mils > 0)) return null;
+  return "US." + String(p.tkr).trim().toUpperCase() + m[1].slice(2) + m[2] + m[3] + p.right + mils;
+};
+/* la marca guardada, SOLO si sigue siendo del contrato que hoy tiene la posición */
+const marcaOpcion = (p) => {
+  if (!p || p.optLast == null || p.optLast === "") return NaN;
+  const cod = codigoOpcion(p);
+  if (!cod || p.optCodigo !== cod) return NaN;
+  const v = n(p.optLast);
+  return isFinite(v) && v >= 0 ? v : NaN;
+};
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
 const effPnl = (p) => {
   if (!isAutoPnl(p)) return n(p.pnl);
+  /* v4.51: con precio real del contrato no hay nada que simular — el P&L es la diferencia entre lo
+     que cobraste (o pagaste) y lo que vale ahora. Corta: prima − marca. Larga: marca − prima. */
+  const marca = marcaOpcion(p);
+  if (isFinite(marca)) return (natOf(p) === "CRED" ? n(p.prima) - marca : marca - n(p.prima)) * n(p.qty);
   /* opción corta (CRED): P&L no realizado simulado a vencimiento sobre el spot.
      Short put: Spot − BEP (= spot − strike + prima) con techo en la prima — sobre el strike se queda
      toda la prima; bajo el BEP entra en pérdida. Short/covered call: prima − intrínseco de la call
@@ -4479,6 +4520,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const qtyNum = opt ? (Number.isInteger(contratos) ? contratos : n(p.qty)) : n(p.qty);
   const qtyUnit = opt ? (Number.isInteger(contratos) ? "contr." : "opc") : "acc";
   const pnlVal = effPnl(p);
+  /* v4.51: precio real del contrato traído del servidor propio. Si lo hay, el P&L de esta fila no es
+     una simulación a vencimiento sino la cuenta de verdad — y eso hay que DECIRLO, o el número
+     cambia de significado sin que se note. */
+  const marca = marcaOpcion(p);
   const pnlBasis = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || cap;
   const pnlPct = pnlBasis ? pnlVal / pnlBasis : NaN;
   const rollChain = p.rollChain || [];
@@ -4644,11 +4689,20 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             {detalle}
             {detalle && !cash ? <span style={{ opacity: 0.55 }}>{"  ·  "}</span> : null}
             {!cash && <span style={{ fontWeight: 800 }}>×{qtyNum} <span style={{ fontWeight: 600 }}>{qtyUnit}</span></span>}
+            {/* v4.51: lo que vale HOY el contrato, según OpenD. Va aquí y no en la línea del P&L
+                porque es un dato del contrato, no del resultado — y porque es la cifra que Victor
+                mira para decidir si recomprar. */}
+            {/* la delta se probó aquí también y NO cabe: "70P SEP 18 '26 · ×1 contr. · vale 3.10 · Δ -0.22"
+                se parte y deja el "-0.22" solo en una línea. El precio va aquí; delta, theta e IV se
+                guardan igual y esperan a tener un sitio donde quepan. */}
+            {isFinite(marca) && (
+              <span style={{ opacity: 0.55 }}>{"  ·  "}<span style={{ fontWeight: 800, color: T.purple, opacity: 1, fontVariantNumeric: "tabular-nums" }}>vale {marca.toFixed(2)}</span></span>
+            )}
           </div>
         )}
         {showPnl && !cash && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 7, padding: "6px 10px", borderRadius: 10, background: pnlVal > 0 ? T.tileGreen : pnlVal < 0 ? T.tileRed : T.tile }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>P&L{isAutoPnl(p) ? "" : " · manual"}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: isFinite(marca) ? T.purple : T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>P&L{!isAutoPnl(p) ? " · manual" : isFinite(marca) ? " · real" : ""}</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: pnlVal > 0 ? T.green : pnlVal < 0 ? T.red : T.sub }}>{signMoney(pnlVal)}{isFinite(pnlPct) ? <span style={{ fontSize: 12, fontWeight: 700, marginLeft: 6 }}>{(pnlPct >= 0 ? "+" : "") + (pnlPct * 100).toFixed(1) + "%"}</span> : null}</span>
           </div>
         )}
@@ -9875,6 +9929,10 @@ function App() {
      Con la ref (y setPositions funcional) siempre parte del estado más reciente. */
   const positionsRef = useRef(positions);
   positionsRef.current = positions;
+  /* v4.51: la descarga automática al arrancar dispara runRefresh desde un efecto, y ahí la config del
+     servidor todavía puede ser la de antes de leerse el localStorage. Por eso va por ref, igual que
+     las posiciones: se lee en el momento de usarla, no en el de crear la función. */
+  const puenteRef = useRef({ url: "", token: "" });
   const [broker, setBroker] = useState("Todos");
   const [accOpen, setAccOpen] = useState(false); // estado de cuenta plegado por defecto (ahorra espacio)
   /* v1.48: % de cambio del día del SUBYACENTE, tal cual lo da Finnhub al refrescar precios. Se guarda
@@ -9923,6 +9981,9 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState(""); /* v5.10: solo errores — el éxito se señala con el punto verde de la píldora */
   const [refreshOk, setRefreshOk] = useState(false); /* píldora "● Actualizado" unos segundos tras el refresco */
+  /* v4.51: cuántos contratos trajeron precio real del servidor propio en el último 🔄 (o por qué no).
+     Va aparte del mensaje de error de Finnhub: que falle el puente no es que falle el refresco. */
+  const [marcasMsg, setMarcasMsg] = useState(null); /* { n, ts } | { n:0, error } | null */
   const [pullDist, setPullDist] = useState(0);
   const pullTrackingRef = useRef(false);
   const pullStartYRef = useRef(0);
@@ -9939,6 +10000,7 @@ function App() {
   /* v4.43: servidor propio (puente a OpenD). Vive aparte de las API keys porque no es una key
      de un servicio ajeno: es la puerta a una máquina suya, y no viaja al backup. */
   const [puente, setPuente] = useState({ url: "", token: "" });
+  puenteRef.current = puente;
   const [puenteModalOpen, setPuenteModalOpen] = useState(false);
   const [puenteUrlIn, setPuenteUrlIn] = useState("");
   const [puenteTokenIn, setPuenteTokenIn] = useState("");
@@ -10380,11 +10442,44 @@ function App() {
       setDayPct(chg); setDayPrev(prevC);
       try { localStorage.setItem(KEY_DAYPCT, JSON.stringify({ date: new Date().toISOString().slice(0, 10), pct: chg, pc: prevC })); } catch (e) {}
     }
+    /* v4.51: precio REAL de cada contrato de una pata, si hay servidor propio configurado. Va después
+       de los subyacentes y NO bloquea nada: si el puente está caído, la app sigue exactamente como
+       antes (P&L simulado) — nunca se queda a medias ni se inventa una marca.
+       Una llamada por contrato distinto (dos posiciones del mismo contrato comparten la consulta), con
+       una pausa entre ellas: el cupo de OpenD es de la CUENTA, y ahí dentro también viven el sistema
+       de earnings de root y el agente de puts. El puente ya cachea 20 s por su cuenta. */
+    const marcas = {};
+    const marcaErrores = {};
+    const cfgPuente = puenteRef.current;
+    if (puenteConfigurado(cfgPuente)) {
+      const codigos = [...new Set(positionsRef.current.map(codigoOpcion).filter(Boolean))];
+      for (const cod of codigos) {
+        const r = await puenteFetch(cfgPuente, "/opcion", { codigo: cod });
+        if (r && r.ok && r.opcion && r.opcion.ultimo != null && isFinite(n(r.opcion.ultimo))) marcas[cod] = r.opcion;
+        else marcaErrores[(r && r.error) || "sin respuesta"] = (marcaErrores[(r && r.error) || "sin respuesta"] || 0) + 1;
+        await new Promise((r2) => setTimeout(r2, 250));
+      }
+    }
+    const ahora = Date.now();
+    /* aplica subyacente y, si la hay, la marca del contrato — con su código al lado, para que una
+       posición rolada descarte sola la marca del contrato viejo (ver marcaOpcion) */
+    const aplica = (p) => {
+      let q = p;
+      if (results[p.tkr] != null) q = { ...q, last: String(results[p.tkr]) };
+      const cod = codigoOpcion(p);
+      const m = cod ? marcas[cod] : null;
+      if (m) q = { ...q, optCodigo: cod, optLast: String(m.ultimo), optTs: ahora,
+        optIv: m.iv != null ? String(m.iv) : "", optDelta: m.delta != null ? String(m.delta) : "",
+        optTheta: m.theta != null ? String(m.theta) : "", optOi: m.interes_abierto != null ? String(m.interes_abierto) : "" };
+      return q;
+    };
     /* v5.31: aplica los precios sobre el estado MÁS RECIENTE (ref + updater funcional), nunca sobre la copia
        capturada al empezar. Así, si durante la descarga terminó la carga/fusión de posiciones, no se pierde
        ninguna: solo se actualiza `last` de las que hay ahora. */
-    const nextPositions = positionsRef.current.map((p) => (results[p.tkr] != null ? { ...p, last: String(results[p.tkr]) } : p));
-    setPositions((prev) => prev.map((p) => (results[p.tkr] != null ? { ...p, last: String(results[p.tkr]) } : p)));
+    const nextPositions = positionsRef.current.map(aplica);
+    setPositions((prev) => prev.map(aplica));
+    setMarcasMsg(Object.keys(marcas).length ? { n: Object.keys(marcas).length, ts: ahora }
+      : Object.keys(marcaErrores).length ? { n: 0, error: Object.keys(marcaErrores)[0] } : null);
     /* v1.69: cada 🔄 Precios evalúa las alertas con los datos que acaba de traer */
     try { const qm = {}; Object.keys(results).forEach((t) => { qm[t] = { price: results[t], h: highs[t], dp: chg[t] != null ? chg[t] * 100 : undefined }; }); evalAlerts(qm); } catch (e) {}
     setRefreshing(false);
@@ -11650,6 +11745,14 @@ function App() {
           </div>
         )}
         {refreshMsg && <div style={{ fontSize: 12, color: T.red, fontWeight: 700, marginBottom: 12, background: T.tileRed, borderRadius: 12, padding: "8px 12px", lineHeight: 1.4 }}>{refreshMsg}</div>}
+        {/* v4.51: que el servidor propio no conteste NO es que falle el refresco — los subyacentes han
+            llegado igual y la app sigue funcionando con el P&L simulado. Por eso se dice aparte y en
+            ámbar, no en rojo: es una pérdida de precisión, no una avería. */}
+        {view === "bloques" && marcasMsg && marcasMsg.n === 0 && (
+          <div style={{ fontSize: 12, color: T.ink, fontWeight: 600, marginBottom: 12, background: T.tileAmber, borderRadius: 12, padding: "8px 12px", lineHeight: 1.45 }}>
+            Sin precio real de los contratos: {marcasMsg.error} — el P&L de las opciones vuelve a la estimación de siempre.
+          </div>
+        )}
 
         {/* SELECTOR BROKER — oculto también en Vencimientos: esa vista no muestra nada del estado de cuenta.
            Chips sueltos al estilo del resto del rediseño (como el selector de Distribución y las pestañas de
