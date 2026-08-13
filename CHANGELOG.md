@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+Bloques v4.50 — Aviso de mudanza en la dirección vieja
+
+## Por qué
+La app se muda a su propio dominio (`app.alphavext.com`) y, cuando eso esté rodado, el repositorio
+pasará a privado. Aquí está el detalle que importa: **GitHub Pages solo publica gratis desde
+repositorios públicos**. El día que se cierre, `galofly.github.io/galowillmakeyourich` deja de abrir.
+
+Victor lo vio venir antes que yo: *"el anterior sitio dejará de funcionar? es que igual mis amigos
+no han grabado copia de sus datos"*.
+
+## El riesgo real
+Los datos **no se pierden** cuando se apaga el sitio: viven en el `localStorage` / IndexedDB de cada
+iPhone y ahí siguen. El problema es de acceso, no de pérdida: **el botón de Backup vive DENTRO de la
+app**. Si la app no abre, no hay forma de sacarlos. La copia hay que hacerla antes, no después.
+
+## Cómo queda
+Una tarjeta ámbar, con banda naranja, **arriba del todo y en todas las pestañas**, que dice que la
+app se ha mudado y pone dos botones en orden:
+
+1. **Descargar mi copia** — abre directamente la hoja de Backup, sin pasar por Ajustes.
+2. **Abrir app.alphavext.com** — la casa nueva.
+
+Y debajo, en pequeño, el paso que se olvida: *Ajustes → Backup → Importar archivo*, y volver a
+guardar la app en la pantalla de inicio desde la dirección nueva.
+
+Tres decisiones a propósito:
+
+- **Solo se pinta en `github.io`** (`enSitioViejo()` mira `location.hostname`). En la dirección nueva
+  no aparece — es el mismo `index.html` para las dos, así que el aviso tenía que saber dónde está.
+- **No se puede descartar.** El resto de avisos de la app llevan ✕; este no. Es el único mensaje que
+  van a ver los otros dos usuarios, y una ✕ pulsada sin leer deja a alguien sin sus datos.
+- **Descargar va antes que mudarse.** Si se van sin copia, el viaje no sirve de nada.
+
+## Verificación
+Con Playwright sirviendo `dist/` bajo cada dominio de verdad (interceptando la red, para que
+`location.hostname` sea el real y no `localhost`), en iPhone 13:
+
+| Dirección | ¿Sale el aviso? |
+|---|---|
+| `galofly.github.io` (claro y oscuro) | **sí** |
+| `app.alphavext.com` | no |
+| `galowillmakeyourich.pages.dev` | no |
+
+Además: el botón 1 abre de verdad la hoja de Backup (aparecen "Descargar archivo" e "Importar
+archivo"), el aviso sigue en su sitio al cambiar a Movimientos y a Herramientas, la tarjeta mide
+360×323 px sin desbordar a lo ancho (documento 390 = ventana 390), y ni un error de consola en las
+cuatro pasadas.
+
 Bloques v4.49 — Botón de privacidad: tapar el dinero de un toque
 
 ## Lo que pidió
