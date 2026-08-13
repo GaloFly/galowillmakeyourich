@@ -41,7 +41,13 @@ fi
 # ---------------------------------------------------------------- 3. el programa
 decir "Descargando el puente…"
 mkdir -p "$DESTINO"
-curl -fsSL "$FUENTE" -o "$DESTINO/puente.py" || fallo "No se pudo descargar el puente desde GitHub."
+# La coletilla ?nc= NO es decorativa: raw.githubusercontent.com cachea unos minutos, y sin ella
+# un instalador ejecutado justo después de publicar un arreglo se baja la versión VIEJA — y el
+# servicio arranca tan contento con el fichero de antes, sin decir nada. Pasó el 14-ago-2026.
+curl -fsSL "$FUENTE?nc=$(date +%s)" -o "$DESTINO/puente.py" || fallo "No se pudo descargar el puente desde GitHub."
+# Y se deja a la vista qué versión ha quedado instalada, para no tener que adivinarlo nunca más.
+VERSION_PUENTE=$(grep -m1 -o 'v[0-9]\+, [0-9]\+-[a-z]\+-[0-9]\+' "$DESTINO/puente.py" || true)
+[ -n "$VERSION_PUENTE" ] && decir "Puente descargado: $VERSION_PUENTE"
 
 decir "Preparando el entorno de Python (esto tarda un par de minutos)…"
 [ -d "$DESTINO/.venv" ] || python3 -m venv "$DESTINO/.venv"
