@@ -47,7 +47,7 @@ Y lo de siempre:
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     from zoneinfo import ZoneInfo
@@ -452,20 +452,57 @@ def cadena():
         return error("Faltan parámetros. Ejemplos: /cadena?codigo=US.TMDX&vencimiento=2026-09-18 "
                      "· /cadena?codigo=US.TMDX&desde=2026-09-01&hasta=2026-11-15")
 
+    # Futu NO admite más de 30 días de golpe ("the requested time span cannot exceed 30 days",
+    # comprobado en el VPS el 14-ago-2026). Se parte el rango en tramos de 30 y se juntan.
+    # Cada tramo es una llamada a get_option_chain, que es de 10 cada 30 s PARA TODA LA CUENTA,
+    # así que se pide turno antes de cada uno y se limita a 3 tramos (90 días): para elegir
+    # vencimientos a 30/45/60 días sobran dos.
+    MAX_TRAMOS = 3
+    try:
+        d0 = datetime.strptime(desde, "%Y-%m-%d")
+        d1 = datetime.strptime(hasta, "%Y-%m-%d")
+    except ValueError:
+        return error("Las fechas van en formato AAAA-MM-DD. Ejemplo: desde=2026-09-01&hasta=2026-10-15")
+    if d1 < d0:
+        return error("'hasta' es anterior a 'desde'.")
+    tramos = []
+    ini = d0
+    while ini <= d1 and len(tramos) < MAX_TRAMOS:
+        fin = min(ini + timedelta(days=29), d1)
+        tramos.append((ini.strftime("%Y-%m-%d"), fin.strftime("%Y-%m-%d")))
+        ini = fin + timedelta(days=1)
+    if ini <= d1:
+        return error(f"El rango es demasiado largo: como mucho {MAX_TRAMOS * 30} días "
+                     f"(Futu solo sirve 30 por llamada y cada una gasta del cupo compartido).")
+
     def traer():
-        ret, data = contexto().get_option_chain(code=subyacente, start=desde, end=hasta)
-        if ret != RET_OK:
-            return {"ok": False, "error": f"OpenD devolvió un error al pedir la cadena: {data}"}, 502
-        contratos = [{
-            "codigo": r.get("code"),
-            "tipo": r.get("option_type"),
-            "strike": r.get("strike_price"),
-            "vencimiento": r.get("strike_time"),
-        } for r in data.to_dict("records")]
+        contratos, vistos = [], set()
+        for i, (a, b) in enumerate(tramos):
+            if i:
+                pedir_turno("chain")  # el primer turno ya lo pidió con_cache
+            ret, data = contexto().get_option_chain(code=subyacente, start=a, end=b)
+            if ret != RET_OK:
+                # si un tramo falla pero otro ya trajo datos, se devuelve lo que hay y se dice
+                if contratos:
+                    return {"ok": True, "contratos": contratos, "total": len(contratos),
+                            "vencimientos": sorted({str(c["vencimiento"])[:10] for c in contratos if c.get("vencimiento")}),
+                            "aviso": f"Del {a} al {b} no se pudo leer: {data}"}, 200
+                return {"ok": False, "error": f"OpenD devolvió un error al pedir la cadena: {data}"}, 502
+            for r in data.to_dict("records"):
+                cod = r.get("code")
+                if cod in vistos:
+                    continue  # los tramos no se solapan, pero por si acaso
+                vistos.add(cod)
+                contratos.append({
+                    "codigo": cod,
+                    "tipo": r.get("option_type"),
+                    "strike": r.get("strike_price"),
+                    "vencimiento": r.get("strike_time"),
+                })
         # la fecha viene como "2026-09-18 00:00:00" en algunas versiones: se queda el día
         vencimientos = sorted({str(c["vencimiento"])[:10] for c in contratos if c.get("vencimiento")})
         return {"ok": True, "contratos": contratos, "total": len(contratos),
-                "vencimientos": vencimientos}, 200
+                "vencimientos": vencimientos, "tramos": len(tramos)}, 200
 
     payload, http = con_cache(f"cadena:{subyacente}:{desde}:{hasta}", TTL_CADENA, "chain", traer)
     return jsonify(payload), http
