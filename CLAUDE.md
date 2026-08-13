@@ -127,7 +127,11 @@ Reglas que gobiernan esto y no se tocan:
 - **Las marcas se guardan indexadas por código** (`p.optMarks`) y la tabla se **reemplaza** entera en
   cada refresco. Así una posición rolada descarta sola el precio del contrato que ya no tiene, sin
   código de migración ni limpieza.
-- **Sin servidor propio no se hace ni una llamada.** Los otros dos usuarios ven la app de siempre.
+- **Sin servidor propio no se hace ni una llamada, Y NO SE USA NI UNA MARCA** (candado `HAY_PUENTE`,
+  v4.56). No basta con no llamar: el backup se lleva las marcas dentro (`...p`) y los backups se
+  comparten por chat, así que un amigo con la copia de Victor habría visto `P&L · REAL` con precios
+  congelados. Además, desde la v4.56 las marcas y griegas **ya no viajan en el backup**: son dato de
+  mercado, re-descargable, como el % del día.
 - **Se dice en pantalla** (`vale X` en una pata, `cerrar X` en un vertical, y la etiqueta `P&L · REAL`
   en violeta). Cuando un número cambia de significado hay que avisar, o cambia a espaldas de quien mira.
 - Una llamada por contrato DISTINTO y con pausa: el cupo de OpenD es de la cuenta compartida.
