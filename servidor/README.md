@@ -24,10 +24,22 @@ Dos añadidos del 14-ago-2026, para el comparador automático de puts:
   **no gasta suscripción**; si no vinieran, se devuelven nulos y la app sigue con el último precio.
   Verificado en el VPS: `{"ask":46.9,"bid":46.1,"medio":46.5,"ultimo":46.2}`.
 
+- **`/opciones` (en plural) pide MUCHOS contratos de una vez** — `?codigos=A,B,C`, máximo 200. Usa
+  `get_market_snapshot`, que admite cientos de códigos en **una sola llamada** y no gasta
+  suscripción. El comparador de puts necesita el precio de ~18 contratos para poner tres
+  vencimientos en fila: con `/opcion` serían 18 llamadas a OpenD; con esto, una. En una cuenta
+  compartida con root y con el agente eso no es una optimización, es la diferencia entre poder usar
+  la herramienta y no poder. Cachea **por código y con la misma clave que `/opcion`**, así que los
+  dos se aprovechan mutuamente. Respeta las ventanas de root (sirve caché caducada y lo dice).
+
 **Y un límite que conviene tener presente:** fuera del horario de mercado, OpenD devuelve **precio
 pero no griegas** — `delta`, `iv`, `theta` e `interes_abierto` vienen a `null`, y `hora_dato` es la
 del cierre. No es un fallo del puente ni de la app: es lo que hay. Por eso la app conserva las
 últimas griegas conocidas y las etiqueta como "DEL CIERRE" (v4.57) en vez de quedarse en blanco.
+
+*Pendiente de comprobar:* eso se vio con `get_stock_quote`. `get_market_snapshot` (el que usa
+`/opciones`) tiene sus propios campos de griegas y **podría darlas también fuera de horario**. Si
+resultara que sí, convendría que `/opcion` tirase también del snapshot. Se sabrá con un `curl`.
 
 **Decisiones de diseño, a propósito:**
 
