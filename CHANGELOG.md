@@ -1,5 +1,68 @@
 # CHANGELOG — Bloques
 
+Bloques v4.52 — Los spreads verticales también salen de la estimación
+
+## Lo que pidió
+Victor, tras probar la v4.51: *"Funciona increíble… sigue con lo siguiente"*.
+
+Lo siguiente eran las estructuras de varias patas. De todas ellas, la que más ganaba era el **Spread
+vertical**: hasta hoy su P&L no es que fuera aproximado, es que **lo escribía Victor a mano** (los
+verticales son `nat=DEF`, así que ni siquiera pasaban por el cálculo automático).
+
+## Cómo se calcula
+Un Spread son dos contratos del mismo vencimiento y el mismo lado: la corta que cobró `sP` y la larga
+que costó `lP`. Con las dos marcas, lo no realizado por acción es:
+
+```
+(sP − marca de la corta) + (marca de la larga − lP)
+```
+
+Cada pata aporta su parte. Las patas que Victor ya cerró por separado (`noShort` / `noLong`) **no
+cuentan aquí**: su resultado se reservó en su momento y vive en el realizado.
+
+## La regla dura
+**O están todas las marcas que hace falta, o no se usa ninguna.** Si el servidor no conoce uno de los
+dos contratos, esa posición se queda con su P&L manual de siempre — no se mezcla. Un número medio
+real y medio inventado es peor que uno manual, porque parece exacto.
+
+## Cómo se ve
+En la fila del vertical: `560/550 · SEP 18 '26 · ×1 contr. · cerrar 0.95` — lo que costaría cerrarlo
+hoy entero. Positivo = hay que pagar para salir (lo normal en un credit spread); si te pagaran a ti,
+sale con signo +. Y la etiqueta pasa de `P&L · MANUAL` a **`P&L · REAL`**.
+
+## Un cambio por debajo
+Las marcas pasan a guardarse **indexadas por código de contrato** (`optMarks`), y la tabla se
+**reemplaza entera** en cada refresco en vez de fusionarse. Dos ventajas gratis: sirve igual para una
+pata que para dos, y una posición rolada descarta sola los precios de los contratos que ya no tiene,
+sin código de limpieza. Las marcas guardadas por la v4.51 se siguen leyendo.
+
+## Verificación
+Playwright en iPhone 13 con el puente simulado. Tres verticales a la vez, con el P&L manual puesto a
+**999 a propósito**: si sale 999, la marca no se está usando.
+
+| Posición | Esperado | Salió |
+|---|---|---|
+| Credit spread SPY 560/550, ambas patas vivas (corta 1,50 · larga 0,55) | (4,20−1,50)+(0,55−1,80) = **+$145** | +$145 |
+| El mismo con la pata larga ya cerrada | (4,20−1,50)×100 = **+$270** | +$270 |
+| Spread de QQQ que el servidor NO conoce | se queda **manual, 999** | 999 |
+| **P&L abierto de la cartera** | 145 + 270 + 999 = **+$1.414** | **+$1.414** |
+| Lo mismo sin servidor propio | 999 × 3 = **+$2.997** | **+$2.997** |
+
+Los cuatro códigos que salieron por el cable fueron los correctos, incluidos los dos del QQQ que el
+servidor rechaza: `US.SPY260918P560000`, `US.SPY260918P550000`, `US.QQQ261218C600000`,
+`US.QQQ261218C610000`. Cero errores de consola.
+
+## Lo que sigue manual
+Calendar, DC/DD, PMCC/Diagonal, Iron Condor, Iron Fly y Broken Wing. Las dos primeras sí guardan sus
+patas (con DOS vencimientos, que es otro cálculo); las últimas no guardan patas estructuradas.
+
+## Y el pendiente de Victor
+*"Estaría bien sacar de aquí el portfolio theta y delta, saber qué theta diario sacamos, pero no sé
+dónde lo podríamos incluir."* Delta, theta, IV e interés abierto **ya se están guardando**. Queda
+pendiente a propósito por dos motivos: no hay sitio donde quepan (en la fila NO — se probó y parte la
+línea), y mientras las multi-pata no den griegas, el theta de la cartera saldría **corto en silencio**,
+que es la peor forma de estar mal.
+
 Bloques v4.51 — El P&L de las opciones deja de ser una estimación
 
 ## Lo que pidió
