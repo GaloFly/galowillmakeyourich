@@ -1,5 +1,48 @@
 # CHANGELOG — Bloques
 
+Bloques v4.49 — Botón de privacidad: tapar el dinero de un toque
+
+## Lo que pidió
+Victor: *"un botón de privacidad que oculte el dinero que hay en la cuenta. Tiene que ser muy
+accesible"*.
+
+## Cómo queda
+Un **ojo** junto a "Valor de la cuenta", en la primera pantalla. Un toque y desaparecen todos los
+importes. Otro toque y vuelven.
+
+**Dos dianas para lo mismo**, porque "muy accesible" quiere decir sin buscar: el ojo, y **el propio
+importe grande**, que también se puede tocar.
+
+## Qué se tapa y qué no
+Se tapan **todas las cifras en dinero de la pantalla de Portfolio**: el valor de la cuenta, el
+importe del cambio del día, P&L abierto, riesgo total, valor de mercado, cash, margin, Excess Liq
+y **el importe de cada bloque** en Distribución.
+
+Ese último era imprescindible: tapar solo el hero no habría servido de nada, porque las cuatro filas
+de bloques cantan el tamaño de la cuenta igual de alto. Verificado: con la privacidad puesta **no
+queda ni un `$` en toda la pantalla**.
+
+Se quedan **los porcentajes**: el % del día, los ratios (EL/NLV, apalancamiento, liquidez) y el
+reparto por bloques con su banda objetivo. Así la app sigue diciéndote de un vistazo si estás en
+banda y cómo va el día — se esconde cuánto tienes, no se deja de poder usar.
+
+**No toca el P&L de las posiciones**: eso ya tiene su propio interruptor ("Ver P&L"), y viene apagado
+de fábrica.
+
+## Detalles
+- **Se recuerda entre sesiones.** Si se olvidara al cerrar la app no serviría para lo que sirve —
+  abrirla delante de alguien.
+- Solo afecta a lo que se PINTA: no se borra nada, no se deja de calcular nada, y el backup va igual.
+
+## Verificación
+Chromium (viewport iPhone 390×844), claro y oscuro:
+- Al abrir: 8 importes visibles.
+- Tras pulsar el ojo: **ninguno** — barrido de todo el texto de la pantalla buscando `$`.
+- Con el estado de cuenta desplegado (cash, margin, EL): tampoco.
+- Tras recargar la app: sigue tapado.
+- Al volver a pulsar: los 8 importes vuelven.
+- Sin errores de consola.
+
 Bloques v4.48 — El carrusel del calendario se quedaba entre dos días
 
 ## El síntoma
