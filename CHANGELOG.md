@@ -1,5 +1,63 @@
 # CHANGELOG — Bloques
 
+Bloques v4.53 — DC/DD y PMCC: ya no queda ninguna estructura a ojo
+
+## Lo que pidió
+Victor: *"Sigue"*. Quedaban las estructuras de dos vencimientos.
+
+## Antes de añadir, unificar
+Había un camino para "una pata" (v4.51) y otro para los verticales (v4.52), casi idénticos. Meter
+DC/DD y PMCC habría hecho **cuatro** caminos paralelos haciendo la misma cuenta — y ahí es donde se
+crían los bugs que no se ven.
+
+Ahora hay uno solo. Cada posición se describe como una **lista de patas**, y cada pata dice tres
+cosas: qué contrato es, cuánto se cobró o se pagó por acción, y si es corta (+1) o larga (−1). Con
+eso, dos fórmulas valen para todas las estructuras:
+
+```
+P&L no realizado por acción = Σ signo × (entrada − marca)
+coste de cerrar hoy         = Σ signo × marca
+```
+
+**Comprobado que el refactor no rompe nada:** los tres escenarios de la v4.51 (+$222 / +$1.012 /
++$1.012) y los dos de la v4.52 (+$1.414 / +$2.997) dan exactamente los mismos números que antes.
+
+## Lo nuevo
+- **PMCC / Diagonal**: la corta vive en la posición y la larga en `p.long`, con **vencimientos
+  distintos**. Ya no se simula: se preguntan los dos contratos.
+- **DC / DD**: cuatro patas (short put, long put, short call, long call) y dos vencimientos — las
+  shorts en `p.expiry`, las longs en `dcdd.expiryLong`. Se preguntan las cuatro.
+
+## Qué queda a mano
+Iron Condor, Iron Fly, Broken Wing y los Calendar sueltos. Esos **no guardan las patas por separado**
+en la app, así que no hay de dónde sacar los contratos. Para esos habría que cambiar antes cómo se
+graban, no cómo se calculan.
+
+## Sobre el "cerrar"
+En la fila de una estructura sale lo que costaría salir hoy, entera:
+- `cerrar 0.95` → **pagas** 0,95 por acción para cerrar (lo normal en un credit spread).
+- `cerrar +6.00` → **te pagan** a ti (un DC vale más de lo que quedó pendiente). El `+` significa lo
+  mismo que en el resto de la app: a tu favor.
+
+## Verificación
+Playwright en iPhone 13, claro y oscuro, con el puente simulado y el P&L manual puesto a **999 a
+propósito** — si sale 999, la marca no se usó.
+
+| Posición | Cuenta | Esperado | Salió |
+|---|---|---|---|
+| PMCC NVDA: corta C180 sep cobrada 3,00 (vale 1,80) · larga C150 ene-27 pagada 28,00 (vale 31,50) | (3,00−1,80)+(31,50−28,00) | **+$470** | +$470 ✓ |
+| DC AMD, 4 patas, 2 vencimientos | 0,90+0,80−0,40+0,60 | **+$190** | +$190 ✓ |
+| DC MU al que el servidor le falta **una** de las cuatro patas | se queda manual | **999** | 999 ✓ |
+| **P&L abierto de la cartera** | 470+190+999 | **+$1.659** | +$1.659 ✓ |
+| Lo mismo **sin** servidor propio | 300 (PMCC simulado) + 999 + 999 | **+$2.298** | +$2.298 ✓ |
+
+Los **diez** códigos salieron correctos, incluidos los cuatro de MU (uno de ellos rechazado a
+propósito): `US.NVDA260918C180000`, `US.NVDA270115C150000`, `US.AMD260918P160000`,
+`US.AMD260918C180000`, `US.AMD261016P160000`, `US.AMD261016C180000`, y los cuatro de MU.
+
+En la fila: PMCC `cerrar +29.70`, DC `cerrar +6.00`, ambos con la etiqueta `P&L · REAL`. El de MU
+sigue diciendo `P&L · MANUAL`. Sin errores de consola salvo el 404 buscado de la pata que falta.
+
 Bloques v4.52 — Los spreads verticales también salen de la estimación
 
 ## Lo que pidió
