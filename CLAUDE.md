@@ -97,7 +97,7 @@ no dice nada del enganche.
 Falta: añadir `https://app.alphavext.com` a `BLOQUES_ORIGENES` en `/etc/bloques/entorno` del VPS y
 reiniciar `bloques-puente`, o la app en el dominio nuevo no podrá hablar con el puente (CORS).
 
-## Precios reales de opciones (v4.51–v4.52) y lo que falta
+## Precios reales de opciones (v4.51–v4.53) y lo que falta
 
 Con el puente conectado, el 🔄 Precios pregunta a OpenD cuánto vale AHORA cada contrato y el P&L deja
 de ser una simulación. Código de Futu: `US.TICKER + AAMMDD + P|C + strike×1000`.
