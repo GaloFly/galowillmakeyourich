@@ -5,7 +5,8 @@
   "description": "Bloques — Portfolio + Comparador. El fuente es index.html; `npm run build` lo compila en dist/.",
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "prueba": "node pruebas/sin-servidor.mjs"
   },
   "repository": {
     "type": "git",

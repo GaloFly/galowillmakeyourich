@@ -31,6 +31,8 @@ Ciclo por cada entrega (siempre el mismo):
 3. Anotar en **`CHANGELOG.md`** arriba del todo, en español y con el estilo de siempre:
    síntoma → causa → arreglo → verificación. Es el historial que él lee.
 4. `npm run build` (debe imprimir `build <hash> ok — app vX.XX …`) + `node --check dist/app.js`.
+4b. **`npm run prueba`** — la red de seguridad de los usuarios SIN servidor propio (ver abajo).
+   Tiene que decir `OK`. Si dice `FALLA`, NO se publica hasta entender por qué.
 5. Verificar en **Chromium con viewport iPhone** (Playwright en `/opt/pw-browsers/chromium`),
    sembrando posiciones en `localStorage` (`bloques_pos_v5`, `bloques_acc_v5`, `bloques_snapshots_v1`)
    y sirviendo `dist/` con `python3 -m http.server`. Capturar y MIRAR la captura.
@@ -135,6 +137,45 @@ saber qué theta diario sacamos, pero no sé dónde lo podríamos incluir"*. Del
 abierto **ya se guardan** (`p.optGriegas`, por código). Falta (a) decidir dónde caben —en la fila NO:
 `… · vale 3.10 · Δ -0.22` se parte y deja el número solo en una línea— y (b) que las estructuras
 multi-pata den griegas, o el theta de la cartera saldría corto en silencio. Por eso va después.
+
+## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
+
+Preocupación de Victor (13-ago-2026): *"esto a la gente que no tenga el servidor le va a afectar,
+porque si vamos a estar tocando cómo se graban los iron condors… les va a salir todo mal, ¿no?"*.
+Tiene razón, y el riesgo no es del servidor: es de **tocar el formato de los datos**. Sus dos amigos
+usan el MISMO `index.html` y no pueden avisar de nada.
+
+`pruebas/sin-servidor.mjs` carga `pruebas/datos-amigo.mjs` —una cartera fea a propósito, con una de
+cada tipo: acciones, cerrada, short put, covered call, long call, PMCC, Spread (con y sin pata
+cerrada), DC, Iron Condor, Iron Fly, Calendar, P&L manual forzado y liquidez— **sin configurar el
+servidor**, y compara todas las cifras de las seis pestañas contra `pruebas/linea-base.json`.
+
+Decisiones del diseño de la prueba, para que no mienta:
+
+- **Retrato numérico, no texto.** Se capturan todos los importes y porcentajes en orden. Así un
+  cambio de redacción no la rompe, pero un número que se mueve sí. Se capturan además las etiquetas
+  del P&L (`auto` / `REAL` / `MANUAL`): si algo dijera `REAL` sin servidor, salta.
+- **Reloj congelado** (`HOY` en los datos): hay cifras que dependen de los DTE y una prueba que
+  cambia de resultado cada mañana no sirve.
+- **Cualquier llamada a un puente queda registrada** y hace fallar la prueba: sin servidor
+  configurado tienen que ser CERO.
+- **Control de que navega de verdad**: si dos pestañas dieran el mismo retrato, avisa — estaría
+  midiendo la misma pantalla varias veces y pasando siempre.
+- **Playwright NO es dependencia del proyecto** a propósito (`npm ci` lo instalaría en cada
+  compilación de Cloudflare, +100 MB para nada). El script lo busca donde esté instalado.
+
+Comprobado que detecta de verdad: con un céntimo por acción de más en el P&L de las cortas, 6 de 18
+retratos se movieron; forzando un `REAL` falso, 2 de 18.
+
+`npm run prueba -- --fijar` reescribe la línea base. Es un **acto deliberado**: si se cambia, hay que
+decir en el CHANGELOG por qué, o nadie sabrá si fue a propósito.
+
+Las tres reglas que esto protege, y que van con el formato de datos:
+1. **Solo se añade, nunca se quita ni se reescribe** un campo guardado. (Precedente: la v5.09 dejó
+   los campos planos `shortPremium`/`strikePut` como respaldo al pasar las DC/DD a cuatro patas.)
+2. **Los campos nuevos son opcionales**: si faltan, la posición se comporta como antes. Nunca
+   "falta un dato → sale mal".
+3. **O están todas las marcas de una posición, o no se usa ninguna.**
 
 ## Sistema de diseño (v4.11–v4.29)
 
