@@ -144,6 +144,11 @@ servidor no ve ni un hueco). Dos decisiones de fondo:
 - **La cobertura se dice SIEMPRE**, no solo cuando falta algo: "de N de tus M posiciones". Un theta
   que dice 40 cuando son 70 es peor que no tenerlo, y si solo se avisara al fallar, el día que
   faltara una posición nadie se daría cuenta.
+- **Y si NO hay ni una griega, la tarjeta tampoco desaparece** (v4.55, tras "no me salen las griegas
+  de la cartera"): con servidor configurado se pinta igual y dice cuál de los dos motivos es —aún no
+  se ha pulsado 🔄 Precios, o el servidor mandó precio pero no delta/theta (mercado cerrado)—, que
+  tienen soluciones distintas. Tercera vez que el mismo fallo: **callarse no es un estado neutro,
+  no se distingue de una avería** (precedente: la calculadora de earnings, v4.46).
 
 Sigue pendiente: IV agregada, y las griegas por posición en la fila (`Δ -0.22` NO cabe ahí — se
 probó en la v4.51 y parte la línea).

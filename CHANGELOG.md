@@ -1,5 +1,47 @@
 # CHANGELOG — Bloques
 
+Bloques v4.55 — La tarjeta de griegas dice por qué no hay datos, en vez de desaparecer
+
+## Síntoma
+Victor, con la v4.54 recién instalada: *"No me salen las griegas de la cartera"*. Y la app no decía
+nada: donde tenía que estar la tarjeta, simplemente no había nada.
+
+## Causa
+Mía, y ya cometida antes. La tarjeta se pintaba **solo** si había al menos una griega completa; si no,
+devolvía `null` y no se veía. Eso deja a quien mira adivinando entre tres cosas muy distintas: que
+no hay datos todavía, que la app está rota, o que no se ha actualizado.
+
+Es exactamente el mismo error que la calculadora de earnings de la v4.46, donde la herramienta
+desaparecía sin explicar que le faltaba el precio del subyacente. **Callarse no es un estado neutro:
+es la peor respuesta posible**, porque no se puede distinguir de una avería.
+
+## Arreglo
+Si hay servidor propio configurado y posiciones de opciones, la tarjeta **aparece siempre**. Y cuando
+no hay griegas, dice cuál de los dos motivos es — que no son el mismo, ni tienen la misma solución:
+
+- **Aún no se ha pedido nada:** *"Todavía no hay datos. Pulsa 🔄 Precios y tu servidor mandará el
+  precio y las griegas de cada contrato."*
+- **El servidor mandó precio pero no griegas:** *"Tu servidor mandó los precios pero no las griegas
+  (delta y theta) de TMDX, NVDA. Suele pasar con el mercado cerrado o con contratos que OpenD no
+  cubre. Vuelve a probar en horario de mercado."*
+
+Sin servidor propio la tarjeta sigue sin existir: ahí no hay nada que prometer.
+
+## Verificación
+Playwright en iPhone 13, los siete escenarios:
+
+| Escenario | Esperado | Salió |
+|---|---|---|
+| Con griegas completas | +$19/día · +$11.102 | ✓ |
+| Con un Iron Condor fuera | aviso ámbar nombrando SPX | ✓ |
+| Modo privado | importes tapados | ✓ |
+| Oscuro | igual que en claro | ✓ |
+| **Sin servidor propio** | **la tarjeta no existe** | ✓ |
+| **Servidor manda precio sin griegas** (mercado cerrado) | **lo explica** | ✓ |
+| **Aún sin pulsar 🔄 Precios** | **dice que lo pulse** | ✓ |
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.54 — Theta y delta de la cartera
 
 ## Lo que pidió
