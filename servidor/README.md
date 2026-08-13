@@ -139,8 +139,46 @@ Lo único que hay que hacer es añadir una ruta en el panel:
 El subdominio `alertas` está tomado por `puente-alertas` (puerto 8779), que es otro servicio. Cada
 uno con el suyo.
 
+## El candado de Cloudflare (13-ago-2026) — la clave se exige EN EL BORDE
+
+El puente ya pedía la clave y contestaba 401 sin ella. El problema era otro: **la llamada llegaba
+igualmente al VPS**. Era esta máquina —la misma que corre OpenD y los sistemas de root y del
+agente— la que gastaba CPU en contestar que no.
+
+Ahora lo hace Cloudflare. Regla WAF (Security → WAF → **Custom rules**), acción **Block**:
+
+```
+http.host eq "puente.alphavext.com"
+and http.request.method ne "OPTIONS"
+and not any(http.request.headers["x-bloques-token"][*] == "<la clave>")
+```
+
+Tres detalles que no son negociables:
+
+- **La excepción de `OPTIONS`.** La app manda una cabecera propia (`X-Bloques-Token`), y eso obliga
+  al navegador a preguntar antes con un *preflight* que **no lleva esa cabecera**. Sin esta línea,
+  Cloudflare bloquea el preflight y la app no conecta nunca — se rompería justo lo que se protege.
+  (`puente.py` ya deja pasar `OPTIONS` sin token por el mismo motivo: ver `comprobar_token()`.)
+- **Nombre de cabecera en minúsculas.** En las expresiones de Cloudflare, `x-bloques-token`.
+- **`not any(...)`** y no `ne`: así también entra el caso de que la cabecera no venga en absoluto.
+
+**Descartado a propósito: Cloudflare Access.** Pone una pantalla de login delante del dominio, y al
+puente no le habla una persona sino la app por `fetch` — se encontraría el login y diría "no
+conecta". Las salidas (fichas de servicio, cookies entre subdominios) acaban guardando otra clave
+dentro de la app: más piezas, misma seguridad.
+
+**Efecto secundario a recordar:** los `curl ...?token=` desde fuera del servidor ahora rebotan, porque
+la regla solo mira la cabecera. Desde dentro del VPS (`127.0.0.1:8777`) siguen funcionando: esas no
+pasan por Cloudflare.
+
+Si algún día la app dejara de conectar tras tocar esto: **Pause** en la regla lo deshace al instante.
+
 ## Lo que falta después de esto
 
 1. **Ajustes → Servidor propio** en la app: dirección, clave y botón de probar conexión. *(Hecho en
    la v4.43.)*
-2. **Cloudflare Access** delante, para que esa dirección solo la abras tú.
+2. **Protección delante de la dirección.** *(Hecho el 13-ago-2026, con una regla WAF en vez de
+   Cloudflare Access — ver la sección de arriba y por qué se descartó Access.)*
+3. **Una clave por usuario** en `puente.py`, en lugar de una sola compartida. Hoy da igual (solo
+   Victor tiene servidor propio), pero haría falta el día que los otros dos se conecten.
+4. **Precios de opciones en vivo** desde el puente, en el 🔄 Precios de la app. Sin empezar.
