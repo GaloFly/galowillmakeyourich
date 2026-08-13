@@ -1,5 +1,58 @@
 # CHANGELOG — Bloques
 
+13-ago-2026 — Red de seguridad para quien no tiene servidor propio
+*(no cambia la app: no sube APP_VERSION. Es una prueba automática que corre antes de publicar.)*
+
+## Lo que preguntó
+Victor: *"esto a la gente que no tenga el servidor le va a afectar, porque si vamos a estar tocando
+cómo se graban los iron condors, los iron fly, los iron man, y ellos no tienen acceso a esto, les va
+a salir todo mal, ¿no? ¿Cómo podemos hacer para evitarlo?"*
+
+Tenía razón en la preocupación, aunque el riesgo no viene de donde parece: **no es del servidor, es
+de tocar el formato de los datos**. Y no les afecta solo a ellos — la primera cartera que se puede
+romper es la de Victor, que es la que más posiciones tiene. Sus dos amigos usan el MISMO fichero y
+no pueden avisar de nada.
+
+## Lo que ya estaba bien
+Verificado en cada entrega, no supuesto: sin servidor configurado la app **no hace ni una llamada**
+y los números salen idénticos a los de antes (v4.51 +$1.012 · v4.52 +$2.997 · v4.53 +$2.298, todos
+iguales a lo que daban antes de esas versiones).
+
+## Lo que faltaba
+Que eso lo comprobara una máquina y no yo a mano. `npm run prueba` carga una cartera de ejemplo
+**sin servidor** —una de cada tipo: acciones, una cerrada, short put, covered call, long call, PMCC,
+dos Spreads (uno con una pata ya cerrada), DC, Iron Condor, Iron Fly, Calendar, una con P&L manual
+forzado y liquidez— y compara todas las cifras de las seis pestañas contra una línea base guardada.
+Si una sola se mueve, falla y no se publica.
+
+Cuatro decisiones para que la prueba no mienta:
+
+- **Retrato numérico, no texto.** Captura todos los importes y porcentajes en orden. Cambiar una
+  palabra no la rompe; mover un número sí.
+- **Vigila las etiquetas del P&L.** Si una posición dijera `REAL` sin servidor —el fallo más grave
+  posible— salta.
+- **Reloj congelado.** Hay cifras que dependen de los días a vencimiento; una prueba que cambia de
+  resultado cada mañana no sirve para nada.
+- **Cuenta las llamadas al servidor.** Sin configurar, tienen que ser cero, y se comprueba.
+
+## Comprobado que detecta de verdad
+Una prueba que siempre pasa es peor que ninguna, así que se rompió la app a propósito dos veces:
+
+| Avería inyectada | Retratos que saltaron |
+|---|---|
+| Un céntimo por acción de más en el P&L de las opciones cortas | **6 de 18** |
+| Que una posición dijera `REAL` sin haber servidor | **2 de 18** |
+
+Y con la app sana, dos pasadas seguidas dan exactamente lo mismo — no es inestable.
+
+## Las tres reglas que esto protege
+1. **Solo se añade, nunca se quita ni se reescribe** un campo ya guardado. (Ya hay precedente: al
+   pasar las DC/DD a cuatro patas en la v5.09 se dejaron los campos viejos como respaldo, y las
+   posiciones anteriores siguieron funcionando.)
+2. **Los campos nuevos son opcionales.** Si faltan, la posición se comporta igual que hoy. Nunca
+   "falta un dato → sale mal".
+3. **O están todas las marcas de una posición, o no se usa ninguna.**
+
 Bloques v4.53 — DC/DD y PMCC: ya no queda ninguna estructura a ojo
 
 ## Lo que pidió
