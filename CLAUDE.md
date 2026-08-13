@@ -97,6 +97,37 @@ no dice nada del enganche.
 Falta: añadir `https://app.alphavext.com` a `BLOQUES_ORIGENES` en `/etc/bloques/entorno` del VPS y
 reiniciar `bloques-puente`, o la app en el dominio nuevo no podrá hablar con el puente (CORS).
 
+## Precios reales de opciones (v4.51–v4.52) y lo que falta
+
+Con el puente conectado, el 🔄 Precios pregunta a OpenD cuánto vale AHORA cada contrato y el P&L deja
+de ser una simulación. Código de Futu: `US.TICKER + AAMMDD + P|C + strike×1000`.
+
+| Estructura | Estado |
+|---|---|
+| Short put · covered call · long call (una pata) | **real** desde v4.51 |
+| Spread vertical (2 patas, `sK`/`lK`/`sP`/`lP`) | **real** desde v4.52 — antes era 100% manual |
+| Calendar · DC/DD (`dcdd.legs`, 4 patas, DOS vencimientos) | manual |
+| PMCC / Diagonal (`p.long`, 2 vencimientos) | manual |
+| Iron Condor · Iron Fly · Broken Wing | manual (no guardan patas estructuradas) |
+
+Reglas que gobiernan esto y no se tocan:
+
+- **O están TODAS las marcas de una posición, o no se usa ninguna.** Un P&L medio real y medio
+  inventado es peor que el manual, porque parece exacto. (`pnlVerticalReal` devuelve NaN si falta una.)
+- **Las marcas se guardan indexadas por código** (`p.optMarks`) y la tabla se **reemplaza** entera en
+  cada refresco. Así una posición rolada descarta sola el precio del contrato que ya no tiene, sin
+  código de migración ni limpieza.
+- **Sin servidor propio no se hace ni una llamada.** Los otros dos usuarios ven la app de siempre.
+- **Se dice en pantalla** (`vale X` en una pata, `cerrar X` en un vertical, y la etiqueta `P&L · REAL`
+  en violeta). Cuando un número cambia de significado hay que avisar, o cambia a espaldas de quien mira.
+- Una llamada por contrato DISTINTO y con pausa: el cupo de OpenD es de la cuenta compartida.
+
+**Pendiente pedido por Victor (13-ago-2026):** *"estaría bien sacar de aquí el portfolio theta y delta,
+saber qué theta diario sacamos, pero no sé dónde lo podríamos incluir"*. Delta, theta, IV e interés
+abierto **ya se guardan** (`p.optGriegas`, por código). Falta (a) decidir dónde caben —en la fila NO:
+`… · vale 3.10 · Δ -0.22` se parte y deja el número solo en una línea— y (b) que las estructuras
+multi-pata den griegas, o el theta de la cartera saldría corto en silencio. Por eso va después.
+
 ## Sistema de diseño (v4.11–v4.29)
 
 Regla base: **lo interactivo se ELEVA, lo estático se HUNDE.**
