@@ -1,5 +1,51 @@
 # CHANGELOG — Bloques
 
+Bloques v4.57 — Con el mercado cerrado, las griegas del cierre en vez del mensaje feo
+
+## Lo que pidió
+Victor, tras ver el aviso de la v4.55 con el mercado cerrado: *"si tienes servidor, que guarde la
+última que tenga para que no se me quede con este mensaje feísimo"*.
+
+Tiene razón, y además es lo que hace cualquier broker: fuera de horario enseñan las últimas griegas
+que tuvieron, no un hueco.
+
+## Qué pasaba
+Fuera de horario, OpenD manda **precio pero no delta ni theta**. La app las guardaba igual —vacías—
+encima de las buenas, así que la tarjeta se quedaba sin nada que enseñar y salía el aviso.
+
+## Cómo queda
+Si las griegas nuevas no valen, **se conservan las de ese mismo contrato**. Sigue sin fusionarse la
+tabla entera: solo se rellenan los códigos que la posición tiene HOY, así una posición rolada
+descarta igual lo que ya no le corresponde.
+
+Y **la chapa dice la verdad**: pasa de `EN VIVO` (violeta) a `DEL CIERRE` (ámbar), y debajo se dice
+de cuándo son: *"Delta y theta son de 13 ago, 23:28: con el mercado cerrado el servidor manda precio
+pero no griegas."*
+
+Poner `EN VIVO` sobre unas griegas de ayer sería mentir en una etiqueta, que es la peor forma de
+mentir: nadie va a comprobar una etiqueta.
+
+**Los precios sí siguen refrescándose** — el mercado cerrado no impide que OpenD dé el último precio
+del contrato. Lo único que se congela es delta y theta.
+
+## Un detalle de cómo se sabe
+La primera versión comparaba la hora de las griegas con la de los precios, con un margen ("¿un
+minuto? ¿diez?"). Eso falló en la propia prueba: dos refrescos seguidos caen dentro de cualquier
+margen razonable. Ahora **se guarda el hecho, no la hora**: cada refresco anota si trajo griegas
+frescas o si conservó las anteriores. Sin heurística que ajustar y sin margen que equivocar.
+
+## Verificación
+Dos refrescos seguidos en el mismo móvil, con el mismo dato:
+
+| | Chapa | Theta | Delta | Nota |
+|---|---|---|---|---|
+| **1º, mercado abierto** | `EN VIVO` | +$19 | +$11.102 | "De las 2 que tienes, todas" |
+| **2º, mercado cerrado** | **`DEL CIERRE`** | **+$19** (conservado) | **+$11.102** | + "Delta y theta son de 13 ago, 23:28…" |
+
+Y los casos de antes siguen igual: sin servidor la tarjeta no existe; con servidor pero **sin haber
+tenido nunca** griegas, sale la explicación de la v4.55 (no hay nada que conservar); con un Iron
+Condor fuera, el aviso de cobertura. `npm run prueba` en verde.
+
 Bloques v4.56 — Candado: sin servidor propio, ni una marca
 
 ## Lo que dijo Victor

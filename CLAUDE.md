@@ -148,6 +148,10 @@ servidor no ve ni un hueco). Dos decisiones de fondo:
 - **La cobertura se dice SIEMPRE**, no solo cuando falta algo: "de N de tus M posiciones". Un theta
   que dice 40 cuando son 70 es peor que no tenerlo, y si solo se avisara al fallar, el día que
   faltara una posición nadie se daría cuenta.
+- **Fuera de horario OpenD manda precio pero NO delta ni theta.** Desde la v4.57 se conservan las
+  del contrato anterior en vez de sobrescribirlas con nulos, y la chapa pasa de `EN VIVO` a
+  `DEL CIERRE` diciendo de cuándo son. Para saberlo se guarda **el hecho** (`optGriegasFrescas`), no
+  una hora que luego haya que comparar con un margen inventado — eso ya falló una vez.
 - **Y si NO hay ni una griega, la tarjeta tampoco desaparece** (v4.55, tras "no me salen las griegas
   de la cartera"): con servidor configurado se pinta igual y dice cuál de los dos motivos es —aún no
   se ha pulsado 🔄 Precios, o el servidor mandó precio pero no delta/theta (mercado cerrado)—, que
