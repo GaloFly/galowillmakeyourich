@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.56"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.57"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -845,10 +845,16 @@ const griegasDePosicion = (p) => {
     theta += -x.signo * th * n(p.qty);
     deltaAcc += -x.signo * dl * n(p.qty);
   }
-  return { theta, deltaAcc, deltaUsd: isFinite(spot) && spot > 0 ? deltaAcc * spot : NaN };
+  /* v4.57: el último refresco dice si las trajo frescas o si se conservaron las del cierre.
+     (undefined = guardadas por una versión anterior a la v4.57; se dan por buenas, y en el siguiente
+     refresco ya queda marcado de verdad.) */
+  const viejas = p.optGriegasFrescas === false;
+  return { theta, deltaAcc, deltaUsd: isFinite(spot) && spot > 0 ? deltaAcc * spot : NaN,
+           ts: numOrNaN(p.optGriegasTs), viejas };
 };
 const griegasDeCartera = (posiciones) => {
   let theta = 0, deltaUsd = 0, conGriegas = 0, sinGriegas = 0, sinSpot = 0, sinMarcas = 0, sinLasGriegas = 0;
+  let viejasN = 0, tsViejo = null;
   const faltan = [];
   (posiciones || []).forEach((p) => {
     if (!p || p.closed) return;
@@ -873,10 +879,12 @@ const griegasDeCartera = (posiciones) => {
     conGriegas++;
     theta += g.theta;
     if (isFinite(g.deltaUsd)) deltaUsd += g.deltaUsd; else sinSpot++;
+    if (g.viejas) { viejasN++; if (isFinite(g.ts) && (tsViejo == null || g.ts < tsViejo)) tsViejo = g.ts; }
   });
   const totalOpciones = conGriegas + sinGriegas;
   if (!totalOpciones) return null; /* sin ni una posición de opciones no hay nada que decir */
-  return { theta, deltaUsd, conGriegas, sinGriegas, sinSpot, sinMarcas, sinLasGriegas, totalOpciones, faltan };
+  return { theta, deltaUsd, conGriegas, sinGriegas, sinSpot, sinMarcas, sinLasGriegas, totalOpciones, faltan,
+           viejasN, tsViejo };
 };
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
 const effPnl = (p) => {
@@ -902,6 +910,15 @@ const effPnl = (p) => {
     return perShare * n(p.qty);
   }
   return (n(p.last) - effBep(p)) * n(p.qty);
+};
+/* v4.57: "14 ago, 21:58" — para decir de cuándo es un dato sin soltar una fecha ISO en la cara */
+const fechaCorta = (ms) => {
+  try {
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return "antes";
+    return d.toLocaleDateString("es-ES", { day: "numeric", month: "short" }) + ", " +
+           d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+  } catch (e) { return "antes"; }
 };
 const money = (v) => n(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const money2 = (v) => n(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -2830,9 +2847,14 @@ function GriegasCard({ g, privado, hayPuente }) {
   );
   return (
     <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 11, marginBottom: 14 }}>
+      {/* v4.57: la chapa dice la verdad. Fuera de horario OpenD no manda delta ni theta, así que se
+          conservan las últimas y aquí pasa a "DEL CIERRE" — poner "EN VIVO" sobre unas griegas de
+          ayer sería mentir en una etiqueta, que es la peor forma de mentir. */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>Griegas de la cartera</span>
-        <span style={{ fontSize: 10, fontWeight: 800, color: T.purple, background: T.tilePurple, borderRadius: 6, padding: "2px 6px" }}>EN VIVO</span>
+        <span style={{ fontSize: 10, fontWeight: 800, color: g.viejasN ? T.gold : T.purple, background: g.viejasN ? T.tileAmber : T.tilePurple, borderRadius: 6, padding: "2px 6px" }}>
+          {g.viejasN ? "DEL CIERRE" : "EN VIVO"}
+        </span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
         <Tile etiqueta="Theta / día" color={g.theta >= 0 ? T.green : T.red}
@@ -2852,6 +2874,7 @@ function GriegasCard({ g, privado, hayPuente }) {
             " — el theta real es mayor que este."
           : "De las " + g.conGriegas + " posiciones de opciones que tienes, todas. La delta incluye tus acciones."}
         {g.sinSpot ? " (" + g.sinSpot + " sin cotización del subyacente no suman a la delta.)" : ""}
+        {g.viejasN && g.tsViejo ? " Delta y theta son de " + fechaCorta(g.tsViejo) + ": con el mercado cerrado el servidor manda precio pero no griegas." : ""}
       </div>
     </div>
   );
@@ -10722,14 +10745,30 @@ function App() {
       const cods = codigosDePosicion(p);
       if (cods.length) {
         const tabla = {}, griegas = {};
+        /* v4.57 (Victor: "si tienes servidor, que guarde la última que tenga para que no se me quede
+           con este mensaje feísimo"): con el mercado cerrado OpenD manda PRECIO pero no delta ni
+           theta. Antes se sobrescribían las buenas con nulos y la tarjeta se quedaba sin nada que
+           enseñar. Ahora, si las nuevas no valen, se conservan las de ese MISMO contrato — es lo que
+           hace cualquier broker fuera de horario. Sigue sin fusionarse la tabla entera: solo se
+           rellenan los códigos que la posición tiene HOY, así una rolada los descarta igual. */
+        const viejas = p.optGriegas && typeof p.optGriegas === "object" ? p.optGriegas : {};
+        let algunaFresca = false;
         cods.forEach((c) => {
           const m = marcas[c];
           if (!m) return;
           tabla[c] = String(m.ultimo);
-          griegas[c] = { iv: m.iv, delta: m.delta, theta: m.theta, oi: m.interes_abierto };
+          const nueva = { iv: m.iv, delta: m.delta, theta: m.theta, oi: m.interes_abierto };
+          const sirve = isFinite(numOrNaN(nueva.delta)) && isFinite(numOrNaN(nueva.theta));
+          if (sirve) { griegas[c] = nueva; algunaFresca = true; }
+          else if (viejas[c]) griegas[c] = viejas[c];
         });
         if (Object.keys(tabla).length) {
-          q = { ...q, optMarks: tabla, optGriegas: griegas, optTs: ahora };
+          q = { ...q, optMarks: tabla, optGriegas: griegas, optTs: ahora,
+            /* cuándo se capturaron las griegas de verdad, y si ESTE refresco las trajo frescas.
+               Se guarda el hecho, no una hora que luego haya que comparar: comparar marcas de tiempo
+               obligaba a inventarse un margen ("¿un minuto? ¿diez?") y eso siempre se equivoca. */
+            optGriegasTs: algunaFresca ? ahora : (p.optGriegasTs || null),
+            optGriegasFrescas: algunaFresca };
           /* una pata: se sigue escribiendo el par de la v4.51, por si algo lo lee todavía */
           const uno = codigoOpcion(p);
           if (uno && tabla[uno]) q = { ...q, optCodigo: uno, optLast: tabla[uno] };
