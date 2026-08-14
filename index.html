@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.74"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.75"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2151,7 +2151,7 @@ async function buscarDobles(cfg, ticker, deltaObj, manual) {
          dos largas por separado el día que vence la corta, y con la media saldría torcida: la put y
          la call del mismo vencimiento tienen IV distinta (el skew). Va aquí y NO dentro de `patas`,
          que es lo que se guarda en la posición y viaja en el backup: esto es dato de mercado. */
-      ivLP: iv(largoP), ivLC: iv(largoC),
+      ivLP: iv(largoP), ivLC: iv(largoC), ivSP: iv(cortoP), ivSC: iv(cortoC),
       vecesP: isFinite(movDe[p.corto]) && movDe[p.corto] > 0 ? (spot - kP) / movDe[p.corto] : NaN,
       vecesC: isFinite(movDe[p.corto]) && movDe[p.corto] > 0 ? (kC - spot) / movDe[p.corto] : NaN,
       festivo: [...new Set([...semanaCorta(p.corto), ...semanaCorta(p.largo)])],
@@ -2163,9 +2163,31 @@ async function buscarDobles(cfg, ticker, deltaObj, manual) {
   if (!filas.length) return { error: "No se ha podido completar ningún montaje: faltan precios o deltas de alguna pata." };
   /* v4.67: se devuelven los CUATRO montajes, también los que se quedaron sin candidatas, con el
      motivo. Así la pantalla puede decir "este no sale y por esto", en vez de omitirlo. */
+  /* v4.75 — la ESCALERA de strikes de cada montaje: para cada strike de la banda, el precio y la IV
+     de la pata corta y de la larga, y la delta de la corta. Es lo que permite mover los strikes en el
+     modelador sin inventar nada: el débito de cualquier combinación sale de precios REALES, ya
+     descargados en la misma llamada. Solo entran los strikes con los cuatro datos completos — media
+     escalera real y media a ojo sería peor que no tenerla. Son ~30 filas por montaje. */
+  const escaleraDe = (m) => {
+    const lado = (tipo) => {
+      const out = [];
+      Object.keys(metaDe).forEach((c) => {
+        const x = metaDe[c];
+        if (x.expiry !== m.corto || x.tipo !== tipo) return;
+        const cl = buscaCodigo(m.largo, tipo, x.strike);
+        if (!cl) return;
+        const pc = px(c), pl = px(cl), ivc = iv(c), ivl = iv(cl), dc = dl(c);
+        if (![pc, pl, ivc, ivl, dc].every((v) => isFinite(v))) return;
+        out.push({ k: x.strike, pc, pl, ivc, ivl, dc: Math.abs(dc) });
+      });
+      return out.sort((a, b) => a.k - b.k);
+    };
+    return { P: lado("PUT"), C: lado("CALL") };
+  };
   const conFestivo = montajes.map((m) => ({ ...m,
     entrada: iso(entrada),
     festivo: m.falta ? [] : [...new Set([...semanaCorta(m.corto), ...semanaCorta(m.largo)])],
+    escalera: m.falta ? { P: [], C: [] } : escaleraDe(m),
     cuantas: filas.filter((f) => f.par === m.clave).length }));
   /* v4.71: la lista de vencimientos disponibles viaja con el resultado para poder pintar el
      calendario aunque la app se haya cerrado y vuelto a abrir. Son cuarenta cadenas de diez
@@ -7930,15 +7952,43 @@ const bs = (S, K, anios, sigma, esCall) => {
   const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * anios) / st, d2 = d1 - st;
   return esCall ? S * Ncdf(d1) - K * Ncdf(d2) : K * Ncdf(-d2) - S * Ncdf(-d1);
 };
-/* Resultado por contrato (×100) al vencimiento de la CORTA, con el subyacente en S.
-   Las cortas ya no tienen tiempo: valen su intrínseco. Las largas se valoran con lo que les queda. */
-const plDobleEn = (f, S, ajusteIv) => {
-  const restan = Math.max(0, (n(f.dteLargo) - n(f.dteCorto))) / 365;
-  const ivP = Math.max(0.01, (n(f.ivLP) + n(ajusteIv || 0)) / 100);
-  const ivC = Math.max(0.01, (n(f.ivLC) + n(ajusteIv || 0)) / 100);
-  const largas = bs(S, f.strikeP, restan, ivP, false) + bs(S, f.strikeC, restan, ivC, true);
-  const cortas = Math.max(0, f.strikeP - S) + Math.max(0, S - f.strikeC);
-  return (largas - cortas - n(f.debito)) * 100;
+/* v4.75 — el modelador. Victor: *"igual podemos hacer un modelador en condiciones para modular todo:
+   IV cortas, largas, media, strikes, y cómo evoluciona según pasa el tiempo"*.
+
+   Un montaje se describe con esto (`par`), y todo sale de ahí:
+     kP, kC          strikes de la put y de la call
+     dteCorto/Largo  días desde HOY hasta cada vencimiento
+     ivPC, ivCC      IV de las dos patas CORTAS · ivPL, ivCL  IV de las dos LARGAS
+     debito          lo que cuesta montarlo, por acción, a precios REALES de hoy
+   `dias` es cuántos días han pasado desde hoy: 0 = ahora, dteCorto = vence la corta. Con dias entre
+   medias las cortas TAMBIÉN valen algo, así que las cuatro patas se valoran igual — una sola fórmula
+   para todo el recorrido, en vez de un caso para "hoy" y otro para "al vencimiento".
+
+   Calibración: en `dias` = 0 y con el precio de hoy, el modelo tiene que devolver CERO, porque la
+   IV de cada pata es justo la que explica su precio de mercado. Si no diera cero, el modelo no
+   estaría describiendo este mercado. La prueba lo comprueba y lo dice en pantalla. */
+const plDC = (par, S, dias, ajCorta, ajLarga) => {
+  const tC = Math.max(0, n(par.dteCorto) - n(dias)) / 365;
+  const tL = Math.max(0, n(par.dteLargo) - n(dias)) / 365;
+  const iv = (base, aj) => Math.max(0.005, (n(base) + n(aj || 0)) / 100);
+  const largas = bs(S, par.kP, tL, iv(par.ivPL, ajLarga), false) + bs(S, par.kC, tL, iv(par.ivCL, ajLarga), true);
+  const cortas = bs(S, par.kP, tC, iv(par.ivPC, ajCorta), false) + bs(S, par.kC, tC, iv(par.ivCC, ajCorta), true);
+  return (largas - cortas - n(par.debito)) * 100;
+};
+/* El `par` de una candidata tal cual salió de la búsqueda */
+const parDeFila = (f) => ({
+  kP: n(f.strikeP), kC: n(f.strikeC), dteCorto: n(f.dteCorto), dteLargo: n(f.dteLargo),
+  ivPC: n(f.ivSP), ivCC: n(f.ivSC), ivPL: n(f.ivLP), ivCL: n(f.ivLC), debito: n(f.debito),
+});
+/* Y el `par` de unos strikes elegidos a mano en la escalera, con sus precios REALES */
+const parDeEscalera = (esc, kP, kC, dteCorto, dteLargo) => {
+  const p = (esc.P || []).find((x) => Math.abs(x.k - kP) < 0.001);
+  const c = (esc.C || []).find((x) => Math.abs(x.k - kC) < 0.001);
+  if (!p || !c) return null;
+  return { kP: p.k, kC: c.k, dteCorto, dteLargo,
+    ivPC: p.ivc, ivCC: c.ivc, ivPL: p.ivl, ivCL: c.ivl,
+    debito: (p.pl + c.pl) - (p.pc + c.pc),
+    primaCorta: p.pc + c.pc, primaLarga: p.pl + c.pl, deltaP: p.dc, deltaC: c.dc };
 };
 /* Cruces por cero entre dos puntos, interpolando: son los puntos de equilibrio. */
 const equilibriosDC = (xs, ys) => {
@@ -7951,29 +8001,35 @@ const equilibriosDC = (xs, ys) => {
   }
   return out;
 };
-const curvaDobleDC = (f, spot, ajusteIv) => {
-  if (!isFinite(spot) || !isFinite(f.strikeP) || !isFinite(f.strikeC) || !isFinite(f.ivLP) || !isFinite(f.ivLC)) return null;
-  const em = isFinite(f.movEsp) && f.movEsp > 0 ? f.movEsp : spot * 0.03;
+const curvaDobleDC = (par, spot, em0, dias, ajCorta, ajLarga) => {
+  if (!par || !isFinite(spot) || !isFinite(par.kP) || !isFinite(par.kC) || !isFinite(par.ivPL) || !isFinite(par.ivCL)) return null;
+  const em = isFinite(em0) && em0 > 0 ? em0 : spot * 0.03;
+  const d = isFinite(dias) ? dias : n(par.dteCorto);
+  const f = (S) => plDC(par, S, d, ajCorta, ajLarga);
   /* Primera pasada ancha para encontrar los equilibrios, y luego se encuadra en ellos: así el
-     gráfico enseña la parte que se decide y no dos brazos rojos enormes. */
-  const barrido = (a, b, k) => { const xs = [], ys = []; for (let i = 0; i <= k; i++) { const S = a + ((b - a) * i) / k; xs.push(S); ys.push(plDobleEn(f, S, ajusteIv)); } return { xs, ys }; };
-  const ancho = barrido(spot - 3 * em, spot + 3 * em, 240);
-  const be = equilibriosDC(ancho.xs, ancho.ys);
-  const bl = be.length ? Math.min(...be) : spot - 1.5 * em, br = be.length ? Math.max(...be) : spot + 1.5 * em;
+     gráfico enseña la parte que se decide y no dos brazos rojos enormes.
+     El encuadre se calcula SIEMPRE con la curva del vencimiento de la corta, no con la del día
+     elegido: si no, al mover el tiempo el gráfico se estiraba y encogía solo y era imposible
+     comparar dos momentos — parecía que se movía el mercado cuando solo se movía el eje. */
+  const alVto = (S) => plDC(par, S, n(par.dteCorto), ajCorta, ajLarga);
+  const barrido = (a, b, k, fn) => { const xs = [], ys = []; for (let i = 0; i <= k; i++) { const S = a + ((b - a) * i) / k; xs.push(S); ys.push(fn(S)); } return { xs, ys }; };
+  const ancho = barrido(spot - 3 * em, spot + 3 * em, 240, alVto);
+  const beV = equilibriosDC(ancho.xs, ancho.ys);
+  const bl = beV.length ? Math.min(...beV) : spot - 1.5 * em, br = beV.length ? Math.max(...beV) : spot + 1.5 * em;
   const margen = Math.max((br - bl) * 0.22, em * 0.35);
-  const rej = barrido(bl - margen, br + margen, 160);
   /* Los STRIKES entran como puntos exactos, y no por precisión decorativa: el resultado de un doble
      calendar tiene un pico anguloso justo ahí, así que el máximo está SIEMPRE en un strike. Con una
      rejilla regular el punto más alto caía a un par de décimas del vértice y el máximo beneficio
      salía ~$2 corto, además de dibujar los picos romos. También entra el precio de hoy, para que la
      curva pase por él y el hundimiento del centro se vea donde toca. */
-  const extra = [f.strikeP, f.strikeC, spot].filter((S) => S > rej.xs[0] && S < rej.xs[rej.xs.length - 1]);
+  const rej = barrido(bl - margen, br + margen, 160, f);
+  const extra = [par.kP, par.kC, spot].filter((S) => S > rej.xs[0] && S < rej.xs[rej.xs.length - 1]);
   const xs = rej.xs.concat(extra).sort((a, b) => a - b);
-  const ys = xs.map((S) => plDobleEn(f, S, ajusteIv));
+  const ys = xs.map(f), yv = xs.map(alVto);
   let iMax = 0; for (let i = 1; i < ys.length; i++) if (ys[i] > ys[iMax]) iMax = i;
-  /* el hundimiento del centro: el mínimo ENTRE los dos picos, que es de lo que avisa la pág. 15 */
-  const centro = plDobleEn(f, spot, ajusteIv);
-  return { xs, ys, be, maxPl: ys[iMax], centro, debito: n(f.debito) * 100, em };
+  return { xs, ys, yv, be: equilibriosDC(xs, ys), maxPl: ys[iMax], centro: f(spot),
+    debito: n(par.debito) * 100, em, dias: d, kP: par.kP, kC: par.kC,
+    alVencimiento: d >= n(par.dteCorto) - 0.001 };
 };
 const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const diaMesCorto = (v) => parseInt(v.slice(8, 10), 10) + " " + MESES_CORTOS[parseInt(v.slice(5, 7), 10) - 1];
@@ -8122,12 +8178,14 @@ function BandaEM({ spot, em, filas }) {
    curva cambia cada semana. Los días se cuentan desde el VIERNES DE ENTRADA, igual que 5/7 o 7/14,
    para que un par probado a mano se pueda comparar con los fijos sin cambiar de reloj. */
 const AZUL_DC = "#3D7FB8"; /* el azul acero del B0 */
-function PayoffDC({ f, spot, ajusteIv }) {
-  const c = curvaDobleDC(f, spot, ajusteIv);
+function PayoffDC({ c, spot }) {
   if (!c || !c.xs.length) return null;
   const W = 320, H = 132, ML = 6, MR = 6, MT = 12, MB = 18;
   const x0 = c.xs[0], x1 = c.xs[c.xs.length - 1];
-  const yMin = Math.min(...c.ys, 0), yMax = Math.max(...c.ys, 0);
+  /* v4.75: la escala vertical la fija SIEMPRE la curva del vencimiento, aunque se esté mirando un día
+     intermedio. Si la fijara la curva del día, al mover el tiempo el gráfico se re-escalaba solo y
+     dos momentos no se podían comparar de un vistazo. */
+  const yMin = Math.min(...c.ys, ...(c.yv || []), 0), yMax = Math.max(...c.ys, ...(c.yv || []), 0);
   const rango = Math.max(1, yMax - yMin);
   const px = (S) => ML + ((S - x0) / (x1 - x0)) * (W - ML - MR);
   const py = (v) => MT + (1 - (v - yMin) / rango) * (H - MT - MB);
@@ -8163,9 +8221,15 @@ function PayoffDC({ f, spot, ajusteIv }) {
         <polyline key={"l" + i} fill="none" stroke={tr.pos ? T.green : T.red} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"
           points={tr.pts.map(([S, v]) => px(S).toFixed(1) + "," + py(v).toFixed(1)).join(" ")} />
       ))}
+      {/* la curva del VENCIMIENTO, de fondo, cuando se está mirando un día intermedio: es la
+          referencia contra la que se ve cuánto queda por decantarse */}
+      {!c.alVencimiento && c.yv && (
+        <polyline fill="none" stroke={T.sub} strokeWidth="1.2" strokeDasharray="3 3" opacity="0.65"
+          points={c.xs.map((S, i) => px(S).toFixed(1) + "," + py(c.yv[i]).toFixed(1)).join(" ")} />
+      )}
       <line x1={ML} y1={y0} x2={W - MR} y2={y0} stroke={T.sub} strokeWidth="1" opacity="0.5" />
       <line x1={px(spot)} y1={MT - 4} x2={px(spot)} y2={H - MB + 2} stroke={T.sub} strokeWidth="1" strokeDasharray="2 2" />
-      {[f.strikeP, f.strikeC].map((k) => (
+      {[c.kP, c.kC].map((k) => (
         <line key={"k" + k} x1={px(k)} y1={y0 - 4} x2={px(k)} y2={y0 + 4} stroke={T.ink} strokeWidth="1.4" />
       ))}
       {c.be.map((b) => (
@@ -8173,6 +8237,135 @@ function PayoffDC({ f, spot, ajusteIv }) {
           textAnchor={px(b) < 34 ? "start" : px(b) > W - 34 ? "end" : "middle"}>${money2(b)}</text>
       ))}
     </svg>
+  );
+}
+
+/* ---------- v4.75: el modelador ----------
+   Victor: *"igual podemos hacer un modelador en condiciones para modular todo: IV cortas, largas,
+   media, strikes, y cómo evoluciona según pasa el tiempo"*.
+
+   Cuatro mandos, y ninguno inventa nada que se pueda medir:
+   · STRIKES — se mueven por la escalera de precios REALES ya descargados, así que el débito de
+     cualquier combinación es de mercado, no estimado. Es lo que dice el manual en la pág. 4:
+     "start with 20 delta and then tweak from there".
+   · DÍAS — de hoy al vencimiento de la corta. La curva de puntos que queda de fondo es la del
+     vencimiento, para ver cuánto falta por decantarse.
+   · IV DE LA CORTA y IV DE LA LARGA, por separado. Por separado y no una sola: lo que mata o salva
+     un calendar es la DIFERENCIA entre las dos, y con un mando único esa diferencia no se puede
+     tocar. El botón "las dos" mueve ambas a la vez para el caso de un susto general.
+   Y una calibración honrada arriba: en el día 0 y al precio de hoy, el modelo tiene que dar cero.
+   Si no lo da, no está describiendo este mercado, y se dice cuánto se desvía. */
+function ModeladorDC({ f, m, spot, onCerrar }) {
+  const esc = (m && m.escalera) || { P: [], C: [] };
+  const hayEsc = esc.P.length > 0 && esc.C.length > 0;
+  const [kP, setKP] = useState(n(f.strikeP));
+  const [kC, setKC] = useState(n(f.strikeC));
+  const [dias, setDias] = useState(n(f.dteCorto));
+  const [ajC, setAjC] = useState(0);
+  const [ajL, setAjL] = useState(0);
+
+  const par = (hayEsc && parDeEscalera(esc, kP, kC, n(f.dteCorto), n(f.dteLargo))) || parDeFila(f);
+  const c = curvaDobleDC(par, spot, f.movEsp, dias, ajC, ajL);
+  /* calibración: hoy, al precio de hoy y sin tocar la IV, el resultado tiene que ser 0 */
+  const desvio = plDC(par, spot, 0, 0, 0);
+  const mueve = (lado, paso) => {
+    const lista = lado === "P" ? esc.P : esc.C;
+    const act = lado === "P" ? kP : kC;
+    const i = lista.findIndex((x) => Math.abs(x.k - act) < 0.001);
+    const j = Math.max(0, Math.min(lista.length - 1, (i < 0 ? 0 : i) + paso));
+    (lado === "P" ? setKP : setKC)(lista[j].k);
+  };
+  const chip = (txt, activo, onClick) => (
+    <button key={txt} onClick={onClick}
+      style={{ background: activo ? T.dark : T.tile, border: "none", borderRadius: 8, padding: "5px 9px",
+        fontSize: 10.5, fontWeight: 800, color: activo ? "#fff" : T.sub, cursor: "pointer", whiteSpace: "nowrap" }}>{txt}</button>
+  );
+  const flecha = (txt, onClick, off) => (
+    <button onClick={onClick} disabled={off} aria-label={txt}
+      style={{ background: T.tile, border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 13, fontWeight: 800,
+        color: T.ink, cursor: off ? "default" : "pointer", opacity: off ? 0.3 : 1, boxShadow: T.raiseSm, flexShrink: 0 }}>{txt}</button>
+  );
+  const dP = (esc.P.find((x) => Math.abs(x.k - kP) < 0.001) || {}).dc;
+  const dC = (esc.C.find((x) => Math.abs(x.k - kC) < 0.001) || {}).dc;
+  const ratio = par.primaLarga > 0 ? par.primaCorta / par.primaLarga : n(f.ratio);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 9 }}>
+      {c && <PayoffDC c={c} spot={spot} />}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+        {[["máx. al vencer", "+$" + money2(Math.max(0, c ? Math.max(...c.yv) : 0)), T.green],
+          [dias >= n(f.dteCorto) ? "en el centro" : "hoy en el centro", (c && c.centro >= 0 ? "+$" : "−$") + money2(Math.abs(c ? c.centro : 0)), c && c.centro >= 0 ? T.green : T.red],
+          ["pérdida máx.", "−$" + money2(n(par.debito) * 100), T.red]].map(([lbl, val, col]) => (
+          <div key={lbl} style={{ background: T.tile, borderRadius: 10, padding: "6px 8px", boxShadow: T.inset, minWidth: 0 }}>
+            <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>{lbl}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {hayEsc && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+          {[["Put", "P", kP, dP], ["Call", "C", kC, dC]].map(([lbl, lado, k, d]) => (
+            <div key={lado} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, width: 32, flexShrink: 0 }}>{lbl}</span>
+              {flecha("−", () => mueve(lado, -1), (lado === "P" ? esc.P : esc.C)[0] && Math.abs((lado === "P" ? esc.P : esc.C)[0].k - k) < 0.001)}
+              <span style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", minWidth: 0 }}>
+                ${k} <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>{isFinite(d) ? "Δ " + d.toFixed(2) : ""}</span>
+              </span>
+              {flecha("+", () => mueve(lado, 1), (() => { const L = lado === "P" ? esc.P : esc.C; return L.length && Math.abs(L[L.length - 1].k - k) < 0.001; })())}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: T.sub }}>Días</span>
+          <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 800, color: T.ink }}>
+            {dias <= 0 ? "hoy" : dias >= n(f.dteCorto) ? "vence la corta (" + n(f.dteCorto) + "d)" : "dentro de " + dias + " día" + (dias === 1 ? "" : "s")}
+          </span>
+        </div>
+        <input type="range" min="0" max={n(f.dteCorto)} step="1" value={dias} aria-label="Días transcurridos"
+          onChange={(e) => setDias(parseInt(e.target.value, 10))}
+          style={{ width: "100%", accentColor: T.green }} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
+        {[["IV corta", ajC, setAjC], ["IV larga", ajL, setAjL]].map(([lbl, val, set]) => (
+          <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, width: 58, flexShrink: 0 }}>{lbl}</span>
+            {[-4, -2, 0, 2, 4].map((v) => chip(v === 0 ? "igual" : (v > 0 ? "+" : "−") + Math.abs(v), val === v, () => set(v)))}
+          </div>
+        ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, width: 58, flexShrink: 0 }}>las dos</span>
+          {[-4, -2, 0, 2, 4].map((v) => chip(v === 0 ? "igual" : (v > 0 ? "+" : "−") + Math.abs(v), ajC === v && ajL === v, () => { setAjC(v); setAjL(v); }))}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: ratio >= 0.5 ? T.green : ratio >= 0.4 ? T.gold : T.red }}>ratio {pct(ratio, 0)}</span>
+        <span style={{ color: T.sub }}>débito ${money2(n(par.debito) * 100)}</span>
+        {c && c.be.length >= 2 && <span style={{ color: T.sub }}>equilibrios ${money2(Math.min(...c.be))} – ${money2(Math.max(...c.be))}</span>}
+      </div>
+
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+        <b style={{ color: T.gold }}>Esto es un MODELO.</b>{" "}
+        Los precios de las cuatro patas y el débito son de mercado; el resto sale de valorarlas con
+        Black-Scholes. Prueba de fuego: hoy, al precio de hoy y sin tocar nada, el modelo da{" "}
+        <b style={{ color: Math.abs(desvio) <= 2 ? T.green : T.gold }}>{(desvio >= 0 ? "+" : "−") + "$" + money2(Math.abs(desvio))}</b>
+        {Math.abs(desvio) <= 2
+          ? ", que es cero salvo redondeo: está describiendo bien este mercado."
+          : ", y debería ser cero — tómate los números de abajo con esa holgura."}
+        {" La línea de puntos es cómo quedará el día que venza la corta."}
+      </div>
+      {onCerrar && (
+        <button onClick={onCerrar}
+          style={{ background: T.tile, border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.sub, cursor: "pointer" }}>
+          Cerrar el modelador
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -8247,9 +8440,8 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
   const [pick, setPick] = useState({});
   /* v4.73: la curva arranca con zoom en la ventana del montaje, que es donde se decide */
   const [curvaAncha, setCurvaAncha] = useState(false);
-  /* v4.74: qué candidata tiene abierta su curva de resultado, y cuánto se mueve la IV de la larga */
+  /* v4.74: qué candidata tiene abierto su modelador (v4.75: los mandos viven dentro de él) */
   const [curvaAbierta, setCurvaAbierta] = useState(null);
-  const [ivShift, setIvShift] = useState(0);
   const [probando, setProbando] = useState("");
   const graba = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_DC, v); };
 
@@ -8544,55 +8736,19 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                         : "Ratio bajo el 40%: el manual dice que no."}
                     </div>
                   )}
-                  {/* v4.74: la curva de resultado, plegada. Solo si hay IV de las dos patas largas:
-                      sin ellas no se puede valorar la larga el día del vencimiento corto, y una curva
-                      a medias sería peor que ninguna. */}
-                  {isFinite(f.ivLP) && isFinite(f.ivLC) && (() => {
-                    const abiertaC = curvaAbierta === f.id;
-                    const c = abiertaC ? curvaDobleDC(f, src.spot, ivShift) : null;
-                    return (
-                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
-                        <button onClick={() => { setCurvaAbierta(abiertaC ? null : f.id); setIvShift(0); }}
-                          style={{ background: T.tile, border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
-                          {abiertaC ? "Ocultar la curva ▾" : "Ver la curva de resultado ▸"}
-                        </button>
-                        {abiertaC && c && (
-                          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
-                            <PayoffDC f={f} spot={src.spot} ajusteIv={ivShift} />
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-                              {[["máx. beneficio", "+$" + money2(c.maxPl), T.green],
-                                ["en el centro", (c.centro >= 0 ? "+$" : "−$") + money2(Math.abs(c.centro)), c.centro >= 0 ? T.green : T.red],
-                                ["pérdida máx.", "−$" + money2(c.debito), T.red]].map(([lbl, val, col]) => (
-                                <div key={lbl} style={{ background: T.tile, borderRadius: 10, padding: "6px 8px", boxShadow: T.inset, minWidth: 0 }}>
-                                  <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>{lbl}</div>
-                                  <div style={{ fontSize: 13, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{val}</div>
-                                </div>
-                              ))}
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                              <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub }}>Si la IV de la larga…</span>
-                              {[[-2, "−2 pts"], [0, "igual"], [2, "+2 pts"]].map(([v, lbl]) => (
-                                <button key={lbl} onClick={() => setIvShift(v)}
-                                  style={{ background: ivShift === v ? T.dark : T.tile, border: "none", borderRadius: 8, padding: "4px 9px",
-                                    fontSize: 10.5, fontWeight: 800, color: ivShift === v ? "#fff" : T.sub, cursor: "pointer", whiteSpace: "nowrap" }}>{lbl}</button>
-                              ))}
-                            </div>
-                            <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-                              Resultado el día que vence la corta ({m.diaCorto} {ibkrDate(m.corto)}), por contrato.
-                              {c.be.length >= 2 ? " Sales en tablas entre $" + money2(Math.min(...c.be)) + " y $" + money2(Math.max(...c.be)) + "." : ""}
-                              {" La franja ámbar es el movimiento esperado (±$" + money2(c.em) + ")."}
-                              <b style={{ color: T.gold }}>{" Ojo: esto es un MODELO."}</b>
-                              {" El débito y la pérdida máxima son dato —salen de los precios reales de las cuatro patas—, pero el máximo beneficio, "
-                                + "los puntos de equilibrio y la forma de la curva salen de calcular cuánto valdrá la pata larga ese día, "
-                                + "suponiendo que su volatilidad sigue como hoy"}
-                              {ivShift ? " " + (ivShift < 0 ? "menos" : "más") + " " + Math.abs(ivShift) + " puntos" : ""}
-                              {". Prueba a moverla: es el riesgo del que avisa el manual."}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {/* v4.75: el modelador. Solo si hay IV de las cuatro patas: sin ellas no se puede
+                      valorar nada, y un modelo a medias sería peor que ninguno. */}
+                  {isFinite(f.ivLP) && isFinite(f.ivLC) && isFinite(f.ivSP) && isFinite(f.ivSC) && (
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+                      <button onClick={() => setCurvaAbierta(curvaAbierta === f.id ? null : f.id)}
+                        style={{ background: T.tile, border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
+                        {curvaAbierta === f.id ? "Ocultar el modelador \u25be" : "Modelar este montaje \u25b8"}
+                      </button>
+                      {curvaAbierta === f.id && (
+                        <ModeladorDC key={f.id} f={f} m={m} spot={src.spot} onCerrar={() => setCurvaAbierta(null)} />
+                      )}
+                    </div>
+                  )}
                   <button onClick={() => onOpenPosition && onOpenPosition({ tkr: src.tkr, tipo: "DC", block: 3, right: "", qty: "100",
                     expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
                     underlying: String(src.spot), entryDate: new Date().toISOString().slice(0, 10) })}
