@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.76"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.77"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7890,6 +7890,44 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
 
 
 /* ---------- COMPARADOR: fila EL con base ghost + delta ---------- */
+/* v4.77 — las cifras de una candidata del comparador, sacadas del cuerpo del comparador a nivel de
+   módulo para que la VISTA PREVIA del buscador de puts use exactamente el mismo cálculo. Es la regla
+   de la casa: un solo camino. Si la previa calculara por su cuenta, un día enseñaría un ROI y al
+   añadirla saldría otro, y esa diferencia se leería como un error del mercado y no como lo que
+   sería —dos cuentas distintas para lo mismo. */
+const metricasTrade = (tr, ctx) => {
+  const { el, nlv, margin, base } = ctx;
+  const strike = n(tr.strike), creditPS = n(tr.credit), tMargin = n(tr.margin);
+  const notional = strike > 0 ? (strike - creditPS) * 100 : 0;   // (Strike − Credit) × 100
+  const premium = creditPS * 100;                                // Credit × 100
+  const bep = strike > 0 ? strike - creditPS : NaN;               // break-even = Strike − Credit (por acción)
+  const underlyingN = n(tr.underlying);
+  /* margen de seguridad del BEP: % que necesitaría CAER el subyacente para tocar el BEP (por eso negativo = a salvo,
+     igual que decir "-20% hasta breakeven"). Positivo = el subyacente ya está por debajo del BEP (ya en pérdida).
+     Asume el modelo suelo-por-debajo (short put), que es el que usa todo el Comparador (Strike − Credit);
+     en un short call leería al revés. */
+  const bepMargin = (underlyingN > 0 && isFinite(bep)) ? (bep - underlyingN) / underlyingN : NaN;
+  const newEL = el - tMargin;
+  const newMargin = margin + tMargin;
+  const elNlv = nlv ? newEL / nlv : NaN;
+  const elMrgn = newMargin ? newEL / newMargin : NaN;
+  const posSize = nlv ? notional / nlv : NaN;
+  const roi = notional ? premium / notional : NaN;               // ROI = Premium / Notional
+  const rom = tMargin ? premium / tMargin : NaN;                  // Return on margin = Premium / Margin
+  const ann = n(tr.dte) ? 365 / n(tr.dte) : 0;
+  const annRoi = roi * ann;
+  /* eficiencia vs Delta: cuánto Annualized ROI (%) consigues por cada punto de Delta expuesto —
+     a igual ROI, menos Delta (menos "acción sintética" comprometida) es mejor; por eso se divide, no se multiplica. */
+  const deltaAbs = Math.abs(n(tr.delta));
+  const deltaEff = deltaAbs ? (annRoi * 100) / deltaAbs : NaN;
+  let status = "GO";
+  if (elNlv < RULES.elNlv.amber || elMrgn < RULES.elMrgn.amber) status = "NO-GO";
+  else if (elNlv < RULES.elNlv.green || elMrgn < RULES.elMrgn.green) status = "CAUTION";
+  return { ...tr, notional, premium, bep, bepMargin, elNlv, elMrgn,
+    dElNlv: elNlv - base.elNlv, dElMrgn: elMrgn - base.elMrgn,
+    posSize, roi, rom, annRoi, annRom: rom * ann, deltaAbs, deltaEff, status };
+};
+
 function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
   return (
     <div style={{ marginBottom: 14 }}>
@@ -7903,6 +7941,68 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
       <ZoneBar value={post} base={base} min={min} max={max} zones={zones} h={13} />
       <Scale min={min} max={max} marks={marks} />
       <div style={{ fontSize: 11, color: T.sub, marginTop: 2 }}>base {pct(base)} → {pct(post)}</div>
+    </div>
+  );
+}
+
+/* ---------- v4.77: vista previa de una candidata ----------
+   Victor: *"al pulsar una de esas, antes de añadir, que se vea ya la tarjeta que tengo con el ROI,
+   el anualizado, el break even price, todo, todo igual, y después que puedas añadir al comparador"*.
+
+   Las cifras salen de `metricasTrade`, la MISMA función que usa el comparador — no una copia. Y los
+   bloques son los mismos y en el mismo orden que en su tarjeta: estado, annualized ROI, premium y
+   ROI, riesgo y BEP, los tres Tile, y las dos barras de EL. Lo único que no lleva es lo que aún no
+   tiene sentido antes de añadirla: editar, eliminar y abrir posición. */
+function PreviaPut({ c, base }) {
+  const vt = c.status === "GO" ? "green" : c.status === "CAUTION" ? "amber" : "red";
+  const vcol = HEX[vt];
+  const vbg = vt === "green" ? T.tileGreen : vt === "amber" ? T.tileAmber : T.tileRed;
+  return (
+    /* padding 12 y no 16 como en el comparador: aquí la tarjeta va anidada dentro de la fila, que ya
+       tiene el suyo, y con tres niveles de margen la cabecera se partía en cuatro líneas. */
+    <div style={{ background: T.card, borderRadius: 16, padding: 12, boxShadow: T.raise }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+          <span style={{ background: vbg, color: vcol, borderRadius: 10, padding: "5px 9px", fontSize: 12, fontWeight: 800, letterSpacing: 0.5, whiteSpace: "nowrap" }}>{c.status}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4, color: T.ink, lineHeight: 1.1 }}>{c.tkr}</div>
+            <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 1 }}>
+              ${c.strike} PUT{c.expiry ? " · " + ibkrDate(c.expiry) : ""}
+            </div>
+            <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 1 }}>
+              {c.dte}d{isFinite(n(c.delta)) ? " · Δ " + Math.abs(n(c.delta)).toFixed(2) : ""}{c.pop ? " · POP " + c.pop + "%" : ""}
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: T.green, letterSpacing: -0.5 }}>{signPct(c.annRoi, 2)}</div>
+          <div style={{ fontSize: 12, color: T.sub, fontWeight: 500 }}>Annualized ROI</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 20 }}>
+          <MiniStat label="Premium" value={"$" + money2(c.premium)} size={18} />
+          <MiniStat label="ROI" value={signPct(c.roi, 2)} color={T.green} size={18} />
+        </div>
+        <div style={{ display: "flex", gap: 14, background: T.tile, borderRadius: 12, padding: "8px 12px", flexShrink: 0, boxShadow: T.inset, border: T.edge }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>Riesgo</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>${money(c.notional)}</div>
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>BEP</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{isFinite(c.bep) ? "$" + money2(c.bep) : "—"}</div>
+            {isFinite(c.bepMargin) && <div style={{ fontSize: 11, fontWeight: 700, color: c.bepMargin <= 0 ? T.green : T.red }}>({pct(c.bepMargin, 0)})</div>}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 9, marginBottom: 14 }}>
+        <Tile label="Position Size" value={pct(c.posSize)} />
+        <Tile label="Return on margin" value={pct(c.rom, 1)} />
+        <Tile label="Annualized return on margin" value={pct(c.annRom, 0)} tone="green" />
+      </div>
+      <ElRow label="EL / NLV post" post={c.elNlv} base={base.elNlv} delta={c.dElNlv} color={HEX[toneNlv(c.elNlv)]} min={0} max={0.6} zones={Z_NLV()} marks={M_NLV_FULL} />
+      <ElRow label="EL / MRGN post" post={c.elMrgn} base={base.elMrgn} delta={c.dElMrgn} color={HEX[toneMrgn(c.elMrgn)]} min={0} max={1.5} zones={Z_MRGN()} marks={M_MRGN_FULL} />
     </div>
   );
 }
@@ -11215,35 +11315,8 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
   const base = { elNlv: nlv ? el / nlv : NaN, elMrgn: margin ? el / margin : NaN };
   const baseEmpty = !nlv && !margin;
 
-  const computed = useMemo(() => trades.map((tr) => {
-    const strike = n(tr.strike), creditPS = n(tr.credit), tMargin = n(tr.margin);
-    const notional = strike > 0 ? (strike - creditPS) * 100 : 0;   // (Strike − Credit) × 100
-    const premium = creditPS * 100;                                // Credit × 100
-    const bep = strike > 0 ? strike - creditPS : NaN;               // break-even = Strike − Credit (por acción)
-    const underlyingN = n(tr.underlying);
-    /* margen de seguridad del BEP: % que necesitaría CAER el subyacente para tocar el BEP (por eso negativo = a salvo,
-       igual que decir "-20% hasta breakeven"). Positivo = el subyacente ya está por debajo del BEP (ya en pérdida).
-       Asume el modelo suelo-por-debajo (short put), que es el que usa todo el Comparador (Strike − Credit);
-       en un short call leería al revés. */
-    const bepMargin = (underlyingN > 0 && isFinite(bep)) ? (bep - underlyingN) / underlyingN : NaN;
-    const newEL = el - tMargin;
-    const newMargin = margin + tMargin;
-    const elNlv = nlv ? newEL / nlv : NaN;
-    const elMrgn = newMargin ? newEL / newMargin : NaN;
-    const posSize = nlv ? notional / nlv : NaN;
-    const roi = notional ? premium / notional : NaN;               // ROI = Premium / Notional
-    const rom = tMargin ? premium / tMargin : NaN;                  // Return on margin = Premium / Margin
-    const ann = n(tr.dte) ? 365 / n(tr.dte) : 0;
-    const annRoi = roi * ann;
-    /* eficiencia vs Delta: cuánto Annualized ROI (%) consigues por cada punto de Delta expuesto —
-       a igual ROI, menos Delta (menos "acción sintética" comprometida) es mejor; por eso se divide, no se multiplica. */
-    const deltaAbs = Math.abs(n(tr.delta));
-    const deltaEff = deltaAbs ? (annRoi * 100) / deltaAbs : NaN;
-    let status = "GO";
-    if (elNlv < RULES.elNlv.amber || elMrgn < RULES.elMrgn.amber) status = "NO-GO";
-    else if (elNlv < RULES.elNlv.green || elMrgn < RULES.elMrgn.green) status = "CAUTION";
-    return { ...tr, notional, premium, bep, bepMargin, elNlv, elMrgn, dElNlv: elNlv - base.elNlv, dElMrgn: elMrgn - base.elMrgn, posSize, roi, rom, annRoi, annRom: rom * ann, deltaAbs, deltaEff, status };
-  }), [trades, nlv, margin, el]);
+  const computed = useMemo(() => trades.map((tr) => metricasTrade(tr, { el, nlv, margin, base })),
+    [trades, nlv, margin, el]);
 
   const rankVal = (c) => (basis === "roi" ? c.roi : basis === "annRoi" ? c.annRoi : basis === "rom" ? c.rom : basis === "impact" ? c.elNlv : basis === "delta" ? c.deltaEff : c.annRom);
   const okOrder = { GO: 0, CAUTION: 1, "NO-GO": 2 };
@@ -11290,6 +11363,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
   const [buscaErr, setBuscaErr] = useState("");
   const [guardadas, setGuardadas] = useState(() => cargaBusquedas(KEY_BUSCA_PUTS));
   const [abierto, setAbierto] = useState(null); /* ticker desplegado; el resto, plegados */
+  const [previaPut, setPreviaPut] = useState(null); /* v4.77: candidata con la tarjeta previa abierta */
   const grabaPuts = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_PUTS, v); };
   const lanzarBusqueda = async () => {
     const tkr = buscaTkr.trim().toUpperCase();
@@ -11553,16 +11627,11 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                strike, bajas de prima y de delta); entre vencimientos decides otra cosa: si te
                compensa irte más lejos. En una lista plana hay que hacer las dos comparaciones a la
                vez, y por eso no se leía. */
-            const conMetricas = halladas.filas.map((f) => {
-              const prima = n(f.credit) * 100;
-              const notional = n(f.strike) * 100;
-              const roi = notional ? prima / notional : NaN;
-              const rom = n(f.margin) ? prima / n(f.margin) : NaN;
-              const ann = n(f.dte) ? 365 / n(f.dte) : 0;
-              const dAbs = Math.abs(n(f.delta));
-              return { ...f, prima, roi, annRoi: roi * ann, rom, annRom: rom * ann,
-                       deltaEff: dAbs ? (roi * ann * 100) / dAbs : NaN };
-            });
+            /* v4.77: las cifras salen de `metricasTrade`, la misma función que usa el comparador.
+               Antes esta lista tenía su propia cuenta y el notional era strike × 100 en vez de
+               (strike − prima) × 100: el ROI de la fila y el de la tarjeta no eran el mismo número
+               para la misma operación. Ahora hay un solo camino. */
+            const conMetricas = halladas.filas.map((f) => metricasTrade(f, { el, nlv, margin, base }));
             /* el mismo criterio que ya tiene elegido el Comparador; "impacto en margen" necesita la
                cuenta entera, así que para marcar la mejor de una búsqueda se usa el ROM anualizado */
             const valor = (c) => (basis === "roi" ? c.roi : basis === "annRoi" ? c.annRoi
@@ -11592,32 +11661,48 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                       {filas.map((f) => {
                         const esMejor = mejor && f.codigo === mejor.codigo;
                         const otm = halladas.spot ? (halladas.spot - n(f.strike)) / halladas.spot : NaN;
+                        const abierta = previaPut === f.codigo;
                         return (
                           <div key={f.codigo} style={{ background: esMejor ? T.tileGreen : T.tile, borderRadius: 12, padding: "9px 11px",
                             boxShadow: T.raiseSm, border: esMejor ? `1.5px solid ${T.green}` : T.edge, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
-                            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                              <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-                                ${f.strike}
-                                {isFinite(otm) && <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{"  " + (otm * 100).toFixed(0) + "% fuera"}</span>}
-                                {esMejor && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.green, background: T.card, borderRadius: 6, padding: "2px 6px", marginLeft: 7 }}>MEJOR</span>}
-                              </span>
-                              <span style={{ fontSize: 15, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>${money(f.prima)}</span>
-                            </div>
-                            {/* v4.60: en dos líneas cortas y no en una larga. Con el botón al lado
-                                quedaban 250 px para cuatro cifras y se partía siempre; el margen se
-                                baja a su propia línea, que además es donde debe estar lo estimado. */}
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                              <span style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 2, minWidth: 0 }}>
-                                <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                                  {isFinite(f.annRom) ? pct(f.annRom, 0) + " ann" : "—"}
-                                  {f.pop ? " · POP " + Math.round(n(f.pop)) + "%" : ""}
-                                  {f.delta ? " · Δ " + Math.abs(n(f.delta)).toFixed(2) : ""}
+                            {/* v4.77: la fila entera abre la vista previa. El botón Añadir se va DENTRO
+                                de la previa: primero se mira la tarjeta, después se añade. */}
+                            <button onClick={() => setPreviaPut(abierta ? null : f.codigo)}
+                              style={{ background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer",
+                                display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
+                              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                                <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+                                  ${f.strike}
+                                  {isFinite(otm) && <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{"  " + (otm * 100).toFixed(0) + "% fuera"}</span>}
+                                  {esMejor && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.green, background: T.card, borderRadius: 6, padding: "2px 6px", marginLeft: 7 }}>MEJOR</span>}
                                 </span>
-                                <span style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, whiteSpace: "nowrap" }}>margen est. ${money(n(f.margin))}</span>
-                              </span>
-                              <button onClick={() => adoptarCandidata(f)}
-                                style={{ background: esMejor ? T.green : T.card, border: "none", borderRadius: 9, padding: "6px 13px", fontSize: 11.5, fontWeight: 800, color: esMejor ? "#fff" : T.ink, cursor: "pointer", flexShrink: 0, boxShadow: esMejor ? "none" : T.raiseSm }}>Añadir</button>
-                            </div>
+                                <span style={{ fontSize: 15, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>${money(f.premium)}</span>
+                              </div>
+                              {/* v4.60: en dos líneas cortas y no en una larga. Con el botón al lado
+                                  quedaban 250 px para cuatro cifras y se partía siempre; el margen se
+                                  baja a su propia línea, que además es donde debe estar lo estimado. */}
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                <span style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 2, minWidth: 0 }}>
+                                  <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                                    {isFinite(f.annRom) ? pct(f.annRom, 0) + " ann" : "—"}
+                                    {f.pop ? " · POP " + Math.round(n(f.pop)) + "%" : ""}
+                                    {f.delta ? " · Δ " + Math.abs(n(f.delta)).toFixed(2) : ""}
+                                    {isFinite(n(f.iv)) && n(f.iv) > 0 ? " · IV " + n(f.iv).toFixed(1) : ""}
+                                  </span>
+                                  <span style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, whiteSpace: "nowrap" }}>margen est. ${money(n(f.margin))}</span>
+                                </span>
+                                <span style={{ fontSize: 12, fontWeight: 800, color: T.sub, flexShrink: 0 }}>{abierta ? "▾" : "▸"}</span>
+                              </div>
+                            </button>
+                            {abierta && (
+                              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, paddingTop: 3 }}>
+                                <PreviaPut c={f} base={base} />
+                                <button onClick={() => { adoptarCandidata(f); setPreviaPut(null); }}
+                                  style={{ background: T.green, border: "none", borderRadius: 11, padding: "10px 0", fontSize: 13, fontWeight: 800, color: "#fff", cursor: "pointer" }}>
+                                  Añadir al comparador
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}

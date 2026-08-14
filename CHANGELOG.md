@@ -1,5 +1,42 @@
 # CHANGELOG — Bloques
 
+Bloques v4.77 — La tarjeta entera antes de añadir, y la IV en la fila
+
+## Lo que pidió
+Victor: *"Puedes hacer que en este menú aparezca también la IV / historical volatility, y aparte,
+que al pulsar una de esas antes de añadir se vea ya la tarjeta que tengo con el ROI, el anualizado,
+el break even price, todo, todo igual, y después que puedas añadir al comparador."*
+
+## La tarjeta antes de añadir
+Ahora se toca cualquier candidata y se despliega **la misma tarjeta del comparador**: el sello
+GO/CAUTION/NO-GO, el Annualized ROI grande, Premium, ROI, Riesgo, BEP con su margen, los tres
+recuadros (Position Size, Return on margin, Annualized return on margin) y las dos barras de EL/NLV y
+EL/MRGN. Dentro va el botón **Añadir al comparador**: primero se mira, después se añade.
+
+## Un mismo número no puede tener dos cuentas
+Las cifras salen de `metricasTrade`, sacada del cuerpo del comparador a nivel de módulo. La lista del
+buscador tenía **su propia cuenta**, y no coincidía: usaba `strike × 100` como notional donde el
+comparador usa `(strike − prima) × 100`. Es decir, el ROI de la fila y el de la tarjeta eran números
+distintos para la misma operación. Ahora hay un solo camino, así que lo que ves en la previa es
+exactamente lo que verás al añadirla. (El "% ann" de la fila no cambia: siempre fue el ROM
+anualizado, y ese ya se calculaba igual.)
+
+## La IV, en la fila
+Cada candidata lleva ahora su **IV** junto a la POP y la delta: `95% ann · POP 71% · Δ 0.29 · IV 45.1`.
+
+## Lo que falta: la volatilidad histórica
+La IV la da OpenD y ya estaba descargada. La **histórica no la da nadie de lo que hay montado**: no
+se puede sacar de los datos de opciones, hace falta el histórico de precios del subyacente. Está
+pendiente de comprobar si el propio OpenD la trae en el snapshot; si la trae es un campo más en el
+puente, y si no habría que pedir velas y calcularla. No se inventa mientras tanto.
+
+## Comprobado
+Al tocar una candidata salen los siete bloques de la tarjeta (sello, ann ROI, premium, ROI, riesgo,
+BEP, tres recuadros y dos barras), la IV aparece en la fila, y el botón de dentro sigue metiéndola en
+el comparador. Sin desbordes en viewport iPhone y `npm run prueba` con las 18 cifras intactas.
+
+---
+
 Bloques v4.76 — DC detrás de Screener, y otro icono
 
 ## Lo que pidió
