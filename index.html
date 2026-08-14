@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.64"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.65"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7980,7 +7980,7 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
       {/* v3.88: mismo selector de cristal que la barra inferior */}
       <GlassSegmented
         items={[{ id: "puts", label: "Puts", icon: "puts" }, { id: "earnings", label: "Earnings", icon: "calc" },
-                ...(puenteConfigurado(puente) ? [{ id: "dc", label: "Double Cal", icon: "dobles" }] : []),
+                ...(puenteConfigurado(puente) ? [{ id: "dc", label: "DC", icon: "dobles" }] : []),
                 { id: "screener", label: "Screener", icon: "filter" }, { id: "alerts", label: "Alertas", icon: "bolt" }]}
         value={sub} onChange={pick} renderIcon={(it) => <ActIcon name={it.icon} size={22} />} />
       {sub === "puts" ? (
