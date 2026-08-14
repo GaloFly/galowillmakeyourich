@@ -1,5 +1,45 @@
 # CHANGELOG — Bloques
 
+Bloques v4.60 — El buscador de puts, legible
+
+## Lo que dijo Victor
+*"Viene muy raw. Estaría bien que saliera el spot del ticker a la vez, y ¿cómo me las podrías
+agrupar para mejor lectura? ¿Strike? ¿O DTE?"*
+
+## La respuesta: por vencimiento
+Dentro de un vencimiento estás eligiendo **cuánto riesgo quieres**: bajas de strike y bajan la prima
+y la delta. Entre vencimientos decides **otra cosa**: si te compensa irte más lejos en el tiempo.
+
+En una lista plana hay que hacer las dos comparaciones a la vez, y por eso no se leía. Ahora va
+agrupado por vencimiento, con su fecha y sus días a la derecha, y dentro los strikes ordenados de
+más cerca del dinero a más lejos.
+
+## Lo demás que cambia
+- **El spot, a la vista y grande.** Estaba escondido en una línea gris, y es la referencia contra la
+  que se lee cada strike. Ahora encabeza el resultado: `NVDA $168.2`.
+- **La mejor va marcada** con un recuadro verde y una chapa `MEJOR`, según el criterio que ya
+  tuvieras elegido en el Comparador — y se dice cuál es: *"mejor por ROM anualizado"*.
+- **Cuánto está fuera de dinero cada strike**, en % junto al precio. Es lo que de verdad se compara
+  entre vencimientos distintos, más que el número del strike.
+- **Dos líneas cortas en vez de una larga.** Con el botón al lado quedaban 250 px para cuatro cifras
+  y se partía siempre, dejando "est. $3,044" colgando solo. El margen baja a su propia línea —que
+  además es donde debe estar lo estimado— y el resto cabe de una vez.
+
+## Verificación
+Con la cadena simulada de 636 contratos:
+
+| | Resultado |
+|---|---|
+| Cabecera | `NVDA $168.2 · 14 candidatas · mejor por ROM anualizado` |
+| Grupos | `SEP 16 '26 · 33 días` · `SEP 30 '26 · 47 días` · `OCT 14 '26 · 61 días` |
+| Marca la mejor | sí |
+| Contratos pedidos | **15, en una llamada** |
+| Añadir | entra en el comparador |
+| Sin servidor | la tarjeta no existe |
+| Consola | sin errores |
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.59 — Buscar puts sin lector de capturas
 
 ## Lo que pidió

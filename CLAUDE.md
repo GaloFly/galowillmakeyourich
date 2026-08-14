@@ -180,6 +180,10 @@ entre el 70% y el 100% del spot, 5 por vencimiento → `/opciones` con los ~15 c
 - **Las candidatas no entran solas** en el comparador: lista aparte y botón Añadir por fila.
 - **No hay criterio nuevo**: ordena y decide el `basis` que ya tuviera elegido Victor.
 - La POP se deriva de la delta (`1 − |delta|`); sin delta se deja vacía, no se inventa.
+- **Agrupado por VENCIMIENTO, no por strike** (v4.60, Victor: *"viene muy raw"*). Dentro de un
+  vencimiento se elige cuánto riesgo quieres; entre vencimientos, si compensa irse más lejos. En una
+  lista plana hay que hacer las dos comparaciones a la vez y por eso no se leía. El spot encabeza el
+  resultado —es la referencia de cada strike— y la mejor va marcada según el `basis` elegido.
 
 ## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
 
