@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.73"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.74"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2147,6 +2147,11 @@ async function buscarDobles(cfg, ticker, deltaObj, manual) {
       /* v4.69: a cuántos movimientos esperados está cada strike, para elegir con eso además de
          con la delta. El movimiento es el de la pata CORTA, que es la que puede ser tocada. */
       movEsp: movDe[p.corto],
+      /* v4.74: la IV de CADA pata larga, no la media. La curva de resultado se calcula valorando las
+         dos largas por separado el día que vence la corta, y con la media saldría torcida: la put y
+         la call del mismo vencimiento tienen IV distinta (el skew). Va aquí y NO dentro de `patas`,
+         que es lo que se guarda en la posición y viaja en el backup: esto es dato de mercado. */
+      ivLP: iv(largoP), ivLC: iv(largoC),
       vecesP: isFinite(movDe[p.corto]) && movDe[p.corto] > 0 ? (spot - kP) / movDe[p.corto] : NaN,
       vecesC: isFinite(movDe[p.corto]) && movDe[p.corto] > 0 ? (kC - spot) / movDe[p.corto] : NaN,
       festivo: [...new Set([...semanaCorta(p.corto), ...semanaCorta(p.largo)])],
@@ -7890,6 +7895,86 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
      que es lo que el mercado paga por ese movimiento. Dato, no estimación.
    · Sin puntos suficientes no se dibuja nada. Una curva de dos puntos no es una curva, es una raya
      que sugiere una tendencia que no se ha medido. */
+/* ---------- v4.74: la curva de resultado del montaje ----------
+   Victor, enseñando OptionStrat: *"¿Hay manera de montar una cosa así? Pero claro, tiene que estar
+   bien, porque OptionStrat mira mucho el sag que se va formando, se actualiza el precio y por tanto
+   la curva."*
+
+   AVISO DE FRONTERA, que es lo importante de todo esto. Hasta aquí, cada número de la herramienta
+   era dato de mercado. Esta curva NO: es un MODELO. Para saber qué resultado da el montaje el día
+   que vence la corta hay que saber cuánto valdrá la pata LARGA ese día, y eso no lo dice nadie —
+   hay que calcularlo con Black-Scholes suponiendo una volatilidad. OptionStrat hace exactamente lo
+   mismo; por eso lleva un control de IV al lado.
+
+   Lo que se hace aquí, y se dice en pantalla:
+   · El débito y la PÉRDIDA MÁXIMA son dato: salen de los precios reales de las cuatro patas. En un
+     doble calendar con el mismo strike en las dos patas, muy lejos del dinero el spread vale cero y
+     lo que pierdes es exactamente lo que pagaste. Por eso pérdida máxima = débito, sin modelo.
+   · El MÁXIMO BENEFICIO, los PUNTOS DE EQUILIBRIO y la forma de la curva son del modelo, con la IV
+     de HOY de cada pata larga congelada hasta el vencimiento corto.
+   · Y como la IV congelada es la suposición que más engaña —el manual avisa en la pág. 15 de que
+     esto se deshace deprisa si la estructura de volatilidad cambia—, hay un mando para bajarla o
+     subirla y ver cuánto se mueve todo. Ese mando NO es un adorno: es el riesgo principal.
+
+   Tipo de interés a cero: entre la corta y la larga hay de 1 a 7 días, donde eso vale céntimos. */
+const erfAprox = (x) => {
+  const s = x < 0 ? -1 : 1; const a = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * a);
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a);
+  return s * y;
+};
+const Ncdf = (x) => 0.5 * (1 + erfAprox(x / Math.SQRT2));
+const bs = (S, K, anios, sigma, esCall) => {
+  if (!(anios > 0) || !(sigma > 0) || !(S > 0) || !(K > 0)) return Math.max(0, esCall ? S - K : K - S);
+  const st = sigma * Math.sqrt(anios);
+  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * anios) / st, d2 = d1 - st;
+  return esCall ? S * Ncdf(d1) - K * Ncdf(d2) : K * Ncdf(-d2) - S * Ncdf(-d1);
+};
+/* Resultado por contrato (×100) al vencimiento de la CORTA, con el subyacente en S.
+   Las cortas ya no tienen tiempo: valen su intrínseco. Las largas se valoran con lo que les queda. */
+const plDobleEn = (f, S, ajusteIv) => {
+  const restan = Math.max(0, (n(f.dteLargo) - n(f.dteCorto))) / 365;
+  const ivP = Math.max(0.01, (n(f.ivLP) + n(ajusteIv || 0)) / 100);
+  const ivC = Math.max(0.01, (n(f.ivLC) + n(ajusteIv || 0)) / 100);
+  const largas = bs(S, f.strikeP, restan, ivP, false) + bs(S, f.strikeC, restan, ivC, true);
+  const cortas = Math.max(0, f.strikeP - S) + Math.max(0, S - f.strikeC);
+  return (largas - cortas - n(f.debito)) * 100;
+};
+/* Cruces por cero entre dos puntos, interpolando: son los puntos de equilibrio. */
+const equilibriosDC = (xs, ys) => {
+  const out = [];
+  for (let i = 1; i < xs.length; i++) {
+    if ((ys[i - 1] <= 0 && ys[i] > 0) || (ys[i - 1] >= 0 && ys[i] < 0)) {
+      const t = ys[i - 1] / (ys[i - 1] - ys[i]);
+      out.push(xs[i - 1] + t * (xs[i] - xs[i - 1]));
+    }
+  }
+  return out;
+};
+const curvaDobleDC = (f, spot, ajusteIv) => {
+  if (!isFinite(spot) || !isFinite(f.strikeP) || !isFinite(f.strikeC) || !isFinite(f.ivLP) || !isFinite(f.ivLC)) return null;
+  const em = isFinite(f.movEsp) && f.movEsp > 0 ? f.movEsp : spot * 0.03;
+  /* Primera pasada ancha para encontrar los equilibrios, y luego se encuadra en ellos: así el
+     gráfico enseña la parte que se decide y no dos brazos rojos enormes. */
+  const barrido = (a, b, k) => { const xs = [], ys = []; for (let i = 0; i <= k; i++) { const S = a + ((b - a) * i) / k; xs.push(S); ys.push(plDobleEn(f, S, ajusteIv)); } return { xs, ys }; };
+  const ancho = barrido(spot - 3 * em, spot + 3 * em, 240);
+  const be = equilibriosDC(ancho.xs, ancho.ys);
+  const bl = be.length ? Math.min(...be) : spot - 1.5 * em, br = be.length ? Math.max(...be) : spot + 1.5 * em;
+  const margen = Math.max((br - bl) * 0.22, em * 0.35);
+  const rej = barrido(bl - margen, br + margen, 160);
+  /* Los STRIKES entran como puntos exactos, y no por precisión decorativa: el resultado de un doble
+     calendar tiene un pico anguloso justo ahí, así que el máximo está SIEMPRE en un strike. Con una
+     rejilla regular el punto más alto caía a un par de décimas del vértice y el máximo beneficio
+     salía ~$2 corto, además de dibujar los picos romos. También entra el precio de hoy, para que la
+     curva pase por él y el hundimiento del centro se vea donde toca. */
+  const extra = [f.strikeP, f.strikeC, spot].filter((S) => S > rej.xs[0] && S < rej.xs[rej.xs.length - 1]);
+  const xs = rej.xs.concat(extra).sort((a, b) => a - b);
+  const ys = xs.map((S) => plDobleEn(f, S, ajusteIv));
+  let iMax = 0; for (let i = 1; i < ys.length; i++) if (ys[i] > ys[iMax]) iMax = i;
+  /* el hundimiento del centro: el mínimo ENTRE los dos picos, que es de lo que avisa la pág. 15 */
+  const centro = plDobleEn(f, spot, ajusteIv);
+  return { xs, ys, be, maxPl: ys[iMax], centro, debito: n(f.debito) * 100, em };
+};
 const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const diaMesCorto = (v) => parseInt(v.slice(8, 10), 10) + " " + MESES_CORTOS[parseInt(v.slice(5, 7), 10) - 1];
 /* v4.72 — Victor: *"que se vea mejor ese backwardation en fechas, que se vea más claro"*.
@@ -8037,6 +8122,60 @@ function BandaEM({ spot, em, filas }) {
    curva cambia cada semana. Los días se cuentan desde el VIERNES DE ENTRADA, igual que 5/7 o 7/14,
    para que un par probado a mano se pueda comparar con los fijos sin cambiar de reloj. */
 const AZUL_DC = "#3D7FB8"; /* el azul acero del B0 */
+function PayoffDC({ f, spot, ajusteIv }) {
+  const c = curvaDobleDC(f, spot, ajusteIv);
+  if (!c || !c.xs.length) return null;
+  const W = 320, H = 132, ML = 6, MR = 6, MT = 12, MB = 18;
+  const x0 = c.xs[0], x1 = c.xs[c.xs.length - 1];
+  const yMin = Math.min(...c.ys, 0), yMax = Math.max(...c.ys, 0);
+  const rango = Math.max(1, yMax - yMin);
+  const px = (S) => ML + ((S - x0) / (x1 - x0)) * (W - ML - MR);
+  const py = (v) => MT + (1 - (v - yMin) / rango) * (H - MT - MB);
+  const y0 = py(0);
+  /* La curva se parte en tramos por signo, insertando el punto exacto del cruce: así el verde y el
+     rojo se tocan justo en el equilibrio y no un pixel antes o después. */
+  const tramos = [];
+  let act = { pos: c.ys[0] >= 0, pts: [[c.xs[0], c.ys[0]]] };
+  for (let i = 1; i < c.xs.length; i++) {
+    const pos = c.ys[i] >= 0;
+    if (pos !== act.pos) {
+      const t = c.ys[i - 1] / (c.ys[i - 1] - c.ys[i]);
+      const xc = c.xs[i - 1] + t * (c.xs[i] - c.xs[i - 1]);
+      act.pts.push([xc, 0]); tramos.push(act);
+      act = { pos, pts: [[xc, 0]] };
+    }
+    act.pts.push([c.xs[i], c.ys[i]]);
+  }
+  tramos.push(act);
+  const dentroEM = [Math.max(x0, spot - c.em), Math.min(x1, spot + c.em)];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Curva de resultado del montaje">
+      {dentroEM[1] > dentroEM[0] && (
+        <rect x={px(dentroEM[0])} y={MT - 4} width={px(dentroEM[1]) - px(dentroEM[0])} height={H - MT - MB + 8} fill={T.gold} opacity="0.10" rx="3" />
+      )}
+      {tramos.map((tr, i) => (
+        <polygon key={"f" + i} fill={tr.pos ? T.green : T.red} opacity="0.18"
+          points={tr.pts.map(([S, v]) => px(S).toFixed(1) + "," + py(v).toFixed(1)).join(" ")
+            + " " + px(tr.pts[tr.pts.length - 1][0]).toFixed(1) + "," + y0.toFixed(1)
+            + " " + px(tr.pts[0][0]).toFixed(1) + "," + y0.toFixed(1)} />
+      ))}
+      {tramos.map((tr, i) => (
+        <polyline key={"l" + i} fill="none" stroke={tr.pos ? T.green : T.red} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"
+          points={tr.pts.map(([S, v]) => px(S).toFixed(1) + "," + py(v).toFixed(1)).join(" ")} />
+      ))}
+      <line x1={ML} y1={y0} x2={W - MR} y2={y0} stroke={T.sub} strokeWidth="1" opacity="0.5" />
+      <line x1={px(spot)} y1={MT - 4} x2={px(spot)} y2={H - MB + 2} stroke={T.sub} strokeWidth="1" strokeDasharray="2 2" />
+      {[f.strikeP, f.strikeC].map((k) => (
+        <line key={"k" + k} x1={px(k)} y1={y0 - 4} x2={px(k)} y2={y0 + 4} stroke={T.ink} strokeWidth="1.4" />
+      ))}
+      {c.be.map((b) => (
+        <text key={"b" + b} x={px(b)} y={H - 5} fill={T.sub} fontSize="9.5" fontWeight="700"
+          textAnchor={px(b) < 34 ? "start" : px(b) > W - 34 ? "end" : "middle"}>${money2(b)}</text>
+      ))}
+    </svg>
+  );
+}
+
 function TiraVencimientos({ vtos, corto, largo, onPick }) {
   if (!vtos || !vtos.length) return null;
   const meses = [];
@@ -8108,6 +8247,9 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
   const [pick, setPick] = useState({});
   /* v4.73: la curva arranca con zoom en la ventana del montaje, que es donde se decide */
   const [curvaAncha, setCurvaAncha] = useState(false);
+  /* v4.74: qué candidata tiene abierta su curva de resultado, y cuánto se mueve la IV de la larga */
+  const [curvaAbierta, setCurvaAbierta] = useState(null);
+  const [ivShift, setIvShift] = useState(0);
   const [probando, setProbando] = useState("");
   const graba = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_DC, v); };
 
@@ -8402,6 +8544,55 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                         : "Ratio bajo el 40%: el manual dice que no."}
                     </div>
                   )}
+                  {/* v4.74: la curva de resultado, plegada. Solo si hay IV de las dos patas largas:
+                      sin ellas no se puede valorar la larga el día del vencimiento corto, y una curva
+                      a medias sería peor que ninguna. */}
+                  {isFinite(f.ivLP) && isFinite(f.ivLC) && (() => {
+                    const abiertaC = curvaAbierta === f.id;
+                    const c = abiertaC ? curvaDobleDC(f, src.spot, ivShift) : null;
+                    return (
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+                        <button onClick={() => { setCurvaAbierta(abiertaC ? null : f.id); setIvShift(0); }}
+                          style={{ background: T.tile, border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
+                          {abiertaC ? "Ocultar la curva ▾" : "Ver la curva de resultado ▸"}
+                        </button>
+                        {abiertaC && c && (
+                          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+                            <PayoffDC f={f} spot={src.spot} ajusteIv={ivShift} />
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                              {[["máx. beneficio", "+$" + money2(c.maxPl), T.green],
+                                ["en el centro", (c.centro >= 0 ? "+$" : "−$") + money2(Math.abs(c.centro)), c.centro >= 0 ? T.green : T.red],
+                                ["pérdida máx.", "−$" + money2(c.debito), T.red]].map(([lbl, val, col]) => (
+                                <div key={lbl} style={{ background: T.tile, borderRadius: 10, padding: "6px 8px", boxShadow: T.inset, minWidth: 0 }}>
+                                  <div style={{ fontSize: 9.5, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>{lbl}</div>
+                                  <div style={{ fontSize: 13, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{val}</div>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub }}>Si la IV de la larga…</span>
+                              {[[-2, "−2 pts"], [0, "igual"], [2, "+2 pts"]].map(([v, lbl]) => (
+                                <button key={lbl} onClick={() => setIvShift(v)}
+                                  style={{ background: ivShift === v ? T.dark : T.tile, border: "none", borderRadius: 8, padding: "4px 9px",
+                                    fontSize: 10.5, fontWeight: 800, color: ivShift === v ? "#fff" : T.sub, cursor: "pointer", whiteSpace: "nowrap" }}>{lbl}</button>
+                              ))}
+                            </div>
+                            <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                              Resultado el día que vence la corta ({m.diaCorto} {ibkrDate(m.corto)}), por contrato.
+                              {c.be.length >= 2 ? " Sales en tablas entre $" + money2(Math.min(...c.be)) + " y $" + money2(Math.max(...c.be)) + "." : ""}
+                              {" La franja ámbar es el movimiento esperado (±$" + money2(c.em) + ")."}
+                              <b style={{ color: T.gold }}>{" Ojo: esto es un MODELO."}</b>
+                              {" El débito y la pérdida máxima son dato —salen de los precios reales de las cuatro patas—, pero el máximo beneficio, "
+                                + "los puntos de equilibrio y la forma de la curva salen de calcular cuánto valdrá la pata larga ese día, "
+                                + "suponiendo que su volatilidad sigue como hoy"}
+                              {ivShift ? " " + (ivShift < 0 ? "menos" : "más") + " " + Math.abs(ivShift) + " puntos" : ""}
+                              {". Prueba a moverla: es el riesgo del que avisa el manual."}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <button onClick={() => onOpenPosition && onOpenPosition({ tkr: src.tkr, tipo: "DC", block: 3, right: "", qty: "100",
                     expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
                     underlying: String(src.spot), entryDate: new Date().toISOString().slice(0, 10) })}
