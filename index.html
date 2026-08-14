@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.71"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.72"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7890,38 +7890,87 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
      que es lo que el mercado paga por ese movimiento. Dato, no estimación.
    · Sin puntos suficientes no se dibuja nada. Una curva de dos puntos no es una curva, es una raya
      que sugiere una tendencia que no se ha medido. */
-function CurvaIV({ curva, spot }) {
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const diaMesCorto = (v) => parseInt(v.slice(8, 10), 10) + " " + MESES_CORTOS[parseInt(v.slice(5, 7), 10) - 1];
+/* v4.72 — Victor: *"que se vea mejor ese backwardation en fechas, que se vea más claro"*.
+
+   Tenía razón y el gráfico mentía por omisión: decía "de 3 a 49 días SUBE 7,2 puntos: contango" y se
+   callaba que POR EL CAMINO baja. Ese bache es lo único que importa aquí — un tramo donde la IV cae
+   con el plazo es un tramo donde el vencimiento corto es el caro, que es exactamente lo que quieres
+   vender en un calendar. El veredicto global de punta a punta lo tapaba.
+
+   Ahora cada tramo se pinta por su cuenta: verde el que BAJA (a tu favor), gris el que sube. Y el eje
+   va en FECHAS, no en días sueltos, que es como se eligen los vencimientos. Los tramos que bajan se
+   nombran con sus dos fechas debajo, no hay que adivinarlos del dibujo. */
+function CurvaIV({ curva, spot, usados }) {
   const pts = (curva || []).filter((c) => isFinite(c.iv) && c.iv > 0);
   if (pts.length < 3) return null;
   /* MT = 18 y no 12: la etiqueta con el valor va 6px POR ENCIMA de su punto, y con 12 el punto más
      alto la dejaba cortada por el borde de arriba. */
-  const W = 320, H = 102, ML = 6, MR = 6, MT = 18, MB = 20;
+  const W = 320, H = 106, ML = 8, MR = 8, MT = 18, MB = 22;
   const xs = pts.map((p) => p.dte), ys = pts.map((p) => p.iv);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const rangoY = Math.max(0.4, y1 - y0); /* si la curva es plana, que no se dibuje un diente de sierra */
   const px = (d) => ML + ((d - x0) / Math.max(1, x1 - x0)) * (W - ML - MR);
   const py = (v) => MT + (1 - (v - y0) / rangoY) * (H - MT - MB);
-  const linea = pts.map((p) => px(p.dte).toFixed(1) + "," + py(p.iv).toFixed(1)).join(" ");
+  const usa = usados instanceof Set ? usados : new Set(usados || []);
   const sube = ys[ys.length - 1] - ys[0];
-  const col = sube > 0 ? T.sub : T.green;
+  /* tramos que BAJAN: la corta es la cara. Se guardan con sus fechas para poder nombrarlos. */
+  const bajadas = [];
+  for (let i = 1; i < pts.length; i++) if (pts[i].iv < pts[i - 1].iv - 0.01) bajadas.push({ de: pts[i - 1], a: pts[i], cae: pts[i - 1].iv - pts[i].iv });
+  const mayor = bajadas.slice().sort((a, b) => b.cae - a.cae)[0];
+  /* etiquetas del eje: primera, última y las puntas del bache más grande, descartando las que se
+     pisarían con una ya puesta */
+  /* El bache va PRIMERO. Con los vencimientos de delante muy juntos, poner antes la primera y la
+     última fecha se comía justo las dos que interesan — que es lo que pidió ver. Las de los extremos
+     entran si queda sitio; el valor de la IV en las puntas ya está escrito arriba de cada una. */
+  const puestas = [];
+  const cabe = (p) => { if (puestas.some((q) => Math.abs(px(q.dte) - px(p.dte)) < 42)) return false; puestas.push(p); return true; };
+  if (mayor) { cabe(mayor.de); cabe(mayor.a); }
+  cabe(pts[pts.length - 1]); cabe(pts[0]);
+  const anchor = (p) => (px(p.dte) < 40 ? "start" : px(p.dte) > W - 40 ? "end" : "middle");
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Estructura de volatilidad">
-        <polyline points={linea} fill="none" stroke={col} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-        {pts.map((p) => <circle key={p.v} cx={px(p.dte)} cy={py(p.iv)} r="2.6" fill={col} />)}
-        <text x={px(pts[0].dte)} y={py(pts[0].iv) - 6} fill={T.ink} fontSize="11" fontWeight="800" textAnchor="start">{pts[0].iv.toFixed(1)}</text>
-        <text x={px(pts[pts.length - 1].dte)} y={py(pts[pts.length - 1].iv) - 6} fill={T.ink} fontSize="11" fontWeight="800" textAnchor="end">{pts[pts.length - 1].iv.toFixed(1)}</text>
-        {pts.map((p, i) => (i === 0 || i === pts.length - 1 || i === Math.floor(pts.length / 2))
-          ? <text key={"d" + p.v} x={px(p.dte)} y={H - 5} fill={T.sub} fontSize="10" fontWeight="700"
-              textAnchor={i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}>{p.dte}d</text>
-          : null)}
+        {pts.slice(1).map((p, i) => {
+          const a = pts[i], baja = p.iv < a.iv - 0.01;
+          return <line key={"s" + p.v} x1={px(a.dte)} y1={py(a.iv)} x2={px(p.dte)} y2={py(p.iv)}
+            stroke={baja ? T.green : T.sub} strokeWidth={baja ? 3 : 2} strokeLinecap="round" />;
+        })}
+        {/* la caída, escrita encima del propio tramo: con vencimientos a tres días de distancia sus
+            dos fechas no caben en el eje sin pisarse, y así el bache se señala solo */}
+        {bajadas.map((b) => (
+          <text key={"b" + b.a.v} x={(px(b.de.dte) + px(b.a.dte)) / 2} y={Math.min(py(b.de.iv), py(b.a.iv)) - 5}
+            fill={T.green} fontSize="9" fontWeight="800" textAnchor="middle">{"−" + b.cae.toFixed(1)}</text>
+        ))}
+        {pts.map((p) => (usa.has(p.v)
+          ? <circle key={p.v} cx={px(p.dte)} cy={py(p.iv)} r="3.6" fill={T.card} stroke={T.purple} strokeWidth="2" />
+          : <circle key={p.v} cx={px(p.dte)} cy={py(p.iv)} r="2.6" fill={T.sub} />))}
+        <text x={px(pts[0].dte)} y={py(pts[0].iv) - 7} fill={T.ink} fontSize="11" fontWeight="800" textAnchor="start">{pts[0].iv.toFixed(1)}</text>
+        <text x={px(pts[pts.length - 1].dte)} y={py(pts[pts.length - 1].iv) - 7} fill={T.ink} fontSize="11" fontWeight="800" textAnchor="end">{pts[pts.length - 1].iv.toFixed(1)}</text>
+        {puestas.map((p) => (
+          <text key={"e" + p.v} x={px(p.dte)} y={H - 6} fill={mayor && (p === mayor.a || p === mayor.de) ? T.green : T.sub}
+            fontSize="9.5" fontWeight="700" textAnchor={anchor(p)}>{diaMesCorto(p.v)}</text>
+        ))}
       </svg>
       <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+        {/* Los tramos que bajan se nombran solo cuando son la EXCEPCIÓN. Si baja más de la mitad de
+            la curva, la lectura global ya lo dice y enumerar nueve tramos es justo el párrafo
+            ilegible que había que quitar. */}
+        {bajadas.length > 0 && bajadas.length <= (pts.length - 1) / 2 && (
+          <span style={{ color: T.green, fontWeight: 800 }}>
+            {"Baja " + bajadas.slice().sort((a, b) => b.cae - a.cae).slice(0, 2)
+              .sort((a, b) => a.de.dte - b.de.dte)
+              .map((b) => "del " + diaMesCorto(b.de.v) + " al " + diaMesCorto(b.a.v) + " (−" + b.cae.toFixed(1) + ")").join(" y ")}
+            {". Ahí el vencimiento corto es el CARO: es el tramo que juega a tu favor. "}
+          </span>
+        )}
         {sube > 0
-          ? "De " + pts[0].dte + " a " + pts[pts.length - 1].dte + " días la IV SUBE " + Math.abs(sube).toFixed(1)
-            + " puntos: contango, el estado normal. El manual lo describe como mercado tranquilo, que es cuando quiere que entres — pero significa que compras la pata larga más cara de volatilidad."
-          : "De " + pts[0].dte + " a " + pts[pts.length - 1].dte + " días la IV BAJA " + Math.abs(sube).toFixed(1)
-            + " puntos: backwardation. Miedo a corto plazo, y la pata corta que vendes es la cara — es la curva que juega a tu favor en un calendar."}
+          ? "En conjunto, del " + diaMesCorto(pts[0].v) + " al " + diaMesCorto(pts[pts.length - 1].v) + " la IV sube "
+            + Math.abs(sube).toFixed(1) + " puntos: contango, el estado normal — el manual lo llama mercado tranquilo, que es cuando quiere que entres."
+          : "En conjunto, del " + diaMesCorto(pts[0].v) + " al " + diaMesCorto(pts[pts.length - 1].v) + " la IV baja "
+            + Math.abs(sube).toFixed(1) + " puntos: backwardation. Miedo a corto plazo."}
+        {usa.size > 0 ? " Los puntos con anillo violeta son los vencimientos que usan los montajes." : ""}
       </div>
     </div>
   );
@@ -7977,7 +8026,6 @@ function BandaEM({ spot, em, filas }) {
    salirse de ellos a propósito: el manual dice que esto va de la curva de volatilidad (pág. 6), y la
    curva cambia cada semana. Los días se cuentan desde el VIERNES DE ENTRADA, igual que 5/7 o 7/14,
    para que un par probado a mano se pueda comparar con los fijos sin cambiar de reloj. */
-const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const AZUL_DC = "#3D7FB8"; /* el azul acero del B0 */
 function TiraVencimientos({ vtos, corto, largo, onPick }) {
   if (!vtos || !vtos.length) return null;
@@ -8151,7 +8199,8 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
               <span style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>Estructura de volatilidad</span>
               <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>IV en el dinero por vencimiento</span>
             </div>
-            <CurvaIV curva={res.curva} spot={res.spot} />
+            <CurvaIV curva={res.curva} spot={res.spot}
+              usados={new Set((res.montajes || []).flatMap((m) => [m.corto, m.largo]))} />
             <div style={{ fontSize: 12, fontWeight: 800, color: T.ink, paddingTop: 2 }}>Movimiento esperado</div>
             {/* v4.70: dos columnas. Eran diez filas a lo ancho, y una lista de diez líneas casi
                 iguales no se lee: se hojea. Los vencimientos que usa algún montaje van resaltados,

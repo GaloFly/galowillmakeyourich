@@ -1,5 +1,44 @@
 # CHANGELOG — Bloques
 
+Bloques v4.72 — El bache de la curva, con sus fechas
+
+## Lo que dijo
+Victor, sobre el gráfico de la estructura de volatilidad: *"¿Que se vea mejor ese backwardation en
+fechas, no? Que se vea más claro."*
+
+## El gráfico mentía por omisión
+Decía **"de 3 a 49 días la IV SUBE 7,2 puntos: contango"** y se callaba que **por el camino baja**. En
+su captura se ve clarísimo: la curva sube hasta el sexto día, cae, y luego sigue subiendo. Ese bache
+es lo único que importa aquí — un tramo donde la IV cae con el plazo es un tramo donde el vencimiento
+**corto es el caro**, que es exactamente lo que quieres vender en un calendar. El veredicto global de
+punta a punta lo tapaba entero.
+
+## Cómo queda
+- **Cada tramo se pinta por su cuenta**: verde y más grueso el que BAJA, gris el que sube. El bache
+  salta a la vista sin leer nada.
+- **Cada caída lleva su número encima** (`−0.8`), en el propio tramo. Con vencimientos a tres días de
+  distancia sus dos fechas no caben en el eje sin pisarse, así que el bache se señala solo.
+- **El eje va en FECHAS** (`21 ago`, `9 oct`) y no en días sueltos, que es como se eligen los
+  vencimientos de verdad. Las fechas del bache tienen **prioridad** sobre las de los extremos: los
+  vencimientos de delante están tan juntos que solo caben dos o tres etiquetas, y poner primero la
+  primera y la última se comía justo las que hay que ver.
+- **Los vencimientos que usan los montajes llevan anillo violeta**, para saber dónde caen sobre la
+  curva.
+- Y la frase de debajo nombra los tramos que bajan con sus dos fechas.
+
+## Una trampa que había que esquivar
+Con la curva entera en backwardation, **todos** los tramos bajan y la frase enumeraba los nueve: un
+párrafo ilegible, justo el ruido que se quitó en la v4.70. Los tramos que bajan se nombran solo
+cuando son la **excepción** — si baja más de la mitad de la curva, la lectura global ya lo dice. Y
+como mucho se nombran los dos que más caen.
+
+## Comprobado
+Tres escenarios: contango con un bache (nombra los dos tramos con sus fechas, dos tramos verdes,
+`21 ago` en el eje), backwardation entera (no enumera nada, lo dice la lectura global) y contango puro
+(ningún tramo verde). Sin desbordes en viewport iPhone y `npm run prueba` con las 18 cifras intactas.
+
+---
+
 Bloques v4.71 — Calendario de dos toques: probar cualquier par
 
 ## Lo que pidió
