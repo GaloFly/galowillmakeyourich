@@ -1,5 +1,43 @@
 # CHANGELOG — Bloques
 
+Bloques v4.70 — La banda del movimiento esperado, dibujada
+
+## Lo que dijo
+Victor: *"¿Se te ocurren formas de que se vea mejor? Cuesta leerlo, que sea muy visual. Estaría bien
+tener claro cuál es el EM, y que los strikes sugeridos pongan qué porcentaje de EM son."*
+
+## De dónde venía el ruido
+Mirando sus capturas, la mitad del texto de la pantalla era **la misma frase repetida cinco veces**.
+La explicación de la IV ("la corta paga 0,9 puntos más que la larga: vendes la cara y compras la
+barata") es idéntica en las cinco candidatas de un montaje —son los mismos dos vencimientos— y se
+imprimía en cada una. Y la relación de cada strike con el movimiento esperado estaba en texto
+(`put 0.7× · call 0.7×`), enterrada entre el ratio y la IV: para comparar cinco parejas había que
+hacerlo de cabeza.
+
+## Cómo queda
+**La banda, dibujada.** Un gráfico por montaje con el eje en movimientos esperados: la franja ±1 EM
+sombreada —lo que el mercado da por normal hasta el vencimiento corto—, el precio en el centro, y una
+línea por candidata que va de su put a su call con los strikes escritos en las puntas. Verde si las
+dos patas se salen de la franja, ámbar si alguna se queda dentro. De un vistazo se ve cuál es cuál.
+
+**El porcentaje, en su sitio.** Cada fila lleva dos chips: `put 64% del EM` · `call 69% del EM`, con
+color. Es lo que pidió, y ya no compite con el ratio ni con la IV por la misma línea.
+
+**La frase de la IV, una sola vez**, en la cabecera del montaje que es donde vale para las cinco. Las
+filas se quedan con los números y con el ratio explicado solo cuando NO llega al ideal — cuando lo
+pasa, el chip verde ya lo dice.
+
+**Los movimientos esperados, en dos columnas** en vez de diez filas a lo ancho, y los vencimientos
+que usa algún montaje resaltados en violeta: son los únicos que hay que mirar para decidir hoy.
+
+## Comprobado
+La frase de la IV aparece **una** vez por montaje (antes, cinco). Los chips de porcentaje salen en
+todas las filas. La banda se dibuja con sus cinco candidatas dentro. Sigue sin desbordar a lo ancho
+en viewport iPhone, y en los tres escenarios de la prueba —curva a favor, curva en contra y semana
+con festivo—. `npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+---
+
 Bloques v4.69 — Estructura de volatilidad y movimiento esperado
 
 ## Lo que pidió

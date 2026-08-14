@@ -242,6 +242,10 @@ Lo que hay que tener presente:
   con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
   se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
   Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **La banda del EM se DIBUJA** (v4.70, Victor: *"cuesta leerlo, que sea muy visual"*). Gráfico de
+  rangos con el eje en movimientos esperados: franja ±1 EM sombreada y una línea por candidata de su
+  put a su call. Y el % del EM de cada pata en su propio chip. Lo que se repite igual en las cinco
+  filas de un montaje (la frase de la IV) va UNA vez, en la cabecera: era la mitad del texto.
 - **El detector de festivos solo mira las dos semanas del montaje** (v4.69). Con la ventana a 60 días,
   los vencimientos lejanos ya no son diarios (quedan los viernes), y "falta un día entre semana" ahí
   no significa festivo sino que la escalera se ensancha con el plazo.
