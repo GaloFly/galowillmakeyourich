@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.69"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.70"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7905,6 +7905,47 @@ function CurvaIV({ curva, spot }) {
   );
 }
 
+/* ---------- v4.70: la banda del movimiento esperado, dibujada ----------
+   Victor: *"cuesta leerlo, que sea muy visual. Estaría bien tener claro cuál es el EM y que los
+   strikes sugeridos pongan qué porcentaje de EM son"*.
+
+   Un gráfico de rangos: el eje va en MOVIMIENTOS ESPERADOS (no en dólares), con la franja ±1 EM
+   sombreada —lo que el mercado da por normal hasta el vencimiento corto— y una línea por candidata
+   que va de su put a su call. De un vistazo se ve cuál se sale de la franja y cuál se queda dentro,
+   que es exactamente la pregunta al elegir strikes. En texto había que comparar cinco parejas de
+   números a mano. */
+function BandaEM({ spot, em, filas }) {
+  if (!isFinite(em) || em <= 0 || !isFinite(spot) || !filas || !filas.length) return null;
+  const u = (k) => (k - spot) / em;
+  const maxU = Math.max(1.3, ...filas.map((f) => Math.max(Math.abs(u(f.strikeP)), Math.abs(u(f.strikeC))))) * 1.1;
+  const W = 320, FILA = 16, MT = 22, MB = 6, ML = 30, MR = 30;
+  const H = MT + filas.length * FILA + MB;
+  const x = (v) => ML + ((v + maxU) / (2 * maxU)) * (W - ML - MR);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Strikes contra el movimiento esperado">
+      <rect x={x(-1)} y={MT - 6} width={x(1) - x(-1)} height={H - MT} fill={T.gold} opacity="0.13" rx="3" />
+      <line x1={x(0)} y1={MT - 6} x2={x(0)} y2={H - 2} stroke={T.sub} strokeWidth="1" strokeDasharray="2 2" />
+      <text x={x(-1)} y={MT - 10} fill={T.gold} fontSize="9.5" fontWeight="800" textAnchor="middle">−1 EM</text>
+      <text x={x(1)} y={MT - 10} fill={T.gold} fontSize="9.5" fontWeight="800" textAnchor="middle">+1 EM</text>
+      <text x={x(0)} y={MT - 10} fill={T.sub} fontSize="9.5" fontWeight="700" textAnchor="middle">${money2(spot)}</text>
+      {filas.map((f, i) => {
+        const y = MT + i * FILA + FILA / 2;
+        const fuera = Math.min(Math.abs(u(f.strikeP)), Math.abs(u(f.strikeC))) >= 1;
+        const c = fuera ? T.green : T.gold;
+        return (
+          <g key={f.id}>
+            <line x1={x(u(f.strikeP))} y1={y} x2={x(u(f.strikeC))} y2={y} stroke={c} strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx={x(u(f.strikeP))} cy={y} r="3" fill={c} />
+            <circle cx={x(u(f.strikeC))} cy={y} r="3" fill={c} />
+            <text x={x(u(f.strikeP)) - 5} y={y + 3.4} fill={T.sub} fontSize="9.5" fontWeight="700" textAnchor="end">{f.strikeP}</text>
+            <text x={x(u(f.strikeC)) + 5} y={y + 3.4} fill={T.sub} fontSize="9.5" fontWeight="700" textAnchor="start">{f.strikeC}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 /* ---------- v4.62: Double Calendar / Double Diagonal ----------
    Las reglas y sus páginas están en buscarDobles(). Aquí solo se pintan, con dos cuidados:
    · Cada regla del manual sale con su semáforo Y con el número que la hace pasar o fallar, para
@@ -8005,16 +8046,24 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
             </div>
             <CurvaIV curva={res.curva} spot={res.spot} />
             <div style={{ fontSize: 12, fontWeight: 800, color: T.ink, paddingTop: 2 }}>Movimiento esperado</div>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
-              {res.curva.filter((c) => isFinite(c.mov)).map((c) => (
-                <div key={"m" + c.v} style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, background: T.tile, borderRadius: 10, padding: "6px 9px", boxShadow: T.raiseSm }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", width: 40, flexShrink: 0 }}>{c.dte}d</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, flexShrink: 0 }}>{ibkrDate(c.v)}</span>
-                  <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                    ±${money2(c.mov)} <span style={{ fontWeight: 600, color: T.sub }}>{pct(c.movPct, 1)}</span>
-                  </span>
-                </div>
-              ))}
+            {/* v4.70: dos columnas. Eran diez filas a lo ancho, y una lista de diez líneas casi
+                iguales no se lee: se hojea. Los vencimientos que usa algún montaje van resaltados,
+                que son los únicos que hay que mirar para decidir hoy. */}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 5 }}>
+              {res.curva.filter((c) => isFinite(c.mov)).map((c) => {
+                const usado = (res.montajes || []).some((m) => m.corto === c.v || m.largo === c.v);
+                return (
+                  <div key={"m" + c.v} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 1, minWidth: 0,
+                    background: usado ? T.tilePurple : T.tile, borderRadius: 10, padding: "6px 9px", boxShadow: T.raiseSm }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: usado ? T.purple : T.sub, whiteSpace: "nowrap" }}>
+                      {c.dte}d · {ibkrDate(c.v).replace(/ '\d+$/, "")}
+                    </span>
+                    <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      ±${money2(c.mov)} <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>{pct(c.movPct, 1)}</span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
               El movimiento esperado no es una estimación mía: es lo que cuesta la put + la call en el dinero
@@ -8066,6 +8115,30 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                 Semana con festivo (no hay vencimiento el {m.festivo.join(" ni el ")}). El manual avisa de peor tasa de acierto.
               </div>
             )}
+            {/* v4.70: la banda del movimiento esperado con las cinco candidatas encima, y la frase de
+                la curva de IV UNA vez. Antes esa frase se repetía idéntica en las cinco filas —es la
+                misma, porque son los mismos dos vencimientos— y era la mitad del texto de la pantalla. */}
+            {abiertaM && grupo.length > 0 && isFinite(grupo[0].movEsp) && (
+              <div style={{ background: T.card, borderRadius: 14, padding: "11px 12px", boxShadow: T.raise, border: T.edge,
+                display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>Movimiento esperado a {m.diaCorto} {ibkrDate(m.corto)}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: T.gold, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    ±${money2(grupo[0].movEsp)}
+                  </span>
+                </div>
+                <BandaEM spot={res.spot} em={grupo[0].movEsp} filas={grupo} />
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                  Dentro de la franja está lo que el mercado da por normal hasta el vencimiento corto. Una pata
+                  ahí dentro puede ser tocada sin que pase nada raro.
+                  {isFinite(vm.brecha)
+                    ? (vm.brecha > 0
+                        ? " En este par la corta paga " + vm.brecha.toFixed(1) + " puntos MÁS de IV que la larga: vendes la cara y compras la barata, que es lo ideal."
+                        : " En este par la larga paga " + Math.abs(vm.brecha).toFixed(1) + " puntos más de IV. Es lo normal —la curva sube con el plazo— pero no juega a tu favor.")
+                    : ""}
+                </div>
+              </div>
+            )}
             {abiertaM && grupo.map((f) => {
               const { ratioOk, ratioPasa, ivOk, brecha } = veredictoDC(f);
               const col = ratioOk ? T.green : ratioPasa ? T.gold : T.red;
@@ -8087,30 +8160,33 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                       </span>
                     </span>
                   </div>
+                  {/* v4.70: el % del movimiento esperado de cada pata, en su propia línea y con
+                      color. Es lo que Victor pidió para elegir strikes, y en la línea de estadísticas
+                      se perdía entre el ratio y la IV. */}
+                  {isFinite(f.vecesP) && isFinite(f.vecesC) && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                      {[["put", f.vecesP], ["call", f.vecesC]].map(([lbl, x]) => (
+                        <span key={lbl} style={{ color: x >= 1 ? T.green : T.gold, background: x >= 1 ? T.tileGreen : T.tileAmber,
+                          borderRadius: 7, padding: "3px 8px", whiteSpace: "nowrap" }}>
+                          {lbl} {Math.round(x * 100)}% del EM
+                        </span>
+                      ))}
+                      <span style={{ color: T.sub, fontWeight: 700, alignSelf: "center" }}>
+                        {Math.min(f.vecesP, f.vecesC) >= 1 ? "las dos, fuera de la franja" : (f.vecesP < f.vecesC ? "la put" : "la call") + ", dentro de la franja"}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                     <span style={{ color: ratioOk ? T.green : ratioPasa ? T.gold : T.red }}>ratio {pct(f.ratio, 0)}</span>
                     <span style={{ color: ivOk ? T.green : T.sub }}>IV {isFinite(f.ivCorta) ? f.ivCorta.toFixed(1) : "—"} / {isFinite(f.ivLarga) ? f.ivLarga.toFixed(1) : "—"}</span>
-                    <span style={{ color: T.sub }}>débito ${money2(f.debito * 100)}</span>
-                    {isFinite(f.movEsp) && isFinite(f.vecesP) && isFinite(f.vecesC) && (
-                      <span style={{ color: Math.min(f.vecesP, f.vecesC) >= 1 ? T.green : T.gold }}>
-                        {"±$" + money2(f.movEsp) + " esp · put " + f.vecesP.toFixed(1) + "× · call " + f.vecesC.toFixed(1) + "×"}
-                      </span>
-                    )}
+                    <span style={{ color: T.sub }}>débito ${money2(f.debito * 100)} <span style={{ fontWeight: 600 }}>= pérdida máx.</span></span>
                   </div>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-                    {ratioOk ? "Ratio sobre el 50% ideal: pones " + money2(f.debito * 100) + " $ de tu bolsillo, y ese débito es tu pérdida máxima."
-                      : ratioPasa ? "Ratio entre 40% y 50%: pasa el mínimo del manual." : "Ratio bajo el 40%: el manual dice que no."}
-                    {isFinite(brecha)
-                      ? (ivOk ? " La corta paga " + brecha.toFixed(1) + " puntos MÁS de IV que la larga: vendes la cara y compras la barata, que es lo ideal."
-                              : " La larga paga " + Math.abs(brecha).toFixed(1) + " puntos más de IV. Es lo normal (la curva sube con el plazo), no una avería, pero la curva no está de tu lado.")
-                      : ""}
-                    {isFinite(f.vecesP) && isFinite(f.vecesC)
-                      ? (Math.min(f.vecesP, f.vecesC) >= 1
-                          ? " Los dos strikes están fuera del movimiento que el mercado da por normal hasta el vencimiento corto."
-                          : " Ojo: " + (f.vecesP < f.vecesC ? "la put" : "la call") + " está DENTRO del movimiento esperado ("
-                            + Math.min(f.vecesP, f.vecesC).toFixed(1) + "×), o sea que tocarla entra en lo normal.")
-                      : ""}
-                  </div>
+                  {!ratioOk && (
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                      {ratioPasa ? "Ratio entre 40% y 50%: pasa el mínimo del manual, pero no llega al ideal."
+                        : "Ratio bajo el 40%: el manual dice que no."}
+                    </div>
+                  )}
                   <button onClick={() => onOpenPosition && onOpenPosition({ tkr: res.tkr, tipo: "DC", block: 3, right: "", qty: "100",
                     expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
                     underlying: String(res.spot), entryDate: new Date().toISOString().slice(0, 10) })}
