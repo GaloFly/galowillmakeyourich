@@ -1,5 +1,54 @@
 # CHANGELOG — Bloques
 
+Bloques v4.63 — Tres correcciones de Victor a la herramienta Double Calendar
+
+## 1. Fuera el VIX estimado
+*"Quita el VIX que ese pseudo no funciona."*
+
+Tenía razón. Sacarlo de la IV de una opción daba **un número con pinta de dato que no lo era**, y
+encima decidía un semáforo. Se quita. Queda solo el campo para escribirlo: si lo pones, se juzga
+contra la ventana 15–25 del manual; si no, no se juzga. Un hueco honesto es mejor que una cifra
+inventada.
+
+## 2. Varios strikes por par, y desde mañana
+*"Me tienes que dar más info, entradas mañana, varios strikes."*
+
+Antes salía **un** montaje por par de vencimientos, el de delta 20 clavado. Ahora salen **varios
+alrededor del objetivo** (0,10 a 0,30), agrupados bajo cada par, para ver cuánto se abre o se cierra
+la horquilla en vez de fiarse de un solo número. En la prueba: de 6 montajes a **16**.
+
+Y los vencimientos empiezan **mañana**: uno que vence hoy no es una entrada, es una expiración.
+
+Para que las deltas bajas fueran alcanzables hubo que ensanchar la banda de strikes: era de 12 por
+lado y se quedaba a ±4% del precio, así que **todos los objetivos caían en el mismo strike**. Ahora
+14 por lado y solo del lado que toca — con strikes de $5 en QQQ, ~10%, que llega de sobra hasta
+delta 0,10. Siguen siendo 168 códigos como mucho: **una sola llamada**.
+
+## 3. El verde que tapaba un fallo
+*"El IV de la corta debería de ser más alto que la larga, si no… y sin embargo me lo pones en verde."*
+
+Este era el importante. El ratio pintaba la tarjeta de verde **mientras la curva de volatilidad iba
+en contra** — comprando la pata cara y vendiendo la barata. El texto lo decía, pero el color decía
+lo contrario, y el color se lee antes.
+
+Ahora el veredicto **exige las dos condiciones**: solo hay `OK` si el ratio pasa del 50% **y** la
+pata corta tiene más IV que la larga. Si falla cualquiera de las dos, `NO`. Y cada cifra lleva su
+propio color, así que se ve cuál es la que falla.
+
+## Verificación
+Misma cadena simulada de QQQ, en los dos escenarios de volatilidad:
+
+| Escenario | Montajes | Veredictos |
+|---|---|---|
+| IV que baja con el plazo (a favor) | 16 | **16 OK** |
+| **IV que sube con el plazo (en contra)** | 16 | **16 NO — ni un solo verde** |
+
+Y lo demás sigue: deltas variadas (0,15 · 0,21 · 0,25 · 0,31) con strikes distintos, put siempre
+bajo el precio y call siempre encima, aviso de festivo en los pares que tocan la semana corta,
+**3 llamadas al servidor** en total, sin desbordar y sin errores de consola.
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.62 — Herramienta Double Calendar / Double Diagonal
 
 ## Lo que pidió
