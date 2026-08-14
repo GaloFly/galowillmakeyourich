@@ -1,5 +1,56 @@
 # CHANGELOG — Bloques
 
+Bloques v4.69 — Estructura de volatilidad y movimiento esperado
+
+## Lo que pidió
+Victor: *"Estaría bien que me metieras en ese apartado el volatility term structure, y el expected
+move. En plan en gráfico, o ver en cuánto estamos del expected move, para elegir strikes."*
+
+Tenía toda la razón y era la pieza que le faltaba a esta herramienta: la página 6 del manual dice
+literalmente que el Double Calendar **no va de DTE, va de la estructura de volatilidad**. Hasta ahora
+solo se veían dos puntos de esa curva — la IV de la corta y la de la larga de cada montaje.
+
+## Cómo queda
+Una tarjeta nueva dentro del resultado de cada ticker, con dos cosas:
+
+**El gráfico de la curva.** La IV en el dinero de cada vencimiento hasta 60 días, ~10 puntos. Debajo,
+una frase que la lee: cuánto sube o baja en puntos, si eso es contango o backwardation, y qué
+significa para lo que estás montando. La línea sale verde en backwardation (la curva a tu favor: la
+pata que vendes es la cara) y gris en contango (lo normal, ni bueno ni malo).
+
+**El movimiento esperado de cada vencimiento**, en dólares y en porcentaje. Y en cada fila de
+strikes, a cuántos movimientos esperados está la put y a cuántos la call: `put 1.1× · call 1.0×`. Si
+alguno se queda por debajo de 1× se avisa — tocarlo entra dentro de lo que el mercado da por normal.
+
+## Una decisión de fondo
+**El movimiento esperado NO se modela.** Es el precio de la put más la call del mismo strike en el
+dinero: lo que el mercado está pagando por ese movimiento. Es dato, no estimación, y se dice en
+pantalla de dónde sale. Es la misma regla del VIX de la v4.63 — un número inventado con pinta de dato
+es peor que un hueco.
+
+## Lo que cuesta
+Nada en llamadas de opciones: para cada vencimiento bastan **dos contratos**, el par en el dinero, y
+entran en la misma llamada que ya se hacía. Son ~160 códigos en total, por debajo del máximo de 200.
+La cadena sí se pide a 60 días en vez de a 15, que el puente parte en tramos y cachea 6 horas.
+
+## Una trampa que había que esquivar
+Al estirar la ventana a 60 días, los vencimientos de dentro de un mes ya no son diarios (quedan los
+viernes y poco más). El detector de festivos —que funciona por "falta un día entre semana, luego el
+mercado estaba cerrado"— habría marcado como festivas todas esas semanas. Ahora solo juzga las dos
+semanas del montaje, que son las únicas donde ese razonamiento vale.
+
+## Comprobado
+Con una cadena simulada que imita a QQQ (diaria las tres primeras semanas, solo viernes después):
+la curva sale con 10 puntos y su lectura correcta, los movimientos esperados van de ±$11,25 a 3 días
+hasta ±$29,85 a 28, las filas traen su `put 0.5× · call 0.6×`, y **ninguna semana lejana se marca
+como festiva**. `npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+La prueba también cambia: sus precios simulados pasan a ser Black-Scholes de verdad. Los de antes
+daban una straddle en el dinero del 3,9% a tres días sobre $725 — el doble de lo real—, y como el
+movimiento esperado se lee justo de ahí, la prueba habría estado midiendo una banda inventada.
+
+---
+
 Bloques v4.68 — Dos sellos en vez de un veredicto, y "la mejor" deja de elegirse mal
 
 ## Lo que preguntó

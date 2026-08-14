@@ -236,6 +236,15 @@ Lo que hay que tener presente:
   "no compensa". Se abre solo el mejor de los que pasan las dos reglas; si ninguno pasa, ninguno.
 - **Las semanas con festivo se detectan solas**: SPY/QQQ vencen todos los días hábiles, así que si
   falta un día entre semana, ese día el mercado estaba cerrado. Sin lista que mantener.
+- **Estructura de volatilidad y movimiento esperado** (v4.69, Victor: *"estaría bien el volatility
+  term structure y el expected move… para elegir strikes"*). Es la pieza que le faltaba: la pág. 6
+  dice que esto no va de DTE sino de la curva. Gráfico de la IV en el dinero a 60 días (~10 puntos)
+  con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
+  se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
+  Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **El detector de festivos solo mira las dos semanas del montaje** (v4.69). Con la ventana a 60 días,
+  los vencimientos lejanos ya no son diarios (quedan los viernes), y "falta un día entre semana" ahí
+  no significa festivo sino que la escalera se ensancha con el plazo.
 - **La put solo por debajo del precio y la call solo por encima**, y nada con |delta| ≥ 0,5. Sin ese
   corte se colaba un strike dentro de dinero del otro lado con un |delta| parecido al buscado, y
   salía una "put" por encima del spot.

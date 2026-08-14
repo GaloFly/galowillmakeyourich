@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.68"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.69"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1956,8 +1956,12 @@ async function buscarDobles(cfg, ticker, deltaObj) {
      (+5, +6, +7, +10, +14) y deja ver ENTERAS las dos semanas, que es como se detectan los
      festivos sin lista que mantener. */
   const entrada = viernesEntrada(hoy);
+  /* v4.69: la ventana se estira a 60 días para poder dibujar la ESTRUCTURA DE VOLATILIDAD, que es
+     de lo que va este montaje (pág. 6 del manual: "Double Calendar is not about DTE, it's about the
+     volatility term structure"). No cuesta llamadas de opciones —solo hacen falta dos contratos por
+     vencimiento, el par en el dinero— y la cadena se pide igual, partida en tramos por el puente. */
   const cad = await puenteFetch(cfg, "/cadena", { codigo: cod,
-    desde: masDiasIso(entrada, 1), hasta: masDiasIso(entrada, 15) });
+    desde: masDiasIso(entrada, 1), hasta: iso(new Date(hoy.getTime() + 60 * 86400000)) });
   if (!cad || !cad.ok) return { error: (cad && cad.error) || "El servidor no contestó al pedir la cadena." };
   /* v4.63: desde MAÑANA. Un vencimiento de hoy no es una entrada, es una expiración. */
   const vtos = (cad.vencimientos || []).slice().sort().filter((v) => dias(v) >= 1);
@@ -1976,10 +1980,15 @@ async function buscarDobles(cfg, ticker, deltaObj) {
   const pares = montajes.filter((m) => !m.falta);
   if (!pares.length) return { error: "No hay vencimientos de " + tkr + " en los días que pide el manual para entrar el viernes " + iso(entrada) + "." };
 
-  /* semanas con festivo: si falta un día entre semana en esa semana, el mercado estaba cerrado */
+  /* semanas con festivo: si falta un día entre semana en esa semana, el mercado estaba cerrado.
+     v4.69: SOLO se miran las dos semanas del montaje. Al estirar la ventana a 60 días, los
+     vencimientos de dentro de un mes ya no son diarios (quedan los viernes y poco más), y esas
+     semanas se habrían leído como "semana con festivo" cuando lo único que pasa es que la escalera
+     de vencimientos se ensancha con el plazo. */
   const semanaDe = (v) => { const d = new Date(v + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return iso(d); };
+  const finVentana = masDiasIso(entrada, 15);
   const porSemana = {};
-  vtos.forEach((v) => { (porSemana[semanaDe(v)] = porSemana[semanaDe(v)] || []).push(diaSemanaIso(v)); });
+  vtos.filter((v) => v <= finVentana).forEach((v) => { (porSemana[semanaDe(v)] = porSemana[semanaDe(v)] || []).push(diaSemanaIso(v)); });
   const semanaCorta = (v) => {
     const d = porSemana[semanaDe(v)] || [];
     /* solo se juzga una semana si se ve entera dentro de la ventana pedida */
@@ -2022,6 +2031,29 @@ async function buscarDobles(cfg, ticker, deltaObj) {
       if (c) { metaDe[c] = { strike: k, expiry: v, tipo }; pedir.add(c); }
     }));
   });
+  /* v4.69 — ESTRUCTURA DE VOLATILIDAD y MOVIMIENTO ESPERADO.
+     Para cada vencimiento basta el par en el dinero: su IV es la del vencimiento, y la suma de put
+     y call de ese mismo strike es lo que el mercado paga por el movimiento hasta ese día. Es decir,
+     el movimiento esperado NO se modela: se lee del precio de la straddle, que es dato de mercado.
+     Se cogen los vencimientos más cercanos a estos plazos —y siempre los cinco del montaje, para que
+     cada fila pueda decir a cuántos movimientos esperados está su strike. Son ~18 códigos más sobre
+     los ~145 del montaje: sigue siendo UNA llamada por debajo del máximo de 200. */
+  const PLAZOS_CURVA = [2, 5, 7, 10, 14, 21, 30, 45, 60];
+  const vtosCurva = [...new Set([...necesarios, ...PLAZOS_CURVA.map((d) => {
+    let mejor = null, dif = Infinity;
+    vtos.forEach((v) => { const x = Math.abs(dias(v) - d); if (x < dif) { dif = x; mejor = v; } });
+    return mejor;
+  }).filter(Boolean)])].sort();
+  const atmDe = {};
+  vtosCurva.forEach((v) => {
+    const k = [...new Set(contratos.filter((c) => c && String(c.vencimiento || "").slice(0, 10) === v).map((c) => n(c.strike)))]
+      .filter((x) => isFinite(x) && codigoDe[v + "|PUT|" + x] && codigoDe[v + "|CALL|" + x])
+      .sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot))[0];
+    if (k == null) return;
+    atmDe[v] = { k, p: codigoDe[v + "|PUT|" + k], c: codigoDe[v + "|CALL|" + k] };
+    pedir.add(atmDe[v].p); pedir.add(atmDe[v].c);
+  });
+
   const codigos = [...pedir];
   if (!codigos.length) return { error: "No se han encontrado contratos de " + tkr + " cerca del precio." };
   const { marcas } = await puenteMarcas(cfg, codigos);
@@ -2034,6 +2066,21 @@ async function buscarDobles(cfg, ticker, deltaObj) {
   /* v4.63 (Victor: "quita el VIX que ese pseudo no funciona"): fuera la estimación del VIX.
      Sacarlo de la IV de una opción daba un número con pinta de dato que no lo era. Si hace falta,
      se teclea el del bróker. */
+
+  /* La curva: un punto por vencimiento, con su IV en el dinero y lo que cuesta la straddle. Un punto
+     al que le falte cualquiera de los dos datos se cae — media curva real y media inventada sería
+     peor que no dibujarla. */
+  const curva = vtosCurva.map((v) => {
+    const a = atmDe[v];
+    if (!a) return null;
+    const ivp = iv(a.p), ivc = iv(a.c), pp = px(a.p), pc = px(a.c);
+    const ivAtm = isFinite(ivp) && isFinite(ivc) ? (ivp + ivc) / 2 : (isFinite(ivp) ? ivp : ivc);
+    const mov = isFinite(pp) && isFinite(pc) ? pp + pc : NaN;
+    if (!isFinite(ivAtm) && !isFinite(mov)) return null;
+    return { v, dte: dias(v), strike: a.k, iv: ivAtm, mov, movPct: isFinite(mov) ? mov / spot : NaN };
+  }).filter(Boolean);
+  const movDe = {};
+  curva.forEach((c) => { if (isFinite(c.mov)) movDe[c.v] = c.mov; });
 
   const filas = [];
   pares.forEach((p) => {
@@ -2080,6 +2127,11 @@ async function buscarDobles(cfg, ticker, deltaObj) {
       primaCorta, primaLarga, ratio: primaCorta / primaLarga,
       debito: primaLarga - primaCorta,
       ivCorta: (iv(cortoP) + iv(cortoC)) / 2, ivLarga: (iv(largoP) + iv(largoC)) / 2,
+      /* v4.69: a cuántos movimientos esperados está cada strike, para elegir con eso además de
+         con la delta. El movimiento es el de la pata CORTA, que es la que puede ser tocada. */
+      movEsp: movDe[p.corto],
+      vecesP: isFinite(movDe[p.corto]) && movDe[p.corto] > 0 ? (spot - kP) / movDe[p.corto] : NaN,
+      vecesC: isFinite(movDe[p.corto]) && movDe[p.corto] > 0 ? (kC - spot) / movDe[p.corto] : NaN,
       festivo: [...new Set([...semanaCorta(p.corto), ...semanaCorta(p.largo)])],
       patas: { sp: { k: kP, p: px(cortoP) }, sc: { k: kC, p: px(cortoC) },
                lp: { k: kP, p: px(largoP) }, lc: { k: kC, p: px(largoC) } },
@@ -2093,7 +2145,7 @@ async function buscarDobles(cfg, ticker, deltaObj) {
     entrada: iso(entrada),
     festivo: m.falta ? [] : [...new Set([...semanaCorta(m.corto), ...semanaCorta(m.largo)])],
     cuantas: filas.filter((f) => f.par === m.clave).length }));
-  return { spot, spotSpy, tkr, entrada: iso(entrada), montajes: conFestivo, filas, pedidos: codigos.length };
+  return { spot, spotSpy, tkr, entrada: iso(entrada), montajes: conFestivo, filas, curva, pedidos: codigos.length };
 }
 /* v4.68 — DOS sellos, no un veredicto único.
 
@@ -7803,6 +7855,56 @@ function ElRow({ label, post, base, delta, color, min, max, zones, marks }) {
   );
 }
 
+/* ---------- v4.69: estructura de volatilidad y movimiento esperado ----------
+   Victor: *"estaría bien que me metieras el volatility term structure… y el expected move, en plan
+   en gráfico o ver en cuánto estamos del expected move, para elegir strikes"*.
+
+   Es la pieza que le faltaba a esta herramienta: el manual (pág. 6) dice literalmente que el Double
+   Calendar no va de DTE sino de la estructura de volatilidad, y hasta ahora solo se veían dos puntos
+   de esa curva (la corta y la larga de cada montaje). Aquí se ve entera, a 60 días.
+
+   Dos decisiones:
+   · El movimiento esperado NO se modela con una fórmula: es el precio de la straddle en el dinero,
+     que es lo que el mercado paga por ese movimiento. Dato, no estimación.
+   · Sin puntos suficientes no se dibuja nada. Una curva de dos puntos no es una curva, es una raya
+     que sugiere una tendencia que no se ha medido. */
+function CurvaIV({ curva, spot }) {
+  const pts = (curva || []).filter((c) => isFinite(c.iv) && c.iv > 0);
+  if (pts.length < 3) return null;
+  /* MT = 18 y no 12: la etiqueta con el valor va 6px POR ENCIMA de su punto, y con 12 el punto más
+     alto la dejaba cortada por el borde de arriba. */
+  const W = 320, H = 102, ML = 6, MR = 6, MT = 18, MB = 20;
+  const xs = pts.map((p) => p.dte), ys = pts.map((p) => p.iv);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const rangoY = Math.max(0.4, y1 - y0); /* si la curva es plana, que no se dibuje un diente de sierra */
+  const px = (d) => ML + ((d - x0) / Math.max(1, x1 - x0)) * (W - ML - MR);
+  const py = (v) => MT + (1 - (v - y0) / rangoY) * (H - MT - MB);
+  const linea = pts.map((p) => px(p.dte).toFixed(1) + "," + py(p.iv).toFixed(1)).join(" ");
+  const sube = ys[ys.length - 1] - ys[0];
+  const col = sube > 0 ? T.sub : T.green;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Estructura de volatilidad">
+        <polyline points={linea} fill="none" stroke={col} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {pts.map((p) => <circle key={p.v} cx={px(p.dte)} cy={py(p.iv)} r="2.6" fill={col} />)}
+        <text x={px(pts[0].dte)} y={py(pts[0].iv) - 6} fill={T.ink} fontSize="11" fontWeight="800" textAnchor="start">{pts[0].iv.toFixed(1)}</text>
+        <text x={px(pts[pts.length - 1].dte)} y={py(pts[pts.length - 1].iv) - 6} fill={T.ink} fontSize="11" fontWeight="800" textAnchor="end">{pts[pts.length - 1].iv.toFixed(1)}</text>
+        {pts.map((p, i) => (i === 0 || i === pts.length - 1 || i === Math.floor(pts.length / 2))
+          ? <text key={"d" + p.v} x={px(p.dte)} y={H - 5} fill={T.sub} fontSize="10" fontWeight="700"
+              textAnchor={i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}>{p.dte}d</text>
+          : null)}
+      </svg>
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+        {sube > 0
+          ? "De " + pts[0].dte + " a " + pts[pts.length - 1].dte + " días la IV SUBE " + Math.abs(sube).toFixed(1)
+            + " puntos: contango, el estado normal. El manual lo describe como mercado tranquilo, que es cuando quiere que entres — pero significa que compras la pata larga más cara de volatilidad."
+          : "De " + pts[0].dte + " a " + pts[pts.length - 1].dte + " días la IV BAJA " + Math.abs(sube).toFixed(1)
+            + " puntos: backwardation. Miedo a corto plazo, y la pata corta que vendes es la cara — es la curva que juega a tu favor en un calendar."}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- v4.62: Double Calendar / Double Diagonal ----------
    Las reglas y sus páginas están en buscarDobles(). Aquí solo se pintan, con dos cuidados:
    · Cada regla del manual sale con su semáforo Y con el número que la hace pasar o fallar, para
@@ -7895,6 +7997,34 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
           </div>
         </div>
 
+        {desplegado && res.curva && res.curva.length >= 3 && (
+          <div style={{ background: T.card, borderRadius: 18, padding: 13, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>Estructura de volatilidad</span>
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>IV en el dinero por vencimiento</span>
+            </div>
+            <CurvaIV curva={res.curva} spot={res.spot} />
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.ink, paddingTop: 2 }}>Movimiento esperado</div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
+              {res.curva.filter((c) => isFinite(c.mov)).map((c) => (
+                <div key={"m" + c.v} style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, background: T.tile, borderRadius: 10, padding: "6px 9px", boxShadow: T.raiseSm }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", width: 40, flexShrink: 0 }}>{c.dte}d</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, flexShrink: 0 }}>{ibkrDate(c.v)}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    ±${money2(c.mov)} <span style={{ fontWeight: 600, color: T.sub }}>{pct(c.movPct, 1)}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+              El movimiento esperado no es una estimación mía: es lo que cuesta la put + la call en el dinero
+              (${money2(res.curva[0].strike)} para el primer vencimiento), o sea lo que el mercado está pagando por
+              ese movimiento. Con {res.tkr} a ${money2(res.spot)}, ±${money2(res.curva[0].mov)} a {res.curva[0].dte} días
+              es la banda que el propio precio de las opciones da por normal.
+            </div>
+          </div>
+        )}
+
       {desplegado && gruposDC(res).map((m) => {
         const grupo = res.filas.filter((f) => f.par === m.clave).sort((a, b) => b.strikeP - a.strikeP);
         const mejor = grupo.slice().sort((a, b) => b.ratio - a.ratio)[0];
@@ -7961,6 +8091,11 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                     <span style={{ color: ratioOk ? T.green : ratioPasa ? T.gold : T.red }}>ratio {pct(f.ratio, 0)}</span>
                     <span style={{ color: ivOk ? T.green : T.sub }}>IV {isFinite(f.ivCorta) ? f.ivCorta.toFixed(1) : "—"} / {isFinite(f.ivLarga) ? f.ivLarga.toFixed(1) : "—"}</span>
                     <span style={{ color: T.sub }}>débito ${money2(f.debito * 100)}</span>
+                    {isFinite(f.movEsp) && isFinite(f.vecesP) && isFinite(f.vecesC) && (
+                      <span style={{ color: Math.min(f.vecesP, f.vecesC) >= 1 ? T.green : T.gold }}>
+                        {"±$" + money2(f.movEsp) + " esp · put " + f.vecesP.toFixed(1) + "× · call " + f.vecesC.toFixed(1) + "×"}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
                     {ratioOk ? "Ratio sobre el 50% ideal: pones " + money2(f.debito * 100) + " $ de tu bolsillo, y ese débito es tu pérdida máxima."
@@ -7968,6 +8103,12 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                     {isFinite(brecha)
                       ? (ivOk ? " La corta paga " + brecha.toFixed(1) + " puntos MÁS de IV que la larga: vendes la cara y compras la barata, que es lo ideal."
                               : " La larga paga " + Math.abs(brecha).toFixed(1) + " puntos más de IV. Es lo normal (la curva sube con el plazo), no una avería, pero la curva no está de tu lado.")
+                      : ""}
+                    {isFinite(f.vecesP) && isFinite(f.vecesC)
+                      ? (Math.min(f.vecesP, f.vecesC) >= 1
+                          ? " Los dos strikes están fuera del movimiento que el mercado da por normal hasta el vencimiento corto."
+                          : " Ojo: " + (f.vecesP < f.vecesC ? "la put" : "la call") + " está DENTRO del movimiento esperado ("
+                            + Math.min(f.vecesP, f.vecesC).toFixed(1) + "×), o sea que tocarla entra en lo normal.")
                       : ""}
                   </div>
                   <button onClick={() => onOpenPosition && onOpenPosition({ tkr: res.tkr, tipo: "DC", block: 3, right: "", qty: "100",
