@@ -205,8 +205,20 @@ Lo que hay que tener presente:
 - **El veredicto exige el ratio Y la curva de IV** (v4.63). El ratio pintaba de verde la tarjeta
   mientras la IV iba en contra; el texto lo decía pero el color decía lo contrario, y el color se lee
   antes. Solo hay `OK` si ratio >50% **y** IV corta > IV larga.
+- **Los cuatro pares se cuentan DESDE EL VIERNES DE ENTRADA** (v4.67, Victor: *"las entradas son
+  siempre en viernes… eso es 5/7, 6/7, 7/10, 7/14"*). No son "dos vencimientos que caigan en esos
+  días de la semana": son 5/7, 6/7, 7/10 y 7/14 días contados desde ese viernes. Buscándolos por día
+  suelto salían parejas de la semana siguiente (mié 26 → vie 28, a 12/14 días, que no es el montaje)
+  y a la vez faltaba el 7/14, porque hacían falta ocho vencimientos y por cupo solo se pedían seis.
+- **Los strikes, los MISMOS en los cinco vencimientos** (v4.67). La pata larga tiene que ser del
+  mismo strike que la corta: eligiéndolos por separado en cada vencimiento, el montaje se caía en
+  silencio en cuanto la escalera cambiaba. Se elige una lista única (los que existen en todos, dentro
+  del 5% del precio, salteados si pasan de 16 por lado) y se pide entera: ~150 códigos en UNA llamada.
 - **Varios strikes por par**, no uno: la banda tiene que llegar a delta 0,10, y con 12 strikes por
   lado se quedaba a ±4% del precio y todos los objetivos caían en el mismo.
+- **Cada montaje se pliega, y el que no se puede montar se dice** (v4.67). Si falta un vencimiento
+  por festivo, el montaje sale igual en gris explicando cuál falta — desaparecer no se distingue de
+  "no compensa". Se abre solo el mejor de los que pasan las dos reglas; si ninguno pasa, ninguno.
 - **Las semanas con festivo se detectan solas**: SPY/QQQ vencen todos los días hábiles, así que si
   falta un día entre semana, ese día el mercado estaba cerrado. Sin lista que mantener.
 - **La put solo por debajo del precio y la call solo por encima**, y nada con |delta| ≥ 0,5. Sin ese

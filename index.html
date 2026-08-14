@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.66"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.67"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1915,9 +1915,29 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
    así que si en una semana falta un día entre semana, ese día el mercado estaba cerrado. Sin lista
    de festivos que mantener y sin caducidad. */
 const DIAS_DC = { 1: "lun", 2: "mar", 3: "mié", 4: "jue", 5: "vie" };
-const PARES_DC = [[3, 5], [4, 5], [5, 1], [5, 5]]; /* [día corto, día largo] */
 const diaSemanaIso = (iso) => new Date(iso + "T12:00:00Z").getUTCDay();
 const VIX_MIN = 15, VIX_MAX = 25;
+/* v4.67 — Victor: "las entradas son siempre en viernes… miércoles semana siguiente la corta y
+   viernes la larga, o jueves corta viernes larga, o viernes corta lunes larga, o viernes corta
+   viernes siguiente larga. Eso es 5/7, 6/7, 7/10, 7/14."
+
+   Ahí está la pieza que faltaba. Los cuatro pares del manual (mié/vie, jue/vie, vie/lun, vie/vie,
+   pág. 4) no son "dos vencimientos cualesquiera que caigan en esos días": son días contados DESDE
+   EL VIERNES EN QUE SE ENTRA. Buscándolos por día de la semana suelto salían también parejas de
+   semanas más lejanas (mié 26 → vie 28, a 12/14 días) que no son este montaje, y en cambio el
+   7/14 se perdía. Ahora se ancla al viernes de entrada y salen los cuatro, siempre los cuatro. */
+const MONTAJES_DC = [
+  { clave: "5/7",  dCorto: 5,  dLargo: 7,  nota: "corta el miércoles de la semana siguiente, larga el viernes" },
+  { clave: "6/7",  dCorto: 6,  dLargo: 7,  nota: "corta el jueves, larga el viernes" },
+  { clave: "7/10", dCorto: 7,  dLargo: 10, nota: "corta el viernes, larga el lunes" },
+  { clave: "7/14", dCorto: 7,  dLargo: 14, nota: "corta el viernes, larga el viernes siguiente" },
+];
+/* El viernes en el que se entra: hoy si hoy es viernes, y si no el viernes que viene. */
+const viernesEntrada = (hoy) => {
+  const base = new Date(iso(hoy) + "T12:00:00Z");
+  return new Date(base.getTime() + ((5 - base.getUTCDay() + 7) % 7) * 86400000);
+};
+const masDiasIso = (d, k) => iso(new Date(d.getTime() + k * 86400000));
 
 async function buscarDobles(cfg, ticker, deltaObj) {
   const tkr = String(ticker || "").trim().toUpperCase();
@@ -1931,26 +1951,30 @@ async function buscarDobles(cfg, ticker, deltaObj) {
   const spotSpy = q.cotizaciones && q.cotizaciones["US.SPY"] ? n(q.cotizaciones["US.SPY"].ultimo) : NaN;
   if (!isFinite(spot) || spot <= 0) return { error: "El servidor no da precio de " + tkr + "." };
 
-  /* cadena del ticker: dos semanas y pico, que es donde viven estos montajes */
+  /* v4.67: la ventana se ancla al viernes de entrada, no a hoy. Desde el día siguiente a ese
+     viernes hasta 15 días después: cubre los cinco vencimientos que usan los cuatro montajes
+     (+5, +6, +7, +10, +14) y deja ver ENTERAS las dos semanas, que es como se detectan los
+     festivos sin lista que mantener. */
+  const entrada = viernesEntrada(hoy);
   const cad = await puenteFetch(cfg, "/cadena", { codigo: cod,
-    desde: iso(new Date(hoy.getTime() + 86400000)), hasta: iso(new Date(hoy.getTime() + 18 * 86400000)) });
+    desde: masDiasIso(entrada, 1), hasta: masDiasIso(entrada, 15) });
   if (!cad || !cad.ok) return { error: (cad && cad.error) || "El servidor no contestó al pedir la cadena." };
   /* v4.63: desde MAÑANA. Un vencimiento de hoy no es una entrada, es una expiración. */
   const vtos = (cad.vencimientos || []).slice().sort().filter((v) => dias(v) >= 1);
-  if (vtos.length < 2) return { error: "No hay suficientes vencimientos de " + tkr + " en las próximas dos semanas." };
+  const hayVto = new Set(vtos);
 
-  /* pares válidos según el manual */
-  const pares = [];
-  vtos.forEach((corto) => {
-    vtos.forEach((largo) => {
-      if (largo <= corto) return;
-      const dc = diaSemanaIso(corto), dl = diaSemanaIso(largo);
-      if (!PARES_DC.some(([a, b]) => a === dc && b === dl)) return;
-      if (dias(largo) - dias(corto) > 7) return; /* Vie/Vie de semanas lejanas no es este montaje */
-      pares.push({ corto, largo });
-    });
+  /* Los cuatro montajes del manual, en fechas. Si a uno le falta un vencimiento (día festivo) NO
+     desaparece: se devuelve igual diciendo cuál falta. Un montaje que se esfuma sin explicación no
+     se distingue de uno que no compensa, y son cosas muy distintas. */
+  const montajes = MONTAJES_DC.map((m) => {
+    const corto = masDiasIso(entrada, m.dCorto), largo = masDiasIso(entrada, m.dLargo);
+    const faltan = [corto, largo].filter((v) => !hayVto.has(v));
+    return { ...m, corto, largo,
+      diaCorto: DIAS_DC[diaSemanaIso(corto)], diaLargo: DIAS_DC[diaSemanaIso(largo)],
+      falta: faltan.length ? faltan.map((v) => DIAS_DC[diaSemanaIso(v)] + " " + v.slice(8) + "/" + v.slice(5, 7)).join(" y el ") : "" };
   });
-  if (!pares.length) return { error: "Ningún par de vencimientos de " + tkr + " encaja con las combinaciones del manual (mié/vie, jue/vie, vie/lun, vie/vie)." };
+  const pares = montajes.filter((m) => !m.falta);
+  if (!pares.length) return { error: "No hay vencimientos de " + tkr + " en los días que pide el manual para entrar el viernes " + iso(entrada) + "." };
 
   /* semanas con festivo: si falta un día entre semana en esa semana, el mercado estaba cerrado */
   const semanaDe = (v) => { const d = new Date(v + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return iso(d); };
@@ -1962,26 +1986,41 @@ async function buscarDobles(cfg, ticker, deltaObj) {
     return d.length >= 3 && d.length < 5 ? [1, 2, 3, 4, 5].filter((x) => !d.includes(x)).map((x) => DIAS_DC[x]) : [];
   };
 
-  /* strikes: una banda alrededor del precio en cada vencimiento implicado */
+  /* strikes: los MISMOS en los cinco vencimientos.
+     v4.67 — antes se cogían los 14 más cercanos al precio en CADA vencimiento por separado, y eso
+     tenía dos averías. La primera: la pata larga tiene que ser del MISMO strike que la corta, y si
+     un vencimiento tenía la escalera de strikes un poco distinta, el montaje se caía sin decir nada.
+     La segunda: 14 strikes de $1 en QQQ son un 1,9% del precio, y una delta 0,10 a una semana está
+     al 3%: los objetivos bajos no llegaban.
+     Ahora se elige UNA lista de strikes —los que existen en los cinco vencimientos, dentro de un 5%
+     del precio— y se pide esa misma lista en todos. Si hay más de 16 por lado se toman salteados:
+     lejos del dinero no hace falta resolución, hace falta ALCANCE.
+     Cupo: 5 vencimientos × 2 lados × 16 = 160 códigos, bajo el máximo de 200 de una llamada. */
   const contratos = cad.contratos || [];
   const necesarios = [...new Set(pares.flatMap((p) => [p.corto, p.largo]))].sort();
   const metaDe = {};
   const pedir = new Set();
-  /* v4.63: la banda era de 12 strikes por lado y se quedaba a ±4% del precio — no llegaba a las
-     deltas bajas, así que todos los objetivos caían en el MISMO strike y salía un solo montaje por
-     par. Ahora 14 por lado y solo del lado que toca (puts abajo, calls arriba), que con strikes de
-     $5 en QQQ son ~10% y cubre de sobra hasta delta 0,10.
-     El tope de vencimientos existe por el cupo: 6 × 2 lados × 14 = 168 códigos, bajo el máximo de
-     200 que admite una llamada. */
-  necesarios.slice(0, 6).forEach((v) => {
-    ["PUT", "CALL"].forEach((tipo) => {
-      const lado = contratos
-        .filter((c) => c && String(c.tipo || "").toUpperCase() === tipo && String(c.vencimiento || "").slice(0, 10) === v)
-        .filter((c) => (tipo === "PUT" ? n(c.strike) <= spot : n(c.strike) >= spot))
-        .sort((a, b) => Math.abs(n(a.strike) - spot) - Math.abs(n(b.strike) - spot))
-        .slice(0, 14);
-      lado.forEach((c) => { metaDe[c.codigo] = { strike: n(c.strike), expiry: v, tipo }; pedir.add(c.codigo); });
-    });
+  const POR_LADO = 16, BANDA = 0.05;
+  const codigoDe = {}; /* "vto|tipo|strike" → código */
+  contratos.forEach((c) => {
+    if (!c || !c.codigo) return;
+    const v = String(c.vencimiento || "").slice(0, 10), tipo = String(c.tipo || "").toUpperCase();
+    codigoDe[v + "|" + tipo + "|" + n(c.strike)] = c.codigo;
+  });
+  const enTodos = (tipo, k) => necesarios.every((v) => codigoDe[v + "|" + tipo + "|" + k]);
+  ["PUT", "CALL"].forEach((tipo) => {
+    const dentro = (k) => (tipo === "PUT" ? k <= spot && k >= spot * (1 - BANDA) : k >= spot && k <= spot * (1 + BANDA));
+    let ks = [...new Set(contratos.filter((c) => c && String(c.tipo || "").toUpperCase() === tipo).map((c) => n(c.strike)))]
+      .filter((k) => isFinite(k) && k > 0 && dentro(k) && enTodos(tipo, k))
+      .sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot));
+    if (ks.length > POR_LADO) {
+      const paso = Math.ceil(ks.length / POR_LADO);
+      ks = ks.filter((k, i) => i % paso === 0 || i < 3).slice(0, POR_LADO); /* los 3 de al lado del dinero, enteros */
+    }
+    necesarios.forEach((v) => ks.forEach((k) => {
+      const c = codigoDe[v + "|" + tipo + "|" + k];
+      if (c) { metaDe[c] = { strike: k, expiry: v, tipo }; pedir.add(c); }
+    }));
   });
   const codigos = [...pedir];
   if (!codigos.length) return { error: "No se han encontrado contratos de " + tkr + " cerca del precio." };
@@ -2032,9 +2071,9 @@ async function buscarDobles(cfg, ticker, deltaObj) {
     const primaLarga = px(largoP) + px(largoC);
     if (!isFinite(primaCorta) || !isFinite(primaLarga) || primaLarga <= 0) return;
     filas.push({
-      id: p.corto + "|" + p.largo + "|" + kP + "|" + kC, corto: p.corto, largo: p.largo,
-      par: p.corto + "|" + p.largo,
-      diaCorto: DIAS_DC[diaSemanaIso(p.corto)], diaLargo: DIAS_DC[diaSemanaIso(p.largo)],
+      id: p.clave + "|" + kP + "|" + kC, corto: p.corto, largo: p.largo,
+      par: p.clave, clave: p.clave,
+      diaCorto: p.diaCorto, diaLargo: p.diaLargo,
       dteCorto: dias(p.corto), dteLargo: dias(p.largo),
       strikeP: kP, strikeC: kC,
       deltaP: dl(cortoP), deltaC: dl(cortoC),
@@ -2048,8 +2087,38 @@ async function buscarDobles(cfg, ticker, deltaObj) {
     });
   });
   if (!filas.length) return { error: "No se ha podido completar ningún montaje: faltan precios o deltas de alguna pata." };
-  return { spot, spotSpy, tkr, filas, pedidos: codigos.length };
+  /* v4.67: se devuelven los CUATRO montajes, también los que se quedaron sin candidatas, con el
+     motivo. Así la pantalla puede decir "este no sale y por esto", en vez de omitirlo. */
+  const conFestivo = montajes.map((m) => ({ ...m,
+    entrada: iso(entrada),
+    festivo: m.falta ? [] : [...new Set([...semanaCorta(m.corto), ...semanaCorta(m.largo)])],
+    cuantas: filas.filter((f) => f.par === m.clave).length }));
+  return { spot, spotSpy, tkr, entrada: iso(entrada), montajes: conFestivo, filas, pedidos: codigos.length };
 }
+/* v4.63: el veredicto exige el ratio Y la curva de IV. Vive aquí y no dentro de la fila porque
+   desde la v4.67 la cabecera plegable de cada montaje también lo necesita: si la cabecera juzgara
+   por su cuenta, podría decir verde sobre un grupo cuyas filas dicen rojo. */
+const veredictoDC = (f) => {
+  const ratioOk = f.ratio >= 0.5, ratioPasa = f.ratio >= 0.4;
+  const ivOk = isFinite(f.ivCorta) && isFinite(f.ivLarga) && f.ivCorta > f.ivLarga;
+  return { ratioOk, ratioPasa, ivOk, bien: ratioOk && ivOk, mal: !ratioPasa || !ivOk };
+};
+/* Los montajes de un resultado. Las búsquedas guardadas ANTES de la v4.67 no traen `montajes`:
+   para ellas se reconstruyen desde las filas y se ven como siempre (regla 2: campo nuevo que falta
+   no puede romper nada). */
+const gruposDC = (res) => (res.montajes && res.montajes.length ? res.montajes
+  : [...new Set((res.filas || []).map((f) => f.par))].map((par) => {
+      const c = (res.filas || []).find((f) => f.par === par) || {};
+      return { clave: par, corto: c.corto, largo: c.largo, diaCorto: c.diaCorto, diaLargo: c.diaLargo,
+        falta: "", nota: "", festivo: c.festivo || [] };
+    }));
+/* Cuál se abre sola: la mejor de las que pasan las dos reglas. Si ninguna pasa, ninguna — que
+   abrir una mala por defecto sugiere que es la recomendada. */
+const mejorClaveDC = (res) => {
+  let mejor = null;
+  (res.filas || []).forEach((f) => { if (veredictoDC(f).bien && (!mejor || f.ratio > mejor.ratio)) mejor = f; });
+  return mejor ? mejor.par : null;
+};
 const MARCA_FRESCA_MS = 20 * 60 * 1000;
 const fechaDatoMs = (txt) => {
   if (!txt) return NaN;
@@ -7730,6 +7799,9 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
   /* v4.64: las búsquedas se quedan guardadas por ticker, plegadas, hasta que se borren */
   const [guardadas, setGuardadas] = useState(() => cargaBusquedas(KEY_BUSCA_DC));
   const [abierto, setAbierto] = useState(null);
+  /* v4.67: qué montaje está desplegado dentro de cada ticker. `undefined` = todavía no se ha tocado
+     nada, y entonces manda mejorClaveDC; `null` = se cerró a mano y se queda cerrado. */
+  const [abiertoM, setAbiertoM] = useState({});
   const graba = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_DC, v); };
 
   const lanzar = async () => {
@@ -7739,6 +7811,7 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
     if (r.error) { setErr(r.error); return; }
     graba({ ...guardadas, [tkr]: { ...r, cuando: Date.now() } });
     setAbierto(tkr);
+    setAbiertoM((x) => { const y = { ...x }; delete y[tkr]; return y; }); /* que vuelva a mandar la mejor */
   };
   const borrar = (tk) => { const x = { ...guardadas }; delete x[tk]; graba(x); };
   return (
@@ -7761,8 +7834,10 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
           </button>
         </div>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-          Ticker y delta objetivo. Busca los pares de vencimientos del manual —mié/vie, jue/vie, vie/lun, vie/vie— de las próximas dos semanas.
-        </div>
+          Ticker y delta objetivo. Se entra en viernes, así que busca los cuatro montajes del manual
+          contados desde ese viernes: <b>5/7</b> (corta mié, larga vie), <b>6/7</b> (jue → vie),
+          <b>7/10</b> (vie → lun) y <b>7/14</b> (vie → vie siguiente).
+</div>
         {err && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{err}</div>}
       </div>
 
@@ -7776,7 +7851,9 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
             <button onClick={() => setAbierto(desplegado ? null : tk)}
               style={{ flex: 1, minWidth: 0, textAlign: "left", background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>{res.tkr} ${money2(res.spot)}</span>
-              <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{res.filas.length} montajes · {fechaCorta(res.cuando)}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>
+                {res.entrada ? "entrada vie " + ibkrDate(res.entrada) + " · " : ""}{res.filas.length} montajes · {fechaCorta(res.cuando)}
+              </span>
               <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: T.sub }}>{desplegado ? "▾" : "▸"}</span>
             </button>
             <button onClick={() => borrar(tk)} aria-label={"Borrar " + tk}
@@ -7799,30 +7876,48 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
           </div>
         </div>
 
-      {desplegado && [...new Set(res.filas.map((f) => f.par))].map((par) => {
-        const grupo = res.filas.filter((f) => f.par === par).sort((a, b) => b.strikeP - a.strikeP);
-        const c = grupo[0];
+      {desplegado && gruposDC(res).map((m) => {
+        const grupo = res.filas.filter((f) => f.par === m.clave).sort((a, b) => b.strikeP - a.strikeP);
+        const mejor = grupo.slice().sort((a, b) => b.ratio - a.ratio)[0];
+        const vm = mejor ? veredictoDC(mejor) : null;
+        const colM = vm ? (vm.bien ? T.green : vm.mal ? T.red : T.gold) : T.sub;
+        const fondoM = vm ? (vm.bien ? T.tileGreen : vm.mal ? T.tileRed : T.tileAmber) : T.tile;
+        const eleg = abiertoM[tk] !== undefined ? abiertoM[tk] : mejorClaveDC(res);
+        const abiertaM = eleg === m.clave && grupo.length > 0;
         return (
-          <div key={par} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, minWidth: 0, padding: "0 3px" }}>
-              <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>
-                {c.diaCorto} {ibkrDate(c.corto)} <span style={{ color: T.sub }}>→</span> {c.diaLargo} {ibkrDate(c.largo)}
-              </span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{c.dteCorto}d / {c.dteLargo}d</span>
-            </div>
-            {c.festivo.length > 0 && (
+          <div key={m.clave} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
+            <button onClick={() => grupo.length && setAbiertoM({ ...abiertoM, [tk]: abiertaM ? null : m.clave })}
+              style={{ textAlign: "left", background: T.card, border: "none", borderRadius: 14, padding: "10px 12px", boxShadow: T.raise,
+                cursor: grupo.length ? "pointer" : "default", opacity: grupo.length ? 1 : 0.6,
+                display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{m.clave}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>
+                  {m.diaCorto} {ibkrDate(m.corto)} <span style={{ color: T.sub }}>→</span> {m.diaLargo} {ibkrDate(m.largo)}
+                </span>
+                {vm && (
+                  <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 800, color: colM, background: fondoM, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                    {vm.bien ? "OK" : vm.mal ? "NO" : "JUSTO"}
+                  </span>
+                )}
+                <span style={{ marginLeft: vm ? 0 : "auto", fontSize: 12, fontWeight: 800, color: T.sub }}>{abiertaM ? "▾" : grupo.length ? "▸" : ""}</span>
+              </div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>
+                {m.falta
+                  ? "No hay vencimiento el " + m.falta + ": ese día el mercado está cerrado, así que este montaje no se puede montar esta semana."
+                  : grupo.length
+                    ? grupo.length + (grupo.length === 1 ? " montaje · mejor ratio " : " montajes · mejor ratio ") + pct(mejor.ratio, 0)
+                      + (m.festivo && m.festivo.length ? " · semana con festivo" : "") + " · " + m.nota
+                    : "Sin candidatas: ninguna pata corta llega a esa delta con los strikes que hay."}
+              </div>
+            </button>
+            {abiertaM && m.festivo && m.festivo.length > 0 && (
               <div style={{ fontSize: 10.5, fontWeight: 700, color: T.gold, background: T.tileAmber, borderRadius: 9, padding: "6px 9px", lineHeight: 1.4 }}>
-                Semana con festivo (no hay vencimiento el {c.festivo.join(" ni el ")}). El manual avisa de peor tasa de acierto.
+                Semana con festivo (no hay vencimiento el {m.festivo.join(" ni el ")}). El manual avisa de peor tasa de acierto.
               </div>
             )}
-            {grupo.map((f) => {
-              const ratioOk = f.ratio >= 0.5, ratioPasa = f.ratio >= 0.4;
-              /* v4.63 (Victor: "el IV de la corta debería ser más alto que la larga… y sin embargo
-                 me lo pones en verde"). Tenía razón: el ratio pintaba de verde toda la tarjeta
-                 mientras la curva de IV iba en contra. Ahora el veredicto EXIGE las dos: solo hay
-                 verde si el ratio pasa del 50% Y la corta tiene más IV que la larga. */
-              const ivOk = isFinite(f.ivCorta) && isFinite(f.ivLarga) && f.ivCorta > f.ivLarga;
-              const bien = ratioOk && ivOk, mal = !ratioPasa || !ivOk;
+            {abiertaM && grupo.map((f) => {
+              const { ratioOk, ratioPasa, ivOk, bien, mal } = veredictoDC(f);
               const col = bien ? T.green : mal ? T.red : T.gold;
               const fondo = bien ? T.tileGreen : mal ? T.tileRed : T.tileAmber;
               return (
@@ -7864,9 +7959,10 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
 
       {Object.keys(guardadas).length > 0 && (
         <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5, padding: "0 4px" }}>
-          Reglas del manual de OptionsKit: VIX 15–25 · delta 20 de partida · pares mié/vie, jue/vie, vie/lun, vie/vie ·
-          ratio corto/largo ≥40%, ideal &gt;50%. Verde solo si el ratio pasa del 50% <b>y</b> la pata corta tiene más IV
-          que la larga: si compras la cara y vendes la barata, el ratio bueno no te salva.
+          Reglas del manual de OptionsKit: VIX 15–25 · delta 20 de partida · los cuatro montajes 5/7, 6/7, 7/10 y 7/14
+          contados desde el viernes de entrada · ratio corto/largo ≥40%, ideal &gt;50%. Verde solo si el ratio pasa del
+          50% <b>y</b> la pata corta tiene más IV que la larga: si compras la cara y vendes la barata, el ratio bueno
+          no te salva.
         </div>
       )}
     </div>
