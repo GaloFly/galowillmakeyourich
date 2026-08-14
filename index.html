@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.59"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.60"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -10236,40 +10236,93 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             Mira los vencimientos más cercanos a 30, 45 y 60 días y trae 5 strikes por debajo del precio de cada uno.
           </div>
           {buscaErr && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{buscaErr}</div>}
-          {halladas && (
-            <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>
-                {buscaTkr} a ${money2(halladas.spot)} · {halladas.filas.length} de {halladas.pedidos} con precio · vencimientos {halladas.vencimientos.join(" · ")}
-              </div>
-              {halladas.filas.map((f) => {
-                /* el mismo criterio que ya tiene elegido el Comparador manda aquí también: no se
-                   inventa una vara nueva para ordenar lo que viene del servidor */
-                const prima = n(f.credit) * 100;
-                const rom = n(f.margin) ? prima / n(f.margin) : NaN;
-                const annRom = isFinite(rom) && n(f.dte) ? rom * (365 / n(f.dte)) : NaN;
-                return (
-                  <div key={f.codigo} style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.raiseSm, display: "grid", gap: 6 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                      <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>${f.strike}P <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{f.dte}d · {ibkrDate(f.expiry)}</span></span>
-                      <span style={{ fontSize: 13.5, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>${money2(prima)}</span>
+          {halladas && (() => {
+            /* v4.60 (Victor: "viene muy raw… ¿cómo me las podrías agrupar, strike o DTE?"):
+               POR VENCIMIENTO. Dentro de un vencimiento eliges cuánto riesgo quieres (bajas de
+               strike, bajas de prima y de delta); entre vencimientos decides otra cosa: si te
+               compensa irte más lejos. En una lista plana hay que hacer las dos comparaciones a la
+               vez, y por eso no se leía. */
+            const conMetricas = halladas.filas.map((f) => {
+              const prima = n(f.credit) * 100;
+              const notional = n(f.strike) * 100;
+              const roi = notional ? prima / notional : NaN;
+              const rom = n(f.margin) ? prima / n(f.margin) : NaN;
+              const ann = n(f.dte) ? 365 / n(f.dte) : 0;
+              const dAbs = Math.abs(n(f.delta));
+              return { ...f, prima, roi, annRoi: roi * ann, rom, annRom: rom * ann,
+                       deltaEff: dAbs ? (roi * ann * 100) / dAbs : NaN };
+            });
+            /* el mismo criterio que ya tiene elegido el Comparador; "impacto en margen" necesita la
+               cuenta entera, así que para marcar la mejor de una búsqueda se usa el ROM anualizado */
+            const valor = (c) => (basis === "roi" ? c.roi : basis === "annRoi" ? c.annRoi
+              : basis === "rom" ? c.rom : basis === "delta" ? c.deltaEff : c.annRom);
+            const nombreCrit = basis === "roi" ? "ROI" : basis === "annRoi" ? "ROI anualizado"
+              : basis === "rom" ? "return on margin" : basis === "delta" ? "eficiencia vs Delta"
+              : "ROM anualizado";
+            let mejor = null;
+            conMetricas.forEach((c) => { const v = valor(c); if (isFinite(v) && (!mejor || v > valor(mejor))) mejor = c; });
+            const porVto = {};
+            conMetricas.forEach((c) => { (porVto[c.expiry] = porVto[c.expiry] || []).push(c); });
+            const vtos = Object.keys(porVto).sort();
+            return (
+              <div style={{ display: "grid", gap: 12 }}>
+                {/* el precio del subyacente, a la vista y grande: es la referencia contra la que se
+                    lee cada strike, y estaba escondido en una línea gris */}
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset }}>
+                  <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>{buscaTkr}</span>
+                  <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(halladas.spot)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginLeft: "auto" }}>{conMetricas.length} candidatas · mejor por {nombreCrit}</span>
+                </div>
+                {vtos.map((v) => {
+                  const filas = porVto[v].slice().sort((a, b) => n(b.strike) - n(a.strike));
+                  const dte = filas[0] ? filas[0].dte : "";
+                  return (
+                    <div key={v} style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>{ibkrDate(v)}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{dte} días</span>
+                      </div>
+                      {filas.map((f) => {
+                        const esMejor = mejor && f.codigo === mejor.codigo;
+                        const otm = halladas.spot ? (halladas.spot - n(f.strike)) / halladas.spot : NaN;
+                        return (
+                          <div key={f.codigo} style={{ background: esMejor ? T.tileGreen : T.tile, borderRadius: 12, padding: "9px 11px",
+                            boxShadow: T.raiseSm, border: esMejor ? `1.5px solid ${T.green}` : T.edge, display: "grid", gap: 5 }}>
+                            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                              <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+                                ${f.strike}
+                                {isFinite(otm) && <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{"  " + (otm * 100).toFixed(0) + "% fuera"}</span>}
+                                {esMejor && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.green, background: T.card, borderRadius: 6, padding: "2px 6px", marginLeft: 7 }}>MEJOR</span>}
+                              </span>
+                              <span style={{ fontSize: 15, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>${money(f.prima)}</span>
+                            </div>
+                            {/* v4.60: en dos líneas cortas y no en una larga. Con el botón al lado
+                                quedaban 250 px para cuatro cifras y se partía siempre; el margen se
+                                baja a su propia línea, que además es donde debe estar lo estimado. */}
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <span style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                                <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                                  {isFinite(f.annRom) ? pct(f.annRom, 0) + " ann" : "—"}
+                                  {f.pop ? " · POP " + Math.round(n(f.pop)) + "%" : ""}
+                                  {f.delta ? " · Δ " + Math.abs(n(f.delta)).toFixed(2) : ""}
+                                </span>
+                                <span style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, whiteSpace: "nowrap" }}>margen est. ${money(n(f.margin))}</span>
+                              </span>
+                              <button onClick={() => adoptarCandidata(f)}
+                                style={{ background: esMejor ? T.green : T.card, border: "none", borderRadius: 9, padding: "6px 13px", fontSize: 11.5, fontWeight: 800, color: esMejor ? "#fff" : T.ink, cursor: "pointer", flexShrink: 0, boxShadow: esMejor ? "none" : T.raiseSm }}>Añadir</button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
-                        {f.delta ? "Δ " + n(f.delta).toFixed(2) + " · " : ""}{f.pop ? "POP " + f.pop + "% · " : ""}
-                        {isFinite(annRom) ? "ann.ROM " + pct(annRom, 0) : ""}
-                        <span style={{ color: T.gold }}> · margen est. ${money(n(f.margin))}</span>
-                      </span>
-                      <button onClick={() => adoptarCandidata(f)}
-                        style={{ background: T.green, border: "none", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#fff", cursor: "pointer", flexShrink: 0 }}>Añadir</button>
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45 }}>
-                El margen es una ESTIMACIÓN (regla de Reg-T): OpenD no sabe lo que te bloquea tu bróker. Compáralo una vez con IBKR y ajústalo a mano si hace falta.
+                  );
+                })}
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45 }}>
+                  El margen es una ESTIMACIÓN (regla de Reg-T): OpenD no sabe lo que te bloquea tu bróker. Compáralo una vez con IBKR y ajústalo a mano si hace falta.
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
