@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+Bloques v4.75 — El modelador
+
+## Lo que pidió
+Victor: *"Igual podemos hacer un modelador en condiciones para modular todo: IV cortas, largas,
+media, strikes, y cómo evoluciona según pasa el tiempo."*
+
+## Cuatro mandos
+El botón de cada candidata pasa de *Ver la curva* a **Modelar este montaje**, y dentro:
+
+- **Strikes**, con − y + por la escalera. Y aquí está lo importante: la escalera son los **precios
+  reales** de cada strike, ya descargados en la misma llamada de la búsqueda. Así el débito de
+  cualquier combinación que pruebes es de mercado, no estimado. Es literalmente lo que dice el
+  manual en la página 4: *"start with 20 delta and then tweak from there"*.
+- **Días**, de hoy al vencimiento de la corta. La curva se mueve, y la de puntos que queda de fondo
+  es la del vencimiento: se ve cuánto falta por decantarse.
+- **IV de la corta** y **IV de la larga**, por separado, en pasos de 2 y 4 puntos. Por separado y no
+  una sola: lo que mata o salva un calendar es la **diferencia** entre las dos, y con un mando único
+  esa diferencia no se puede tocar. Hay un tercer mando *las dos* para el susto general.
+
+## La prueba de fuego, en pantalla
+Arriba del todo del texto se lee lo que da el modelo **hoy, al precio de hoy y sin tocar nada**. Tiene
+que ser **cero**: la IV de cada pata es justo la que explica su precio de mercado, así que si el
+modelo no devuelve cero es que no está describiendo este mercado. En la prueba da **−$0,41** sobre un
+débito de $180. Y se dice en verde o en ámbar según se salga o no de dos dólares.
+
+## Lo que enseñó la propia prueba
+Al comprobar los mandos salió algo que merece saberse: **el día que vence la corta, su IV ya no
+influye en nada**. No le queda tiempo, así que moverla no cambia ni un céntimo del resultado final.
+La IV de la corta solo pesa **por el camino** — si cierras antes. Mi prueba esperaba lo contrario y
+estaba mal ella, no el modelo. Ahora comprueba las dos cosas: a mitad de recorrido, menos IV en la
+larga empeora y menos IV en la corta mejora; al vencimiento, tocar la corta no mueve nada.
+
+## Y un caso que no había visto
+Con los strikes muy separados salen **cuatro** puntos de equilibrio, no dos: el hundimiento del
+centro llega a bajar de cero y aparece una zona de pérdida en medio de la zona de ganancia. Es el
+*sag* de la página 15 llevado al extremo, es correcto, y la prueba ahora lo admite (lo que no puede
+salir nunca es un número impar de equilibrios).
+
+## Comprobado
+`payoff.mjs`, ampliada: Black-Scholes contra valores conocidos y paridad put-call · invariantes (muy
+lejos del dinero se pierde exactamente el débito) · los números de la app contra una implementación
+escrita aparte, con otra función de error (máximo $299,74 contra $299,73, centro $74,34 contra
+$74,34, equilibrios $708,89 y $742,62 contra $708,89 y $742,61, débito $180,00 contra $180,00) · y
+los cuatro mandos, uno a uno. Sin desbordes en viewport iPhone y `npm run prueba` con las 18 cifras
+intactas.
+
+---
+
 Bloques v4.74 — La curva de resultado, y la frontera entre dato y modelo
 
 ## Lo que pidió

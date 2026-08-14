@@ -242,6 +242,19 @@ Lo que hay que tener presente:
   con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
   se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
   Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **El modelador** (v4.75, Victor: *"un modelador en condiciones para modular todo: IV cortas,
+  largas, media, strikes, y cómo evoluciona según pasa el tiempo"*). Cuatro mandos: strikes (por la
+  ESCALERA de precios reales ya descargados, así el débito de cualquier combinación es de mercado),
+  días de hoy al vencimiento de la corta, e IV de corta y de larga **por separado** — lo que decide
+  un calendar es la DIFERENCIA entre las dos, y un mando único no la deja tocar.
+- **La prueba de fuego del modelo se enseña en pantalla**: hoy, al precio de hoy y sin tocar nada,
+  tiene que dar CERO, porque la IV de cada pata es la que explica su propio precio. Da −$0,41 sobre
+  $180 en la prueba. Si algún día se desvía, se dice en ámbar en vez de callarlo.
+- **El día que vence la corta, la IV de la corta no influye en nada** (no le queda tiempo). Solo
+  pesa por el camino. La prueba esperaba lo contrario y estaba mal ella; ahora comprueba las dos.
+- **Con strikes muy separados hay CUATRO equilibrios**, no dos: el centro se hunde bajo cero y
+  aparece una zona de pérdida dentro de la de ganancia. Es correcto (el sag de la pág. 15 al
+  extremo). Lo que nunca puede salir es un número impar.
 - **La curva de resultado es lo ÚNICO de la herramienta que NO es dato, es un MODELO** (v4.74). Para
   dibujarla hay que valorar la pata larga el día que vence la corta con Black-Scholes, suponiendo una
   volatilidad; OptionStrat hace lo mismo y por eso lleva su control de IV. Se dice en pantalla y se
