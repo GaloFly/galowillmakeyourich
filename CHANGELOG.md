@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+Bloques v4.68 — Dos sellos en vez de un veredicto, y "la mejor" deja de elegirse mal
+
+## Lo que preguntó
+Victor, viendo cinco montajes con ratios del 71% al 83% y todos en rojo: *"No me debería de salir
+ese ratio con el IV de cortas y largas así, ¿no?"* Y después: *"Si están pagando esa prima las
+cortas aunque la volatilidad sea más baja, es más seguro, ¿no?"*
+
+## El ratio estaba bien
+La prima va con la IV **por la raíz del tiempo**. Entre 5 y 7 días, √(5/7) = 85%: el ratio sale ahí
+aunque las dos patas tuvieran idéntica volatilidad. La IV en contra (15,1 frente a 15,7) le quita
+cuatro puntos → 81%. En pantalla ponía 83%. Cuadra. No había avería en el número.
+
+## Pero había DOS averías detrás
+**1. El veredicto se había comido todo.** En la v4.63, a petición suya, se exigió que la corta
+tuviera más IV que la larga para dar verde. Pero la curva de volatilidad **sube con el plazo casi
+siempre** — es el contango de las páginas 7-10, que el propio manual describe como el mercado
+tranquilo en el que quiere que entres. Con vencimientos a dos días de distancia, esa condición casi
+nunca se cumple: salía `NO` en todo, incluso con ratios del 83% cuando el manual pide 50% como
+ideal. Un semáforo que siempre dice lo mismo no informa de nada.
+
+**2. "La mejor" se elegía por el ratio, y eso es comparar huecos, no operaciones.** El 6/7 tiene un
+día entre patas: √(6/7) = 93% de salida. El 7/14 tiene siete: 71%. Ordenando por ratio en bruto
+ganaba SIEMPRE el 6/7, por construcción. Llevaba dos versiones abriendo esa por defecto por un
+motivo que no tiene nada que ver con la calidad de la operación.
+
+## Cómo queda
+- **Dos sellos por montaje**: `RATIO ✓/~/✗` lleva el veredicto del manual —es su única regla con
+  número (≥40%, ideal >50%, pág. 5)— y `CURVA ✓/✗` va aparte, con la brecha en puntos. Ninguno tapa
+  al otro: nada dice "todo bien" con la curva en contra, y la curva tampoco tumba un ratio bueno.
+- **El texto dice qué significa el ratio**: cuánto pones de tu bolsillo, y que ese débito es la
+  pérdida máxima. Que es lo que Victor había intuido y el manual respalda ("the higher, the better").
+- **Cuando la larga paga más IV se dice que es lo NORMAL**, no una avería. Antes se leía como una
+  advertencia de que algo iba mal.
+- **La cabecera de cada montaje trae la brecha de IV** ("la larga paga 0,6 pts más de IV"): ese es el
+  número que sí se puede comparar entre montajes, porque no depende del hueco de días.
+- **Se abre sola la de mejor curva** entre las que pasan el ratio, y el pie lo explica junto con el
+  aviso de no comparar ratios entre montajes.
+
+## Comprobado
+Con la curva a favor: los cuatro salen `RATIO ✓ + CURVA ✓`. Con la curva en contra (contango, que es
+lo que él está viendo): los cuatro salen `RATIO ✓ + CURVA ✗` con las brechas 0,6 · 0,3 · 0,9 · 2,1
+puntos, y sigue abriéndose una — antes, con la regla vieja, no se abría ninguna y todo era rojo.
+`npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+Aviso sobre la simulación: su curva de IV es lisa, así que la menor brecha cae siempre en el montaje
+de patas más juntas. En el mercado real la semana de delante suele tener su propio bulto (eventos,
+fin de semana) y ahí la brecha sí discrimina de verdad.
+
+---
+
 Bloques v4.67 — Los cuatro montajes del manual, contados desde el viernes de entrada
 
 ## Lo que dijo
