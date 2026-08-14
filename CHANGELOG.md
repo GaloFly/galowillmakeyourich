@@ -1,5 +1,24 @@
 # CHANGELOG — Bloques
 
+Bloques v4.65 — La pestaña se llama DC
+
+## Lo que pidió
+Victor: *"Cambia la pestaña de nombre a DC."*
+
+## Cómo queda
+La pestaña de Herramientas que ponía **Double Cal** ahora pone **DC**, que es como la llama él.
+
+## Por qué importa
+"Double Cal" era un nombre cortado a medias: ni el completo ni el que se usa hablando. Además el
+selector de Herramientas tiene cinco pestañas en una fila que se desliza, y cada letra de más empuja
+a las de los lados fuera de la pantalla.
+
+## Comprobado
+Compila (`build … ok — app v4.65`), `node --check` limpio y `npm run prueba` sigue dando las 18
+cifras idénticas para quien no tiene servidor propio (esa pestaña ni le sale).
+
+---
+
 Bloques v4.64 — Las búsquedas se quedan guardadas, plegadas por ticker
 
 ## Lo que pidió
