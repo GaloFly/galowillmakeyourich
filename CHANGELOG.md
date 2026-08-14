@@ -1,5 +1,58 @@
 # CHANGELOG — Bloques
 
+Bloques v4.58 — Una sola llamada al servidor, y griegas también con el mercado cerrado
+
+## El hallazgo
+Probando el puente en el VPS con el mercado cerrado, salió esto para un contrato de NVDA:
+
+```
+delta: -0.0319   theta: -0.0350   gamma: 0.0020   vega: 0.0506
+iv: 51.32        interés abierto: 68890
+```
+
+**Todo lleno.** O sea que lo de "OpenD no da griegas fuera de horario" **nunca fue verdad**: se
+estaban pidiendo por la puerta equivocada. La función que usaba el puente (`get_stock_quote`) no las
+trae; la del snapshot sí — y además trae la horquilla, gamma y vega de regalo.
+
+## Dos cambios, uno detrás del otro
+
+**1. El 🔄 Precios hace UNA llamada, no una por contrato.** El snapshot admite cientos de códigos de
+golpe. Con 26 posiciones eso eran 26 llamadas con sus pausas; ahora es una. El cupo de OpenD es de la
+CUENTA y ahí viven también el sistema de earnings y el agente de puts: esto no es afinar, es dejar de
+molestar. Si el servidor todavía es el viejo y no conoce la ruta nueva, se vuelve solo al camino de
+antes — nadie se queda sin precios por no haber actualizado.
+
+**2. Se usa el PUNTO MEDIO de la horquilla, no el último precio.** El último puede ser de hace horas
+en un contrato poco líquido. El medio entre lo que te pagan y lo que piden es lo que de verdad
+costaría cerrar.
+
+## Y una corrección de lo que decía la app
+La v4.57 escribía: *"con el mercado cerrado el servidor manda precio pero no griegas"*. Ya no es
+cierto. Ahora las manda — son **las del cierre**, que es distinto: no faltan, es que no se mueven
+hasta que abra. La frase pasa a *"Delta y theta son del cierre de 13 ago, 15:06: con el mercado
+cerrado no cambian."*
+
+Y **cómo se decide si son del cierre también cambia**: antes se miraba si habían llegado; ahora se
+mira **la hora que trae el propio dato**. Si lleva más de 20 minutos parada, la sesión está cerrada.
+El margen es discutible, pero da igual: **la hora exacta se enseña siempre**, así que nadie depende
+de que yo acierte con el umbral.
+
+## Verificación
+Ocho escenarios en iPhone 13, claro y oscuro:
+
+| | Resultado |
+|---|---|
+| Con servidor | theta +$19 · delta +$11.102 · **1 sola llamada** a `/opciones` |
+| **Sin servidor** | **0 llamadas**, tarjeta inexistente |
+| Servidor viejo (sin la ruta nueva) | vuelve al camino de uno en uno |
+| Dato de hace 9 h | `DEL CIERRE` + *"del cierre de 13 ago, 15:06"* |
+| Sin haber pulsado 🔄 | dice que lo pulse |
+| Precio sin griegas | lo explica |
+| Con un Iron Condor fuera | aviso de cobertura |
+| Modo privado | importes tapados |
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.57 — Con el mercado cerrado, las griegas del cierre en vez del mensaje feo
 
 ## Lo que pidió

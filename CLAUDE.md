@@ -148,7 +148,13 @@ servidor no ve ni un hueco). Dos decisiones de fondo:
 - **La cobertura se dice SIEMPRE**, no solo cuando falta algo: "de N de tus M posiciones". Un theta
   que dice 40 cuando son 70 es peor que no tenerlo, y si solo se avisara al fallar, el día que
   faltara una posición nadie se daría cuenta.
-- **Fuera de horario OpenD manda precio pero NO delta ni theta.** Desde la v4.57 se conservan las
+- **UNA sola llamada por refresco** (v4.58): `/opciones` del puente usa `get_market_snapshot`, que
+  admite cientos de códigos de golpe. Antes era una llamada por contrato. Si el servidor es viejo y
+  no conoce la ruta, la app vuelve sola al camino de uno en uno.
+- **El snapshot SÍ da griegas con el mercado cerrado** (comprobado en el VPS el 14-ago-2026;
+  `get_stock_quote` no). Lo de "OpenD no da griegas fuera de horario" era falso: se preguntaba por la
+  puerta equivocada. Por eso la frescura se decide por **la hora que trae el dato**, no por si llegó.
+- *(Histórico, ya no aplica)* **Fuera de horario `get_stock_quote` manda precio pero NO delta ni theta.** Desde la v4.57 se conservan las
   del contrato anterior en vez de sobrescribirlas con nulos, y la chapa pasa de `EN VIVO` a
   `DEL CIERRE` diciendo de cuándo son. Para saberlo se guarda **el hecho** (`optGriegasFrescas`), no
   una hora que luego haya que comparar con un margen inventado — eso ya falló una vez.

@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.57"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.58"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1712,6 +1712,51 @@ async function puenteFetch(cfg, ruta, params) {
   }
 }
 const puenteConfigurado = (cfg) => !!(cfg && cfg.url && cfg.token);
+/* ---------- v4.58: TODOS los contratos en una sola llamada ----------
+   Descubierto el 14-ago-2026 probando el puente en el VPS: `get_market_snapshot` devuelve delta,
+   theta, gamma, vega, IV e interés abierto **también con el mercado cerrado** — cosa que
+   `get_stock_quote` no hace. Nunca fue una limitación de OpenD: se estaba preguntando por la puerta
+   equivocada.
+
+   Y admite cientos de códigos de golpe, así que el 🔄 Precios pasa de una llamada POR CONTRATO
+   (26 posiciones = 26 llamadas, con sus pausas) a UNA. El cupo de OpenD es de la cuenta y ahí viven
+   también el sistema de earnings de root y el agente de puts: esto no es afinar, es dejar de
+   molestar.
+
+   Si el servidor todavía es viejo y no conoce /opciones, se vuelve al camino de antes en vez de
+   dejar a nadie sin precios. */
+async function puenteMarcas(cfg, codigos) {
+  const salida = {};
+  if (!codigos.length) return { marcas: salida, errores: {} };
+  const errores = {};
+  const lote = await puenteFetch(cfg, "/opciones", { codigos: codigos.join(",") });
+  if (lote && lote.ok && lote.opciones && typeof lote.opciones === "object") {
+    Object.keys(lote.opciones).forEach((c) => { salida[c] = lote.opciones[c]; });
+    (lote.sin_datos || []).forEach((c) => { errores["el servidor no reconoce " + c] = 1; });
+    return { marcas: salida, errores };
+  }
+  /* servidor anterior a la v3 del puente: se pide uno a uno, como hasta la v4.57 */
+  for (const cod of codigos) {
+    const r = await puenteFetch(cfg, "/opcion", { codigo: cod });
+    if (r && r.ok && r.opcion) salida[cod] = r.opcion;
+    else errores[(r && r.error) || "sin respuesta"] = (errores[(r && r.error) || "sin respuesta"] || 0) + 1;
+    await new Promise((x) => setTimeout(x, 250));
+  }
+  return { marcas: salida, errores };
+}
+/* ¿el dato que manda el servidor es de AHORA o del último cierre? Se mira la hora que trae el
+   propio dato (`fecha_dato`, hora de Nueva York). Con el mercado abierto se refresca cada pocos
+   segundos; si lleva más de 20 minutos parado, la sesión está cerrada. El margen podría afinarse,
+   pero da igual: la hora exacta se ENSEÑA siempre, así que nadie depende de que yo acierte. */
+const MARCA_FRESCA_MS = 20 * 60 * 1000;
+const fechaDatoMs = (txt) => {
+  if (!txt) return NaN;
+  /* "2026-08-13 15:59:10" es hora de Nueva York */
+  const m = String(txt).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return NaN;
+  const t = Date.parse(m[1] + "-" + m[2] + "-" + m[3] + "T" + m[4] + ":" + m[5] + ":" + (m[6] || "00") + "-04:00");
+  return isFinite(t) ? t : NaN;
+};
 /* v4.45: OpenD devuelve el estado del mercado con el nombre interno de Futu — "AFTER_HOURS_END",
    "PRE_MARKET_BEGIN"… Eso en pantalla no dice nada. Si el estado no está en la tabla NO se enseña
    el nombre crudo: se calla. Enseñar jerga es peor que no enseñar nada. */
@@ -2874,7 +2919,10 @@ function GriegasCard({ g, privado, hayPuente }) {
             " — el theta real es mayor que este."
           : "De las " + g.conGriegas + " posiciones de opciones que tienes, todas. La delta incluye tus acciones."}
         {g.sinSpot ? " (" + g.sinSpot + " sin cotización del subyacente no suman a la delta.)" : ""}
-        {g.viejasN && g.tsViejo ? " Delta y theta son de " + fechaCorta(g.tsViejo) + ": con el mercado cerrado el servidor manda precio pero no griegas." : ""}
+        {/* v4.58: la frase de antes decía que el servidor "no manda griegas" con el mercado cerrado.
+            Desde que el puente usa el snapshot SÍ las manda — son las del cierre, que es distinto:
+            no faltan, es que no se mueven hasta que abra. */}
+        {g.viejasN && g.tsViejo ? " Delta y theta son del cierre de " + fechaCorta(g.tsViejo) + ": con el mercado cerrado no cambian." : ""}
       </div>
     </div>
   );
@@ -10721,17 +10769,21 @@ function App() {
        Una llamada por contrato distinto (dos posiciones del mismo contrato comparten la consulta), con
        una pausa entre ellas: el cupo de OpenD es de la CUENTA, y ahí dentro también viven el sistema
        de earnings de root y el agente de puts. El puente ya cachea 20 s por su cuenta. */
-    const marcas = {};
-    const marcaErrores = {};
+    let marcas = {};
+    let marcaErrores = {};
     const cfgPuente = puenteRef.current;
     if (puenteConfigurado(cfgPuente)) {
       const codigos = [...new Set(positionsRef.current.flatMap(codigosDePosicion))];
-      for (const cod of codigos) {
-        const r = await puenteFetch(cfgPuente, "/opcion", { codigo: cod });
-        if (r && r.ok && r.opcion && r.opcion.ultimo != null && isFinite(n(r.opcion.ultimo))) marcas[cod] = r.opcion;
-        else marcaErrores[(r && r.error) || "sin respuesta"] = (marcaErrores[(r && r.error) || "sin respuesta"] || 0) + 1;
-        await new Promise((r2) => setTimeout(r2, 250));
-      }
+      const r = await puenteMarcas(cfgPuente, codigos);
+      marcaErrores = r.errores;
+      /* v4.58: se prefiere el PUNTO MEDIO de la horquilla al último precio. El último puede ser de
+         hace horas en un contrato poco líquido; el medio es lo que de verdad costaría cerrar. */
+      Object.keys(r.marcas).forEach((c) => {
+        const o = r.marcas[c];
+        const px = o.medio != null && isFinite(n(o.medio)) && n(o.medio) > 0 ? o.medio : o.ultimo;
+        if (px != null && isFinite(n(px))) marcas[c] = { ...o, ultimo: px };
+      });
+      if (!codigos.length) marcaErrores = {};
     }
     const ahora = Date.now();
     /* aplica subyacente y, si la hay, la marca del contrato — con su código al lado, para que una
@@ -10752,22 +10804,29 @@ function App() {
            hace cualquier broker fuera de horario. Sigue sin fusionarse la tabla entera: solo se
            rellenan los códigos que la posición tiene HOY, así una rolada los descarta igual. */
         const viejas = p.optGriegas && typeof p.optGriegas === "object" ? p.optGriegas : {};
-        let algunaFresca = false;
+        let algunaFresca = false, tsDato = null;
         cods.forEach((c) => {
           const m = marcas[c];
           if (!m) return;
           tabla[c] = String(m.ultimo);
-          const nueva = { iv: m.iv, delta: m.delta, theta: m.theta, oi: m.interes_abierto };
+          const nueva = { iv: m.iv, delta: m.delta, theta: m.theta, oi: m.interes_abierto, fecha: m.fecha_dato || null };
           const sirve = isFinite(numOrNaN(nueva.delta)) && isFinite(numOrNaN(nueva.theta));
-          if (sirve) { griegas[c] = nueva; algunaFresca = true; }
-          else if (viejas[c]) griegas[c] = viejas[c];
+          if (sirve) {
+            griegas[c] = nueva;
+            /* v4.58: fresca no es "ha llegado" sino "es de ahora". Desde que el puente usa el
+               snapshot, las griegas llegan SIEMPRE — también con el mercado cerrado, y entonces son
+               las del último cierre. Lo dice la hora del propio dato, no el hecho de recibirlo. */
+            const ms = fechaDatoMs(m.fecha_dato);
+            if (!isFinite(ms) || ahora - ms < MARCA_FRESCA_MS) algunaFresca = true;
+            else if (tsDato == null || ms > tsDato) tsDato = ms;
+          } else if (viejas[c]) griegas[c] = viejas[c];
         });
         if (Object.keys(tabla).length) {
           q = { ...q, optMarks: tabla, optGriegas: griegas, optTs: ahora,
             /* cuándo se capturaron las griegas de verdad, y si ESTE refresco las trajo frescas.
                Se guarda el hecho, no una hora que luego haya que comparar: comparar marcas de tiempo
                obligaba a inventarse un margen ("¿un minuto? ¿diez?") y eso siempre se equivoca. */
-            optGriegasTs: algunaFresca ? ahora : (p.optGriegasTs || null),
+            optGriegasTs: algunaFresca ? ahora : (tsDato != null ? tsDato : (p.optGriegasTs || null)),
             optGriegasFrescas: algunaFresca };
           /* una pata: se sigue escribiendo el par de la v4.51, por si algo lo lee todavía */
           const uno = codigoOpcion(p);
