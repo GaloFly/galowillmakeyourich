@@ -221,22 +221,40 @@ def _liberar_suscripciones(hacen_falta):
 
 
 def asegurar_suscripcion(codigos):
-    """OpenD solo devuelve precio de lo que está suscrito. Se suscribe una vez por código."""
+    """
+    OpenD solo devuelve precio de lo que está suscrito. Se suscribe una vez por código.
+
+    Devuelve la lista de códigos que NO se pudieron suscribir (vacía si todo bien).
+
+    v3.1 (14-ago-2026): antes, UN código desconocido tumbaba la petición entera —
+    `subscribe(["US.QQQ","US.SPX","US.VIX"])` falla completo con "Unknown stock. SPX" y los tres
+    se quedan sin precio. En la app eso significa que el día que Victor tenga un ticker que OpenD
+    no conozca (uno delistado, un índice, una errata) se queda sin precios de TODA la cartera.
+    Ahora, si el lote falla, se reintenta uno a uno y solo se pierde el que de verdad está mal.
+    """
     ahora = time.monotonic()
     nuevos = [c for c in codigos if c not in _suscritos]
     for c in codigos:
         if c in _suscritos:
             _suscritos[c] = ahora  # renueva: lo que se usa, no se suelta
     if not nuevos:
-        return None
+        return []
     if len(_suscritos) + len(nuevos) > MAX_SUSCRIPCIONES:
         _liberar_suscripciones(len(nuevos))
     ret, data = contexto().subscribe(nuevos, [SubType.QUOTE])
-    if ret != RET_OK:
-        return f"OpenD no pudo suscribir {', '.join(nuevos)}: {data}"
+    if ret == RET_OK:
+        for c in nuevos:
+            _suscritos[c] = ahora
+        return []
+    # el lote ha fallado: se averigua QUIÉN, en vez de castigar a todos
+    fallidos = []
     for c in nuevos:
-        _suscritos[c] = ahora
-    return None
+        r, d = contexto().subscribe([c], [SubType.QUOTE])
+        if r == RET_OK:
+            _suscritos[c] = ahora
+        else:
+            fallidos.append(c)
+    return fallidos
 
 
 def error(mensaje, codigo=400, **extra):
@@ -337,10 +355,12 @@ def cotiza():
         return error("Demasiados códigos de una vez (máximo 200).")
 
     def traer():
-        fallo = asegurar_suscripcion(codigos)
-        if fallo:
-            return {"ok": False, "error": fallo}, 502
-        ret, data = contexto().get_stock_quote(codigos)
+        fallidos = asegurar_suscripcion(codigos)
+        vivos = [c for c in codigos if c not in fallidos]
+        if not vivos:
+            return {"ok": False, "error": "OpenD no conoce ninguno de estos códigos: "
+                                          + ", ".join(fallidos)}, 404
+        ret, data = contexto().get_stock_quote(vivos)
         if ret != RET_OK:
             return {"ok": False, "error": f"OpenD devolvió un error al pedir precios: {data}"}, 502
         salida = {}
@@ -357,7 +377,10 @@ def cotiza():
                 "fecha_dato": fila.get("data_date"),
                 "hora_dato": fila.get("data_time"),
             }
-        return {"ok": True, "cotizaciones": salida}, 200
+        resp = {"ok": True, "cotizaciones": salida}
+        if fallidos:
+            resp["desconocidos"] = fallidos  # se dice cuáles, no se callan
+        return resp, 200
 
     payload, http = con_cache("cotiza:" + ",".join(codigos), TTL_COTIZA, "quote", traer)
     return jsonify(payload), http
@@ -375,9 +398,9 @@ def opcion():
         return error("Falta el parámetro 'codigo'. Ejemplo: /opcion?codigo=US.TMDX260918P70000")
 
     def traer():
-        fallo = asegurar_suscripcion([codigo])
-        if fallo:
-            return {"ok": False, "error": fallo}, 502
+        fallidos = asegurar_suscripcion([codigo])
+        if fallidos:
+            return {"ok": False, "error": f"OpenD no conoce el contrato {codigo}."}, 404
         ret, data = contexto().get_stock_quote([codigo])
         if ret != RET_OK:
             return {"ok": False, "error": f"OpenD devolvió un error al pedir la opción: {data}"}, 502
