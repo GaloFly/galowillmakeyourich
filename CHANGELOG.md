@@ -1,5 +1,71 @@
 # CHANGELOG — Bloques
 
+Bloques v4.67 — Los cuatro montajes del manual, contados desde el viernes de entrada
+
+## Lo que dijo
+Victor: *"Me sacas solo de miércoles a viernes, sácame todas las opciones que tiene el PDF, y que se
+pueda colapsar. Las entradas pueden ser miércoles semana siguiente la corta y viernes la larga, o
+jueves corta viernes larga, o viernes corta lunes larga, o viernes corta viernes siguiente larga.
+Eso es 5/7, 6/7, 7/10, 7/14. Porque las entradas son siempre en viernes."*
+
+## La pieza que faltaba
+Ahí está lo que yo no había entendido del manual. Los cuatro pares (mié/vie, jue/vie, vie/lun,
+vie/vie, pág. 4) **no son dos vencimientos cualesquiera que caigan en esos días**: son días contados
+desde el viernes en el que se entra. Yo los buscaba por día de la semana suelto, y eso hacía dos
+destrozos a la vez:
+
+- **Salían parejas que no son el montaje.** Un mié 26 → vie 28 encaja en "mié/vie", pero está a
+  12/14 días: es la operación de la semana siguiente, no la de esta.
+- **Y faltaban las de verdad.** Al buscar en las tres semanas siguientes hacían falta ocho
+  vencimientos distintos, y por el cupo de la API solo se pedían los seis primeros. Los dos que se
+  caían eran justo los del 7/14 y los de las parejas lejanas. Resultado: el 7/14 no aparecía nunca.
+
+Además había una tercera avería, más callada: los strikes se elegían **por separado en cada
+vencimiento** (los 14 más cercanos al precio). La pata larga tiene que ser del mismo strike que la
+corta, así que en cuanto un vencimiento tenía la escalera un poco distinta el montaje se caía sin
+decir nada. Y 14 strikes de $1 en QQQ son un 1,9% del precio, cuando una delta 0,10 a una semana
+está al 3%: los objetivos bajos no llegaban.
+
+## Cómo queda
+Se calcula el **viernes de entrada** (hoy si hoy es viernes, si no el que viene) y de ahí salen los
+cuatro montajes, siempre los cuatro: **5/7** (corta mié, larga vie), **6/7** (jue → vie), **7/10**
+(vie → lun) y **7/14** (vie → vie siguiente). El viernes se dice en pantalla, junto al precio.
+
+Cada montaje es una **cabecera plegable** con su veredicto, cuántas candidatas trae y el mejor ratio,
+para poder elegir cuál abrir sin desplegarlos todos. Se abre sola la mejor de las que pasan las dos
+reglas; si ninguna pasa, no se abre ninguna — abrir una mala por defecto la haría parecer la
+recomendada.
+
+Los strikes ahora son **los mismos en los cinco vencimientos**: se elige una sola lista (los que
+existen en todos, dentro de un 5% del precio) y se pide esa lista entera. Si hay más de 16 por lado
+se cogen salteados, porque lejos del dinero lo que hace falta es alcance, no resolución. Son 145–160
+códigos en **una** llamada, bajo el máximo de 200.
+
+## Un montaje que no se puede montar lo dice
+Si a un montaje le falta un vencimiento porque ese día el mercado está cerrado, **no desaparece**:
+sale igual, en gris, diciendo qué día falta. Un montaje que se esfuma sin explicación no se distingue
+de uno que no compensa, y son cosas muy distintas. Es la misma regla de siempre — callarse no es un
+estado neutro. Y el aviso de semana con festivo se ve ya en la cabecera plegada, sin abrir: es
+información para decidir, no un detalle.
+
+## Comprobado
+Con una cadena simulada de QQQ con vencimiento todos los días hábiles y strikes de $1:
+- salen **los cuatro** montajes con las fechas correctas, una sola llamada de 145 códigos;
+- las deltas mostradas van de 0,09 a 0,31 (antes, con la banda corta, se quedaban todas pegadas
+  al 0,30);
+- quitando el lunes del 7/10, ese montaje sigue en la lista diciendo *"No hay vencimiento el lun
+  24/08"*;
+- con la curva de IV al revés los cuatro salen **NO** y no se abre ninguno solo;
+- plegar y desplegar a mano funciona en los dos sentidos, y la página no desborda.
+
+La delta simulada de la prueba pasa a ser la de Black-Scholes de verdad: la anterior era mucho más
+gorda de colas —la delta 0,10 caía al 10% del precio en vez de al 3%— y con eso la prueba no
+distinguía una banda de strikes buena de una corta, que es justo lo que había que medir.
+
+`npm run prueba` sigue dando las 18 cifras idénticas para quien no tiene servidor propio.
+
+---
+
 Bloques v4.66 — El icono de DC, ahora sí
 
 ## El síntoma
