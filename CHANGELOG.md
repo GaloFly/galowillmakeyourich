@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+Bloques v4.74 — La curva de resultado, y la frontera entre dato y modelo
+
+## Lo que pidió
+Victor, enseñando OptionStrat: *"¿Hay manera de montar una cosa así? Pero claro, tiene que estar
+bien, porque OptionStrat mira mucho el sag que se va formando, se actualiza el precio y por tanto la
+curva."*
+
+## La frontera, que es lo importante de esta entrega
+Hasta aquí **cada número de esta herramienta era dato de mercado**. Esta curva **no**: es un modelo.
+Para saber qué da el montaje el día que vence la corta hay que saber cuánto valdrá la pata **larga**
+ese día, y eso no lo dice nadie — se calcula con Black-Scholes suponiendo una volatilidad. OptionStrat
+hace exactamente lo mismo; por eso lleva su control de IV al lado.
+
+Así que se dice en pantalla, en ámbar: **el débito y la pérdida máxima son dato** (salen de los
+precios reales de las cuatro patas; en un doble calendar con el mismo strike, muy lejos del dinero el
+spread vale cero y pierdes exactamente lo que pagaste); **el máximo beneficio, los puntos de
+equilibrio y la forma de la curva son del modelo**.
+
+## Cómo queda
+Botón **Ver la curva de resultado** en cada candidata. Dibuja el resultado por contrato el día que
+vence la corta: la doble joroba con los picos en los strikes, el hundimiento del centro del que avisa
+la página 15 del manual, verde por encima de cero y rojo por debajo, los dos puntos de equilibrio
+escritos en el eje y **la franja del movimiento esperado sombreada encima** — eso último OptionStrat
+no lo tiene, y es lo que dice si la zona de ganancia te cubre lo que el mercado da por normal.
+
+Debajo, tres cifras (máximo beneficio · en el centro · pérdida máxima) y un mando: **si la IV de la
+larga baja o sube 2 puntos**. No es un adorno: es el riesgo principal. En el ejemplo de la prueba,
+dos puntos menos de volatilidad en la larga se llevan el resultado del centro de **+$74 a +$4**.
+
+## Cómo se ha comprobado que está bien
+Prueba nueva `payoff.mjs`, en cinco niveles:
+
+1. **Black-Scholes contra valores conocidos** y contra la paridad put-call (desvío 3,6·10⁻¹⁵).
+2. **Invariantes del montaje**: muy lejos del dinero se pierde exactamente el débito (−$180,00
+   contra −$180,00), el máximo cae justo en un strike, hay dos equilibrios y el centro se hunde.
+3. **Los números de la app contra una implementación escrita aparte**, con una función de error
+   distinta a propósito: máximo $299,74 contra $299,73 · centro $74,34 contra $74,34 · equilibrios
+   $708,89 y $742,62 contra $708,89 y $742,61.
+4. **El mando de la IV mueve lo que debe**: menos volatilidad en la larga, menos beneficio.
+5. Y que no desborda a lo ancho en viewport iPhone.
+
+Aparecieron tres discrepancias y las tres eran de verdad: dos de la prueba (unos valores "de libro"
+que yo recordaba mal, y la serie de Taylor de la función de error, que **diverge** lejos del dinero y
+devolvía −3,8·10⁶²) y **una del código**: la rejilla del gráfico no caía nunca exactamente en los
+strikes, y como el máximo de un doble calendar es un pico anguloso justo ahí, el máximo beneficio
+salía unos $4,50 corto y los picos se dibujaban romos. Ahora los strikes y el precio de hoy entran
+como puntos exactos de la rejilla.
+
+---
+
 Bloques v4.73 — Zoom donde se monta, y fuera las caídas de cero
 
 ## Lo que pidió

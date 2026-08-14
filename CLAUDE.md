@@ -242,6 +242,18 @@ Lo que hay que tener presente:
   con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
   se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
   Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **La curva de resultado es lo ÚNICO de la herramienta que NO es dato, es un MODELO** (v4.74). Para
+  dibujarla hay que valorar la pata larga el día que vence la corta con Black-Scholes, suponiendo una
+  volatilidad; OptionStrat hace lo mismo y por eso lleva su control de IV. Se dice en pantalla y se
+  parte la frontera: **débito y pérdida máxima = DATO** (mismo strike en las dos patas → lejos del
+  dinero el spread vale 0 y pierdes lo pagado), **máximo, equilibrios y forma = MODELO**. El mando
+  «si la IV de la larga baja 2 pts» no es un adorno: es el riesgo de la pág. 15, y mueve el centro de
+  +$74 a +$4 en el ejemplo de la prueba.
+- **Los STRIKES entran como puntos exactos de la rejilla** (v4.74). El máximo de un doble calendar es
+  un pico anguloso justo en un strike: con rejilla regular salía ~$4,50 corto y los picos romos.
+- `pruebas` de scratchpad `payoff.mjs`: BS contra valores de libro y paridad put-call, invariantes
+  (lejos del dinero se pierde exactamente el débito), y los números de la app contra una
+  implementación escrita aparte con otra función de error. Cazó las tres cosas de arriba.
 - **La curva arranca con ZOOM en la ventana del montaje** (v4.73, Victor: *"que haga un poco más de
   zoom para ver claro dónde explorar DC"*). A 60 días, los quince primeros vencimientos —donde vive
   el montaje— caían en la quinta parte izquierda. Con zoom: 6 puntos y 4 fechas en el eje en vez de
