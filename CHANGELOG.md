@@ -1,5 +1,60 @@
 # CHANGELOG — Bloques
 
+Bloques v4.59 — Buscar puts sin lector de capturas
+
+## Lo que pidió
+Victor: *"En la herramienta de Put, ¿puedes hacer que en lugar de tener que usar el lector, haya un
+menú oculto que solo sale si está el servidor activado, donde pongo el ticker y el DTE y me
+compara?"*
+
+## Cómo queda
+En Herramientas → Puts, arriba, una tarjeta **que solo existe si hay servidor propio**. Escribes el
+ticker, pulsas Buscar, y salen las candidatas con su prima, delta, POP, rentabilidad anualizada
+sobre margen y el margen estimado. Cada una con un botón de **Añadir**, que la mete en el
+comparador de siempre.
+
+Mira los vencimientos más cercanos a **30, 45 y 60 días** y trae **5 strikes por debajo del precio**
+de cada uno.
+
+## Tres decisiones que gobiernan esto
+
+**1. No se piden los 700 contratos.** Una cadena de NVDA trae 758. Se filtra a puts entre el 70% y
+el 100% del precio, y como mucho 5 por vencimiento: **15 contratos en UNA sola llamada**. Pedir de
+más en una cuenta compartida con el sistema de earnings y con el agente de puts es sacarle el dinero
+del bolsillo a otro.
+
+**2. El margen es una ESTIMACIÓN y se dice.** Se calcula con la regla de Reg-T —la que aplican los
+brokers en cuentas normales— porque **OpenD no sabe el margen**: no es un dato de mercado, es lo que
+decide el bróker. Va en ámbar, con la palabra "est.", y con un aviso debajo. Se puede editar como
+cualquier otro campo. Con margen de cartera IBKR pide bastante menos, así que conviene comparar una
+vez con la cuenta real.
+
+**3. Las candidatas NO entran solas en el comparador.** Salen en una lista aparte y se añade la que
+se elija. Una búsqueda de quince no te llena la herramienta de tarjetas que no querías.
+
+Y **no se inventa un criterio nuevo**: el orden y el veredicto los sigue poniendo el que ya tenías
+elegido (por defecto, Annualized return on margin).
+
+## Lo que no se puede sacar del servidor
+La POP se deriva de la delta (`1 − |delta|`, la aproximación de siempre). Si un contrato no trae
+delta, se deja vacía en vez de inventarla.
+
+## Verificación
+Con una cadena simulada de la forma de la real de NVDA — 6 vencimientos × 53 strikes × 2 tipos =
+**636 contratos**:
+
+| | Resultado |
+|---|---|
+| Vencimientos elegidos | **33, 47 y 61 días** (los más cercanos a 30/45/60) |
+| Contratos pedidos al servidor | **15, en UNA llamada** (de 636) |
+| Candidatas con precio | 14 de 15 |
+| Aviso de margen estimado | sí |
+| Pulsar Añadir | la candidata entra en el comparador y desaparece de la lista |
+| **Sin servidor propio** | **la tarjeta no existe** |
+| Errores de consola | ninguno |
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.58 — Una sola llamada al servidor, y griegas también con el mercado cerrado
 
 ## El hallazgo

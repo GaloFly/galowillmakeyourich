@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.58"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.59"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1748,6 +1748,111 @@ async function puenteMarcas(cfg, codigos) {
    propio dato (`fecha_dato`, hora de Nueva York). Con el mercado abierto se refresca cada pocos
    segundos; si lleva más de 20 minutos parado, la sesión está cerrada. El margen podría afinarse,
    pero da igual: la hora exacta se ENSEÑA siempre, así que nadie depende de que yo acierte. */
+/* ---------- v4.59: buscar puts candidatas sin salir de la app ----------
+   Hasta ahora las candidatas del Comparador entraban por el lector de capturas. Con el servidor
+   propio se pueden pedir directamente: se busca qué vencimientos existen, se eligen los tres más
+   cercanos a los DTE pedidos, se cogen unos pocos strikes por debajo del precio y se piden TODOS
+   los precios de una vez.
+
+   Tres decisiones que gobiernan esto:
+
+   · NO se piden los 758 contratos que trae una cadena de NVDA. Se filtra a puts entre el 70% y el
+     100% del precio, y como mucho 6 por vencimiento: 18 contratos en UNA llamada. Pedir de más en
+     una cuenta compartida con root y con el agente es sacarle el dinero del bolsillo a otro.
+   · El MARGEN se estima con la regla de Reg-T (la que aplican los brokers en cuentas normales) y
+     va marcado como estimado. OpenD no lo sabe: no es un dato de mercado, es lo que decide el
+     bróker. Se puede editar después como cualquier otro campo.
+   · La POP sale de la delta (P(expira sin valor) ≈ 1 − |delta|), que es la aproximación de toda la
+     vida. Si no hay delta —contrato raro—, se deja vacía en vez de inventarla. */
+const MARGEN_REGT = (spot, strike) => {
+  /* Reg-T para put vendida, por contrato: el mayor de
+       20% del subyacente − lo que está fuera de dinero    ·    10% del strike
+     Es una ESTIMACIÓN: con margen de cartera IBKR pide bastante menos. */
+  const fuera = Math.max(0, n(spot) - n(strike));
+  const a = 0.20 * n(spot) - fuera;
+  const b = 0.10 * n(strike);
+  return Math.max(a, b, 0) * 100;
+};
+const iso = (d) => d.toISOString().slice(0, 10);
+async function buscarPuts(cfg, ticker, dtesObjetivo, porVto) {
+  const tkr = String(ticker || "").trim().toUpperCase();
+  if (!tkr) return { error: "Escribe un ticker." };
+  const cod = "US." + tkr;
+  const hoy = new Date();
+
+  /* 1. el precio del subyacente: sin él no se puede ni filtrar strikes ni estimar margen */
+  const q = await puenteFetch(cfg, "/cotiza", { codigos: cod });
+  const spot = q && q.ok && q.cotizaciones && q.cotizaciones[cod] ? n(q.cotizaciones[cod].ultimo) : NaN;
+  if (!q || !q.ok) return { error: (q && q.error) || "El servidor no contestó al pedir el precio." };
+  if (!isFinite(spot) || spot <= 0) return { error: "El servidor no da precio de " + tkr + ". ¿Está bien escrito?" };
+
+  /* 2. qué vencimientos existen. Se pide una ventana amplia alrededor de lo pedido, en una llamada */
+  const masLejos = Math.max(...dtesObjetivo);
+  const masCerca = Math.min(...dtesObjetivo);
+  const desde = new Date(hoy.getTime() + Math.max(1, masCerca - 12) * 86400000);
+  const hasta = new Date(hoy.getTime() + (masLejos + 15) * 86400000);
+  const cad = await puenteFetch(cfg, "/cadena", { codigo: cod, desde: iso(desde), hasta: iso(hasta) });
+  if (!cad || !cad.ok) return { error: (cad && cad.error) || "El servidor no contestó al pedir la cadena." };
+  const vtos = (cad.vencimientos || []).slice().sort();
+  if (!vtos.length) return { error: "No hay vencimientos de " + tkr + " en esa ventana de fechas." };
+
+  /* 3. el vencimiento más cercano a cada DTE pedido, sin repetir */
+  const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
+  const elegidos = [];
+  dtesObjetivo.forEach((obj) => {
+    let mejor = null, dif = Infinity;
+    vtos.forEach((v) => {
+      if (elegidos.includes(v)) return;
+      const d = Math.abs(dias(v) - obj);
+      if (d < dif) { dif = d; mejor = v; }
+    });
+    if (mejor) elegidos.push(mejor);
+  });
+
+  /* 4. los strikes: puts por debajo del precio, unos pocos, los más cercanos al dinero */
+  const contratos = cad.contratos || [];
+  const porCodigo = {};
+  const candidatas = [];
+  elegidos.forEach((v) => {
+    const puts = contratos
+      .filter((c) => c && /PUT/i.test(String(c.tipo || "")) && String(c.vencimiento || "").slice(0, 10) === v)
+      .filter((c) => n(c.strike) > 0 && n(c.strike) <= spot && n(c.strike) >= spot * 0.70)
+      .sort((a, b) => n(b.strike) - n(a.strike))   /* del más cercano al dinero hacia abajo */
+      .slice(0, porVto);
+    puts.forEach((c) => {
+      porCodigo[c.codigo] = { strike: n(c.strike), expiry: v, dte: Math.max(0, dias(v)) };
+      candidatas.push(c.codigo);
+    });
+  });
+  if (!candidatas.length) return { error: "No se han encontrado puts de " + tkr + " por debajo de $" + money2(spot) + "." };
+
+  /* 5. TODOS los precios en una sola llamada */
+  const { marcas, errores } = await puenteMarcas(cfg, candidatas);
+  const filas = [];
+  candidatas.forEach((c) => {
+    const m = marcas[c];
+    const meta = porCodigo[c];
+    if (!m || !meta) return;
+    const credit = m.medio != null && n(m.medio) > 0 ? n(m.medio) : n(m.ultimo);
+    if (!isFinite(credit) || credit <= 0) return;   /* sin prima no hay nada que comparar */
+    const delta = numOrNaN(m.delta);
+    filas.push({
+      codigo: c, tkr, right: "P",
+      strike: String(meta.strike), expiry: meta.expiry, dte: String(meta.dte),
+      credit: String(Math.round(credit * 1000) / 1000),
+      underlying: String(Math.round(spot * 100) / 100),
+      delta: isFinite(delta) ? String(Math.round(delta * 10000) / 10000) : "",
+      pop: isFinite(delta) ? String(Math.round((1 - Math.abs(delta)) * 1000) / 10) : "",
+      margin: String(Math.round(MARGEN_REGT(spot, meta.strike))),
+      margenEstimado: true,
+      iv: m.iv != null ? String(m.iv) : "",
+      oi: m.interes_abierto != null ? String(m.interes_abierto) : "",
+      fechaDato: m.fecha_dato || null,
+    });
+  });
+  if (!filas.length) return { error: "El servidor no dio precio de ninguna de las " + candidatas.length + " candidatas." };
+  return { spot, filas, vencimientos: elegidos, pedidos: candidatas.length, errores };
+}
 const MARCA_FRESCA_MS = 20 * 60 * 1000;
 const fechaDatoMs = (txt) => {
   if (!txt) return NaN;
@@ -7509,7 +7614,7 @@ function GlassSegmented({ items, value, onChange, renderIcon }) {
   );
 }
 
-function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis }) {
+function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, puente }) {
   const [sub, setSub] = useState(() => { try { const v = localStorage.getItem(KEY_TOOLSUB); return v === "earnings" || v === "alerts" || v === "screener" ? v : "puts"; } catch (e) { return "puts"; } });
   const pick = (id) => { setSub(id); try { localStorage.setItem(KEY_TOOLSUB, id); } catch (e) {} };
   return (
@@ -7519,7 +7624,7 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
         items={[{ id: "puts", label: "Puts", icon: "puts" }, { id: "earnings", label: "Earnings", icon: "calc" }, { id: "screener", label: "Screener", icon: "filter" }, { id: "alerts", label: "Alertas", icon: "bolt" }]}
         value={sub} onChange={pick} renderIcon={(it) => <ActIcon name={it.icon} size={22} />} />
       {sub === "puts" ? (
-        <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} />
+        <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} puente={puente} />
       ) : sub === "alerts" ? (
         <AlertsToolContent apiKey={apiKey} />
       ) : sub === "screener" ? (
@@ -9804,7 +9909,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     </div>
   );
 }
-function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, onOpenPosition }) {
+function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, onOpenPosition, puente }) {
   const [editSet, setEditSet] = useState(() => new Set());
   const [blockPick, setBlockPick] = useState(null); /* v1.25: id de la operación que está eligiendo bloque (B1 o B2) */
   /* v1.26: spot del subyacente vía Finnhub (misma key que Portfolio) — el precio del subyacente alimenta
@@ -9898,6 +10003,28 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
   const setTr = (id, k) => (v) => setTrades((ts) => ts.map((t) => (t.id === id ? { ...t, [k]: v } : t)));
   const toggleEdit = (id) => setEditSet((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
   const addTrade = () => { const id = newId(); setTrades((ts) => [{ id, tkr: "", dte: "30", strike: "", credit: "", margin: "", right: "P", expiry: "", underlying: "", delta: "", pop: "" }, ...ts]); setEditSet((s) => new Set(s).add(id)); };
+  /* v4.59: buscador de puts contra el servidor propio. Solo existe si hay servidor: sin él, ni el
+     botón se pinta. El resultado NO entra en las operaciones guardadas — se enseña aparte y se
+     añade la que se elija. Así una búsqueda de quince candidatas no te llena el comparador. */
+  const [buscaTkr, setBuscaTkr] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const [buscaErr, setBuscaErr] = useState("");
+  const [halladas, setHalladas] = useState(null); /* { spot, filas, vencimientos, pedidos } */
+  const lanzarBusqueda = async () => {
+    const tkr = buscaTkr.trim().toUpperCase();
+    if (!tkr) return;
+    setBuscando(true); setBuscaErr(""); setHalladas(null);
+    const r = await buscarPuts(puente, tkr, [30, 45, 60], 5);
+    setBuscando(false);
+    if (r.error) { setBuscaErr(r.error); return; }
+    setHalladas(r);
+  };
+  const adoptarCandidata = (f) => {
+    const id = newId();
+    setTrades((ts) => [{ id, tkr: f.tkr, dte: f.dte, strike: f.strike, credit: f.credit, margin: f.margin,
+      right: "P", expiry: f.expiry, underlying: f.underlying, delta: f.delta, pop: f.pop }, ...ts]);
+    setHalladas((h) => (h ? { ...h, filas: h.filas.filter((x) => x.codigo !== f.codigo) } : h));
+  };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
   /* limpiar todas las operaciones grabadas del Comparador (no toca posiciones ni movimientos). Doble toque:
      el primer toque arma la confirmación 3 s, el segundo vacía. */
@@ -10086,6 +10213,65 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
           <button onClick={addTrade} style={{ background: T.green, border: "none", borderRadius: 14, padding: "9px 16px", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 4px 12px rgba(27,163,76,0.3)" }}>+ Operación</button>
         </div>
       </div>
+
+      {/* v4.59: BUSCADOR DE PUTS — solo con servidor propio. Sin él no se pinta ni el botón:
+          nada de enseñar una función que no se puede usar. */}
+      {puenteConfigurado(puente) && (
+        <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, marginBottom: 14, display: "grid", gap: 11 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>Buscar puts</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: T.purple, background: T.tilePurple, borderRadius: 6, padding: "2px 6px" }}>TU SERVIDOR</span>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={buscaTkr} onChange={(e) => setBuscaTkr(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === "Enter") lanzarBusqueda(); }}
+              placeholder="Ticker (NVDA)" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+              style={{ flex: 1, minWidth: 0, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "11px 12px", fontSize: 15, fontWeight: 700, color: T.ink, outline: "none" }} />
+            <button onClick={lanzarBusqueda} disabled={buscando || !buscaTkr.trim()}
+              style={{ background: T.dark, border: "none", borderRadius: 12, padding: "0 18px", fontSize: 14, fontWeight: 800, color: "#fff", cursor: "pointer", opacity: buscando || !buscaTkr.trim() ? 0.5 : 1, flexShrink: 0 }}>
+              {buscando ? "Buscando…" : "Buscar"}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+            Mira los vencimientos más cercanos a 30, 45 y 60 días y trae 5 strikes por debajo del precio de cada uno.
+          </div>
+          {buscaErr && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{buscaErr}</div>}
+          {halladas && (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>
+                {buscaTkr} a ${money2(halladas.spot)} · {halladas.filas.length} de {halladas.pedidos} con precio · vencimientos {halladas.vencimientos.join(" · ")}
+              </div>
+              {halladas.filas.map((f) => {
+                /* el mismo criterio que ya tiene elegido el Comparador manda aquí también: no se
+                   inventa una vara nueva para ordenar lo que viene del servidor */
+                const prima = n(f.credit) * 100;
+                const rom = n(f.margin) ? prima / n(f.margin) : NaN;
+                const annRom = isFinite(rom) && n(f.dte) ? rom * (365 / n(f.dte)) : NaN;
+                return (
+                  <div key={f.codigo} style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.raiseSm, display: "grid", gap: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>${f.strike}P <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{f.dte}d · {ibkrDate(f.expiry)}</span></span>
+                      <span style={{ fontSize: 13.5, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>${money2(prima)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                        {f.delta ? "Δ " + n(f.delta).toFixed(2) + " · " : ""}{f.pop ? "POP " + f.pop + "% · " : ""}
+                        {isFinite(annRom) ? "ann.ROM " + pct(annRom, 0) : ""}
+                        <span style={{ color: T.gold }}> · margen est. ${money(n(f.margin))}</span>
+                      </span>
+                      <button onClick={() => adoptarCandidata(f)}
+                        style={{ background: T.green, border: "none", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#fff", cursor: "pointer", flexShrink: 0 }}>Añadir</button>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45 }}>
+                El margen es una ESTIMACIÓN (regla de Reg-T): OpenD no sabe lo que te bloquea tu bróker. Compáralo una vez con IBKR y ajústalo a mano si hace falta.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TARJETAS */}
       <div style={{ display: "grid", gap: 14 }}>
@@ -12227,7 +12413,7 @@ function App() {
 
         {view === "comparador" && (
           <HerramientasView apiKey={apiKey} geminiKey={geminiKey} onOpenPosition={openWizardPrefilled} nlv={nlv} margin={margin} el={el} brokerLabel={broker === "Todos" ? "consolidado " + brokers.join(" + ") : broker}
-            trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} />
+            trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} puente={puente} />
         )}
 
         {view === "bloques" && (<>

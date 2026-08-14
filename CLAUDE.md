@@ -167,6 +167,20 @@ servidor no ve ni un hueco). Dos decisiones de fondo:
 Sigue pendiente: IV agregada, y las griegas por posición en la fila (`Δ -0.22` NO cabe ahí — se
 probó en la v4.51 y parte la línea).
 
+## Buscador de puts del Comparador (v4.59)
+
+Tarjeta en Herramientas → Puts que **solo se pinta con servidor propio**. Ticker → `/cotiza` (spot) →
+`/cadena` con rango (descubre vencimientos) → elige los más cercanos a 30/45/60 días → filtra puts
+entre el 70% y el 100% del spot, 5 por vencimiento → `/opciones` con los ~15 códigos en UNA llamada.
+
+- **Nunca se piden todos los contratos**: una cadena de NVDA trae 758. El cupo es de la cuenta
+  compartida con root y el agente.
+- **El margen se ESTIMA con Reg-T** (`max(20%·spot − OTM, 10%·strike) × 100`) y va marcado en ámbar
+  con un aviso: OpenD no lo sabe, no es dato de mercado. Editable como cualquier campo.
+- **Las candidatas no entran solas** en el comparador: lista aparte y botón Añadir por fila.
+- **No hay criterio nuevo**: ordena y decide el `basis` que ya tuviera elegido Victor.
+- La POP se deriva de la delta (`1 − |delta|`); sin delta se deja vacía, no se inventa.
+
 ## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
 
 Preocupación de Victor (13-ago-2026): *"esto a la gente que no tenga el servidor le va a afectar,
