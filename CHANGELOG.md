@@ -1,5 +1,42 @@
 # CHANGELOG — Bloques
 
+Bloques v4.64 — Las búsquedas se quedan guardadas, plegadas por ticker
+
+## Lo que pidió
+Victor: *"Puedes dejar guardadas las que busque hasta refrescar, lo mismo con las puts. Igual se
+pueden colapsar por ticker hasta que se borren. Y ponme un icono en la pestaña de DC."*
+
+## Cómo queda
+Los **dos** buscadores —Puts y Double Calendar— guardan lo que encuentran. Cada ticker es una fila
+plegada con su precio, cuántos resultados trae y cuándo se buscó. Se toca y se abre; se toca otra vez
+y se cierra. La **✕** borra ese ticker.
+
+Buscar el mismo ticker **reemplaza** lo suyo; los demás se quedan. Así se pueden ir acumulando
+NVDA, QQQ y lo que haga falta sin que la pantalla se convierta en una lista infinita.
+
+**Sobreviven a cerrar la app.** Se guardan en el dispositivo, pero **no viajan en el backup**: son
+datos de mercado, como las marcas de precios o el % del día. Un backup que llevara dentro los
+precios de una búsqueda de hace tres semanas sería justo lo que se arregló en la v4.56.
+
+## El icono
+La pestaña de Double Calendar llevaba prestado el del calendario de Vencimientos. Ahora tiene el
+suyo: **dos calendarios solapados**, que es literalmente la estrategia — el mismo strike en dos
+vencimientos distintos.
+
+## Verificación
+En Double Calendar, con dos tickers seguidos:
+
+| | Resultado |
+|---|---|
+| Tras buscar QQQ y luego SPY | los dos guardados: **1 abierto, 1 plegado** |
+| **Tras recargar la app entera** | **los dos siguen**, plegados |
+| Tras pulsar la ✕ de QQQ | QQQ fuera, **SPY sigue** |
+
+Y en el de Puts lo mismo: cabecera plegable *"NVDA · $168.2 · 15 candidatas · 14 ago, 01:18"*, y
+tras recargar la app sigue ahí plegada. Sin errores de consola y sin desbordar a lo ancho.
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.63 — Tres correcciones de Victor a la herramienta Double Calendar
 
 ## 1. Fuera el VIX estimado

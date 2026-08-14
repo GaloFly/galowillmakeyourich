@@ -171,6 +171,14 @@ const KEY_BASIS = "bloques_comp_basis_v2";
 const KEY_VIEW = "bloques_view_v1";
 const KEY_RIESGO_OBJ = "bloques_riesgo_obj_v1"; // v1.19: presupuesto de pérdida máx por operación ($) para Earnings/IC
 const KEY_EARNCALC = "bloques_earncalc_v1";
+/* v4.64 (Victor: "puedes dejar guardadas las que busque hasta refrescar… se pueden colapsar por
+   ticker hasta que se borren"): los resultados de los dos buscadores sobreviven a cerrar la app.
+   Son datos de MERCADO, así que NO viajan en el backup — como el % del día o las marcas. Buscar el
+   mismo ticker reemplaza lo suyo; lo demás se queda hasta que se borre a mano. */
+const KEY_BUSCA_PUTS = "bloques_busca_puts_v1";
+const KEY_BUSCA_DC = "bloques_busca_dc_v1";
+const cargaBusquedas = (clave) => { try { const x = JSON.parse(localStorage.getItem(clave) || "{}"); return x && typeof x === "object" ? x : {}; } catch (e) { return {}; } };
+const guardaBusquedas = (clave, v) => { try { localStorage.setItem(clave, JSON.stringify(v)); } catch (e) {} };
 const KEY_TOOLSUB = "bloques_toolsub_v1"; // v1.21: sub-pestaña activa de Herramientas ("puts" | "earnings") // v1.19: estado de la Calculadora Earnings del Comparador
 const KEY_ERJUMP = "bloques_er_jump_v1"; // v1.96: salto Screener → Earnings (patch pendiente que la herramienta Earnings aplica al montarse)
 const KEY_ERHIST = "bloques_er_hist_v1"; // v1.29: histórico de earnings por ticker (tabla Historical Earnings Data): { TKR: { events: [...], updated } }
@@ -191,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.63"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.64"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5984,6 +5992,9 @@ function NavIcon({ name }) {
       {name === "portfolio" && (<g {...P}><rect x="3.5" y="12" width="4.4" height="8" rx="1.4" /><rect x="9.8" y="7" width="4.4" height="13" rx="1.4" /><rect x="16.1" y="3.5" width="4.4" height="16.5" rx="1.4" /></g>)}
       {name === "movimientos" && (<g {...P}><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 5.5V11h-5.5" /></g>)}
       {name === "vencimientos" && (<g {...P}><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.8h17" /><path d="M8 3v4M16 3v4" /></g>)}
+      {/* v4.64: Double Calendar — DOS calendarios solapados, que es literalmente la estrategia:
+          el mismo strike en dos vencimientos distintos. */}
+      {name === "dobles" && (<g {...P}><rect x="2.8" y="7" width="12.5" height="12.5" rx="2.2" /><path d="M2.8 11h12.5" /><path d="M6.2 5.2v3.4M11.9 5.2v3.4" /><path d="M18.2 8.6h1.5a1.5 1.5 0 0 1 1.5 1.5v9.9a1.5 1.5 0 0 1-1.5 1.5H9.9" /></g>)}
       {name === "comparador" && (<g {...P}><path d="M12 4v16" /><path d="M5 7h14" /><path d="M5 7l-2.8 6a3 3 0 0 0 5.6 0L5 7z" /><path d="M19 7l-2.8 6a3 3 0 0 0 5.6 0L19 7z" /></g>)}
       {name === "ajustes" && (<g {...P}><circle cx="12" cy="12" r="3.2" /><path d="M12 2.8v2.7M12 18.5v2.7M2.8 12h2.7M18.5 12h2.7M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9" /></g>)}
       {name === "primas" && (<g {...P}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.2v9.6M14.8 8.8c-.6-.9-1.7-1.4-2.8-1.4-1.6 0-2.9 1-2.9 2.3s1.3 2 2.9 2.3c1.6.3 2.9 1 2.9 2.3s-1.3 2.3-2.9 2.3c-1.1 0-2.2-.5-2.8-1.4" /></g>)}
@@ -7714,15 +7725,20 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
   const [vixManual, setVixManual] = useState("");
   const [cargando, setCargando] = useState(false);
   const [err, setErr] = useState("");
-  const [res, setRes] = useState(null);
+  /* v4.64: las búsquedas se quedan guardadas por ticker, plegadas, hasta que se borren */
+  const [guardadas, setGuardadas] = useState(() => cargaBusquedas(KEY_BUSCA_DC));
+  const [abierto, setAbierto] = useState(null);
+  const graba = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_DC, v); };
 
   const lanzar = async () => {
-    setCargando(true); setErr(""); setRes(null);
+    setCargando(true); setErr("");
     const r = await buscarDobles(puente, tkr, Math.abs(n(deltaObj)) || 0.20);
     setCargando(false);
     if (r.error) { setErr(r.error); return; }
-    setRes(r);
+    graba({ ...guardadas, [tkr]: { ...r, cuando: Date.now() } });
+    setAbierto(tkr);
   };
+  const borrar = (tk) => { const x = { ...guardadas }; delete x[tk]; graba(x); };
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
       <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 11 }}>
@@ -7748,11 +7764,21 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
         {err && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{err}</div>}
       </div>
 
-      {res && (
+      {Object.keys(guardadas).sort((a, b) => (guardadas[b].cuando || 0) - (guardadas[a].cuando || 0)).map((tk) => {
+      const res = guardadas[tk];
+      const desplegado = abierto === tk;
+      return (
+      <div key={tk} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 9 }}>
         <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 9 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-            <span style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>{res.tkr} ${money2(res.spot)}</span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginLeft: "auto" }}>{res.filas.length} montajes</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <button onClick={() => setAbierto(desplegado ? null : tk)}
+              style={{ flex: 1, minWidth: 0, textAlign: "left", background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>{res.tkr} ${money2(res.spot)}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{res.filas.length} montajes · {fechaCorta(res.cuando)}</span>
+              <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: T.sub }}>{desplegado ? "▾" : "▸"}</span>
+            </button>
+            <button onClick={() => borrar(tk)} aria-label={"Borrar " + tk}
+              style={{ background: "transparent", border: "none", color: T.sub, fontSize: 14, fontWeight: 800, cursor: "pointer", padding: "0 2px", flexShrink: 0 }}>✕</button>
           </div>
           {/* v4.63: el VIX estimado se ha quitado. Se escribe a mano o no se juzga: un número
               inventado con pinta de dato es peor que un hueco. */}
@@ -7770,9 +7796,8 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                 borderRadius: 10, padding: "8px 6px", fontSize: 14, fontWeight: 700, color: T.ink, outline: "none", textAlign: "center" }} />
           </div>
         </div>
-      )}
 
-      {res && [...new Set(res.filas.map((f) => f.par))].map((par) => {
+      {desplegado && [...new Set(res.filas.map((f) => f.par))].map((par) => {
         const grupo = res.filas.filter((f) => f.par === par).sort((a, b) => b.strikeP - a.strikeP);
         const c = grupo[0];
         return (
@@ -7831,8 +7856,11 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
           </div>
         );
       })}
+      </div>
+      );
+      })}
 
-      {res && (
+      {Object.keys(guardadas).length > 0 && (
         <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5, padding: "0 4px" }}>
           Reglas del manual de OptionsKit: VIX 15–25 · delta 20 de partida · pares mié/vie, jue/vie, vie/lun, vie/vie ·
           ratio corto/largo ≥40%, ideal &gt;50%. Verde solo si el ratio pasa del 50% <b>y</b> la pata corta tiene más IV
@@ -7952,7 +7980,7 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
       {/* v3.88: mismo selector de cristal que la barra inferior */}
       <GlassSegmented
         items={[{ id: "puts", label: "Puts", icon: "puts" }, { id: "earnings", label: "Earnings", icon: "calc" },
-                ...(puenteConfigurado(puente) ? [{ id: "dc", label: "Double Cal", icon: "vencimientos" }] : []),
+                ...(puenteConfigurado(puente) ? [{ id: "dc", label: "Double Cal", icon: "dobles" }] : []),
                 { id: "screener", label: "Screener", icon: "filter" }, { id: "alerts", label: "Alertas", icon: "bolt" }]}
         value={sub} onChange={pick} renderIcon={(it) => <ActIcon name={it.icon} size={22} />} />
       {sub === "puts" ? (
@@ -10344,22 +10372,27 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
   const [buscaDelta, setBuscaDelta] = useState("0.30");
   const [buscando, setBuscando] = useState(false);
   const [buscaErr, setBuscaErr] = useState("");
-  const [halladas, setHalladas] = useState(null); /* { spot, filas, vencimientos, pedidos } */
+  const [guardadas, setGuardadas] = useState(() => cargaBusquedas(KEY_BUSCA_PUTS));
+  const [abierto, setAbierto] = useState(null); /* ticker desplegado; el resto, plegados */
+  const grabaPuts = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_PUTS, v); };
   const lanzarBusqueda = async () => {
     const tkr = buscaTkr.trim().toUpperCase();
     if (!tkr) return;
-    setBuscando(true); setBuscaErr(""); setHalladas(null);
+    setBuscando(true); setBuscaErr("");
     const r = await buscarPuts(puente, tkr, [30, 45, 60], 5, n(buscaDelta) || 0.30);
     setBuscando(false);
     if (r.error) { setBuscaErr(r.error); return; }
-    setHalladas(r);
+    grabaPuts({ ...guardadas, [tkr]: { ...r, tkr, cuando: Date.now() } });
+    setAbierto(tkr);
   };
   const adoptarCandidata = (f) => {
     const id = newId();
     setTrades((ts) => [{ id, tkr: f.tkr, dte: f.dte, strike: f.strike, credit: f.credit, margin: f.margin,
       right: "P", expiry: f.expiry, underlying: f.underlying, delta: f.delta, pop: f.pop }, ...ts]);
-    setHalladas((h) => (h ? { ...h, filas: h.filas.filter((x) => x.codigo !== f.codigo) } : h));
+    const g = guardadas[f.tkr];
+    if (g) grabaPuts({ ...guardadas, [f.tkr]: { ...g, filas: g.filas.filter((x) => x.codigo !== f.codigo) } });
   };
+  const borrarBusqueda = (tk) => { const x = { ...guardadas }; delete x[tk]; grabaPuts(x); };
   const delTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
   /* limpiar todas las operaciones grabadas del Comparador (no toca posiciones ni movimientos). Doble toque:
      el primer toque arma la confirmación 3 s, el segundo vacía. */
@@ -10579,7 +10612,26 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             Ticker y <b>delta máxima</b>. Mira los vencimientos más cercanos a 30, 45 y 60 días y trae las 5 puts que más pagan sin pasarse de esa delta.
           </div>
           {buscaErr && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{buscaErr}</div>}
-          {halladas && (() => {
+          {Object.keys(guardadas).sort((a, b) => (guardadas[b].cuando || 0) - (guardadas[a].cuando || 0)).map((tkGuard) => {
+            const halladas = guardadas[tkGuard];
+            const desplegado = abierto === tkGuard;
+            return (
+            <div key={tkGuard} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+              {/* v4.64: una fila por ticker; se despliega el que se toque y el resto se queda
+                  plegado. La ✕ borra solo ese, para poder ir acumulando tickers sin que la pantalla
+                  se convierta en una lista infinita. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.raiseSm }}>
+                <button onClick={() => setAbierto(desplegado ? null : tkGuard)}
+                  style={{ flex: 1, minWidth: 0, textAlign: "left", background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{tkGuard}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(halladas.spot)}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>{halladas.filas.length} candidatas · {fechaCorta(halladas.cuando)}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: T.sub }}>{desplegado ? "▾" : "▸"}</span>
+                </button>
+                <button onClick={() => borrarBusqueda(tkGuard)} aria-label={"Borrar " + tkGuard}
+                  style={{ background: "transparent", border: "none", color: T.sub, fontSize: 14, fontWeight: 800, cursor: "pointer", padding: "0 2px", flexShrink: 0 }}>✕</button>
+              </div>
+              {desplegado && (() => {
             /* v4.60 (Victor: "viene muy raw… ¿cómo me las podrías agrupar, strike o DTE?"):
                POR VENCIMIENTO. Dentro de un vencimiento eliges cuánto riesgo quieres (bajas de
                strike, bajas de prima y de delta); entre vencimientos decides otra cosa: si te
@@ -10609,15 +10661,8 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             const vtos = Object.keys(porVto).sort();
             return (
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
-                {/* el precio del subyacente, a la vista y grande: es la referencia contra la que se
-                    lee cada strike, y estaba escondido en una línea gris */}
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset }}>
-                  <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>{buscaTkr}</span>
-                  <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(halladas.spot)}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginLeft: "auto", textAlign: "right", minWidth: 0 }}>
-                    {conMetricas.length} con Δ ≤ {n(halladas.tope).toFixed(2)}{halladas.fueraDeTope ? " · " + halladas.fueraDeTope + " descartadas por delta" : ""}
-                    <br />mejor por {nombreCrit}
-                  </span>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, padding: "0 3px" }}>
+                  {conMetricas.length} con Δ ≤ {n(halladas.tope).toFixed(2)}{halladas.fueraDeTope ? " · " + halladas.fueraDeTope + " descartadas por delta" : ""} · mejor por {nombreCrit}
                 </div>
                 {vtos.map((v) => {
                   const filas = porVto[v].slice().sort((a, b) => n(b.strike) - n(a.strike));
@@ -10669,6 +10714,9 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
               </div>
             );
           })()}
+            </div>
+            );
+          })}
         </div>
       )}
 
