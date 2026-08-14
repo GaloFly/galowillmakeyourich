@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.70"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.71"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1939,7 +1939,15 @@ const viernesEntrada = (hoy) => {
 };
 const masDiasIso = (d, k) => iso(new Date(d.getTime() + k * 86400000));
 
-async function buscarDobles(cfg, ticker, deltaObj) {
+/* v4.71 — `manual` es un par de vencimientos elegido a mano en el calendario ({corto, largo}).
+   Victor: *"que pulses la primera y la segunda, la primera el vencimiento corto y la segunda el
+   largo, para ir probando… igual que también puedas probar un vencimiento nuevo y te saque los
+   precios"*. Va por el MISMO camino que los cuatro fijos y no por uno paralelo: es la regla de la
+   casa, y aquí importa el doble porque lo que se compara es precisamente un par contra otro. Si los
+   montara por sitios distintos, una diferencia de cálculo se leería como una diferencia de mercado.
+   Cuesta poco: la cadena se pide con el MISMO rango, así que el puente la sirve de su caché de 6 h,
+   y como solo hay dos vencimientos implicados salen ~80 códigos en vez de ~160. */
+async function buscarDobles(cfg, ticker, deltaObj, manual) {
   const tkr = String(ticker || "").trim().toUpperCase();
   const cod = "US." + tkr;
   const hoy = new Date();
@@ -1970,15 +1978,24 @@ async function buscarDobles(cfg, ticker, deltaObj) {
   /* Los cuatro montajes del manual, en fechas. Si a uno le falta un vencimiento (día festivo) NO
      desaparece: se devuelve igual diciendo cuál falta. Un montaje que se esfuma sin explicación no
      se distingue de uno que no compensa, y son cosas muy distintas. */
-  const montajes = MONTAJES_DC.map((m) => {
-    const corto = masDiasIso(entrada, m.dCorto), largo = masDiasIso(entrada, m.dLargo);
+  const desdeEntrada = (v) => Math.round((Date.parse(v + "T12:00:00Z") - entrada.getTime()) / 86400000);
+  const plan = manual && manual.corto && manual.largo
+    ? [{ clave: desdeEntrada(manual.corto) + "/" + desdeEntrada(manual.largo),
+         dCorto: desdeEntrada(manual.corto), dLargo: desdeEntrada(manual.largo),
+         aMano: true, nota: "par elegido a mano en el calendario" }]
+    : MONTAJES_DC;
+  const montajes = plan.map((m) => {
+    const corto = manual ? manual.corto : masDiasIso(entrada, m.dCorto);
+    const largo = manual ? manual.largo : masDiasIso(entrada, m.dLargo);
     const faltan = [corto, largo].filter((v) => !hayVto.has(v));
     return { ...m, corto, largo,
       diaCorto: DIAS_DC[diaSemanaIso(corto)], diaLargo: DIAS_DC[diaSemanaIso(largo)],
       falta: faltan.length ? faltan.map((v) => DIAS_DC[diaSemanaIso(v)] + " " + v.slice(8) + "/" + v.slice(5, 7)).join(" y el ") : "" };
   });
   const pares = montajes.filter((m) => !m.falta);
-  if (!pares.length) return { error: "No hay vencimientos de " + tkr + " en los días que pide el manual para entrar el viernes " + iso(entrada) + "." };
+  if (!pares.length) return { error: manual
+    ? "El servidor no tiene vencimiento de " + tkr + " en alguno de los dos días elegidos."
+    : "No hay vencimientos de " + tkr + " en los días que pide el manual para entrar el viernes " + iso(entrada) + "." };
 
   /* semanas con festivo: si falta un día entre semana en esa semana, el mercado estaba cerrado.
      v4.69: SOLO se miran las dos semanas del montaje. Al estirar la ventana a 60 días, los
@@ -2145,7 +2162,12 @@ async function buscarDobles(cfg, ticker, deltaObj) {
     entrada: iso(entrada),
     festivo: m.falta ? [] : [...new Set([...semanaCorta(m.corto), ...semanaCorta(m.largo)])],
     cuantas: filas.filter((f) => f.par === m.clave).length }));
-  return { spot, spotSpy, tkr, entrada: iso(entrada), montajes: conFestivo, filas, curva, pedidos: codigos.length };
+  /* v4.71: la lista de vencimientos disponibles viaja con el resultado para poder pintar el
+     calendario aunque la app se haya cerrado y vuelto a abrir. Son cuarenta cadenas de diez
+     caracteres: cabe de sobra y ahorra una llamada por cada vez que se mira. */
+  const vtosSel = vtos.filter((v) => v > iso(entrada)).map((v) => ({ v, d: desdeEntrada(v) }));
+  return { spot, spotSpy, tkr, entrada: iso(entrada), montajes: conFestivo, filas, curva,
+    vtos: vtosSel, aMano: !!manual, pedidos: codigos.length };
 }
 /* v4.68 — DOS sellos, no un veredicto único.
 
@@ -7946,6 +7968,66 @@ function BandaEM({ spot, em, filas }) {
   );
 }
 
+/* ---------- v4.71: calendario de dos toques ----------
+   Victor, enseñando la tira de OptionStrat: *"pulsas la primera y la segunda, la primera sería el
+   vencimiento corto y la segunda el largo, para ir probando… igual que también puedas probar un
+   vencimiento nuevo y te saque los precios"*.
+
+   Los cuatro montajes del manual siguen ahí y siguen siendo los que se buscan solos. Esto es para
+   salirse de ellos a propósito: el manual dice que esto va de la curva de volatilidad (pág. 6), y la
+   curva cambia cada semana. Los días se cuentan desde el VIERNES DE ENTRADA, igual que 5/7 o 7/14,
+   para que un par probado a mano se pueda comparar con los fijos sin cambiar de reloj. */
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const AZUL_DC = "#3D7FB8"; /* el azul acero del B0 */
+function TiraVencimientos({ vtos, corto, largo, onPick }) {
+  if (!vtos || !vtos.length) return null;
+  const meses = [];
+  vtos.forEach((x) => {
+    const m = x.v.slice(0, 7);
+    if (!meses.length || meses[meses.length - 1].m !== m) meses.push({ m, dias: [] });
+    meses[meses.length - 1].dias.push(x);
+  });
+  return (
+    /* padding interior + margen negativo: sin eso el scroll recorta la sombra de los chips y deja
+       una línea recta antiestética (regla aprendida en las pestañas de bloque) */
+    <div style={{ overflowX: "auto", padding: "7px 4px 9px", margin: "-7px -4px -9px", WebkitOverflowScrolling: "touch" }}>
+      <div style={{ display: "flex", gap: 12, minWidth: "min-content" }}>
+        {meses.map((mes) => (
+          /* flexShrink 0 en el mes Y en cada día: sin eso el flex los comprime hasta solaparlos y
+             los números se cortan por la mitad. Una tira que se desliza no debe encoger nada. */
+          <div key={mes.m} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5, flexShrink: 0 }}>
+            {/* a la izquierda y no centrado: un mes de quince días es más ancho que la pantalla, y
+                centrada la etiqueta se quedaba fuera de la vista. */}
+            <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, letterSpacing: 0.4, paddingLeft: 3 }}>
+              {MESES_CORTOS[parseInt(mes.m.slice(5, 7), 10) - 1]}
+            </div>
+            <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+              {mes.dias.map((x) => {
+                const esC = x.v === corto, esL = x.v === largo;
+                const apagado = corto && !largo && x.v <= corto && !esC;
+                return (
+                  <button key={x.v} onClick={() => onPick(x.v)} disabled={apagado} aria-label={"Vencimiento " + x.v + ", " + x.d + " días"}
+                    /* azul para la corta y violeta para la larga, como en la tira que enseñó Victor.
+                       El azul es el propio del B0, ya validado para daltonismo sobre los dos temas. */
+                    style={{ background: esC ? AZUL_DC : esL ? T.purple : T.tile, border: "none", borderRadius: 9,
+                      padding: "7px 9px", minWidth: 36, flexShrink: 0, cursor: apagado ? "default" : "pointer", opacity: apagado ? 0.3 : 1,
+                      boxShadow: esC || esL ? "none" : T.raiseSm,
+                      display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: esC || esL ? "#fff" : T.ink, fontVariantNumeric: "tabular-nums" }}>
+                      {parseInt(x.v.slice(8, 10), 10)}
+                    </span>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: esC || esL ? "rgba(255,255,255,.75)" : T.sub }}>{x.d}d</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- v4.62: Double Calendar / Double Diagonal ----------
    Las reglas y sus páginas están en buscarDobles(). Aquí solo se pintan, con dos cuidados:
    · Cada regla del manual sale con su semáforo Y con el número que la hace pasar o fallar, para
@@ -7964,6 +8046,9 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
   /* v4.67: qué montaje está desplegado dentro de cada ticker. `undefined` = todavía no se ha tocado
      nada, y entonces manda mejorClaveDC; `null` = se cerró a mano y se queda cerrado. */
   const [abiertoM, setAbiertoM] = useState({});
+  /* v4.71: el par que se está eligiendo a mano en el calendario, por ticker */
+  const [pick, setPick] = useState({});
+  const [probando, setProbando] = useState("");
   const graba = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_DC, v); };
 
   const lanzar = async () => {
@@ -7974,6 +8059,28 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
     graba({ ...guardadas, [tkr]: { ...r, cuando: Date.now() } });
     setAbierto(tkr);
     setAbiertoM((x) => { const y = { ...x }; delete y[tkr]; return y; }); /* que vuelva a mandar la mejor */
+  };
+
+  /* Un toque elige la corta, el siguiente la larga, y el tercero vuelve a empezar. Solo se pueden
+     elegir vencimientos posteriores a la corta: al revés no es un calendar. */
+  const tocaDia = (tk, v) => {
+    const p = pick[tk] || {};
+    if (!p.corto || (p.corto && p.largo)) return setPick({ ...pick, [tk]: { corto: v } });
+    if (v === p.corto) return setPick({ ...pick, [tk]: {} });
+    if (v < p.corto) return setPick({ ...pick, [tk]: { corto: v } });
+    setPick({ ...pick, [tk]: { corto: p.corto, largo: v } });
+  };
+  const probarPar = async (tk) => {
+    const p = pick[tk] || {};
+    if (!p.corto || !p.largo) return;
+    setProbando(tk); setErr("");
+    const r = await buscarDobles(puente, tk, Math.abs(n(deltaObj)) || 0.20, { corto: p.corto, largo: p.largo });
+    setProbando("");
+    if (r.error) { setErr(r.error); return; }
+    /* el par a mano se GUARDA junto al resultado, sin pisar los cuatro del manual */
+    const base = guardadas[tk] || {};
+    graba({ ...guardadas, [tk]: { ...base, aManoRes: { ...r, cuando: Date.now() } } });
+    setAbiertoM({ ...abiertoM, [tk]: "man:" + (r.montajes[0] || {}).clave });
   };
   const borrar = (tk) => { const x = { ...guardadas }; delete x[tk]; graba(x); };
   return (
@@ -8074,22 +8181,60 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
           </div>
         )}
 
-      {desplegado && gruposDC(res).map((m) => {
-        const grupo = res.filas.filter((f) => f.par === m.clave).sort((a, b) => b.strikeP - a.strikeP);
+        {desplegado && res.vtos && res.vtos.length > 1 && (
+          <div style={{ background: T.card, borderRadius: 18, padding: 13, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>Probar otro par</span>
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>
+                {(pick[tk] || {}).largo ? "listo" : (pick[tk] || {}).corto ? "ahora la larga" : "toca la corta"}
+              </span>
+            </div>
+            <TiraVencimientos vtos={res.vtos} corto={(pick[tk] || {}).corto} largo={(pick[tk] || {}).largo}
+              onPick={(v) => tocaDia(tk, v)} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: T.sub, flex: 1, minWidth: 130, lineHeight: 1.4 }}>
+                {(pick[tk] || {}).largo
+                  ? "Corta " + ibkrDate(pick[tk].corto) + " → larga " + ibkrDate(pick[tk].largo) + ". Son "
+                    + (res.vtos.find((x) => x.v === pick[tk].corto) || {}).d + "/"
+                    + (res.vtos.find((x) => x.v === pick[tk].largo) || {}).d + " días desde el viernes de entrada."
+                  : "Primero el vencimiento corto (azul) y luego el largo (violeta). Los días se cuentan desde el viernes de entrada, como en 5/7 o 7/14."}
+              </span>
+              <button onClick={() => probarPar(tk)} disabled={!(pick[tk] || {}).largo || probando === tk}
+                style={{ flexShrink: 0, background: (pick[tk] || {}).largo ? T.green : T.tile, border: "none", borderRadius: 11,
+                  padding: "9px 16px", fontSize: 13, fontWeight: 800, color: (pick[tk] || {}).largo ? "#fff" : T.sub,
+                  cursor: (pick[tk] || {}).largo ? "pointer" : "default", opacity: probando === tk ? 0.5 : 1 }}>
+                {probando === tk ? "Buscando…" : "Ver precios"}
+              </button>
+            </div>
+          </div>
+        )}
+
+      {desplegado && (() => {
+        /* v4.71: los cuatro del manual y, detrás, el par probado a mano si lo hay. Cada uno se pinta
+           con SU resultado (`src`), que es de donde salen sus filas y su precio: mezclar filas de dos
+           búsquedas distintas sería comparar precios de momentos distintos sin decirlo. */
+        const lista = [...gruposDC(res).map((m) => ({ m, src: res, id: m.clave }))];
+        if (res.aManoRes) gruposDC(res.aManoRes).forEach((m) => lista.push({ m, src: res.aManoRes, id: "man:" + m.clave }));
+        return lista;
+      })().map(({ m, src, id }) => {
+        const grupo = src.filas.filter((f) => f.par === m.clave).sort((a, b) => b.strikeP - a.strikeP);
         const mejor = grupo.slice().sort((a, b) => b.ratio - a.ratio)[0];
         const vm = mejor ? veredictoDC(mejor) : null;
         const colM = vm ? (vm.ratioOk ? T.green : vm.ratioPasa ? T.gold : T.red) : T.sub;
         const fondoM = vm ? (vm.ratioOk ? T.tileGreen : vm.ratioPasa ? T.tileAmber : T.tileRed) : T.tile;
         const eleg = abiertoM[tk] !== undefined ? abiertoM[tk] : mejorClaveDC(res);
-        const abiertaM = eleg === m.clave && grupo.length > 0;
+        const abiertaM = eleg === id && grupo.length > 0;
         return (
-          <div key={m.clave} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
-            <button onClick={() => grupo.length && setAbiertoM({ ...abiertoM, [tk]: abiertaM ? null : m.clave })}
+          <div key={id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
+            <button onClick={() => grupo.length && setAbiertoM({ ...abiertoM, [tk]: abiertaM ? null : id })}
               style={{ textAlign: "left", background: T.card, border: "none", borderRadius: 14, padding: "10px 12px", boxShadow: T.raise,
                 cursor: grupo.length ? "pointer" : "default", opacity: grupo.length ? 1 : 0.6,
                 display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 4 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 14, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{m.clave}</span>
+                {m.aMano && (
+                  <span style={{ fontSize: 9, fontWeight: 800, color: T.purple, background: T.tilePurple, borderRadius: 5, padding: "2px 5px", whiteSpace: "nowrap" }}>A MANO</span>
+                )}
                 <span style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>
                   {m.diaCorto} {ibkrDate(m.corto)} <span style={{ color: T.sub }}>→</span> {m.diaLargo} {ibkrDate(m.largo)}
                 </span>
@@ -8127,7 +8272,7 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                     ±${money2(grupo[0].movEsp)}
                   </span>
                 </div>
-                <BandaEM spot={res.spot} em={grupo[0].movEsp} filas={grupo} />
+                <BandaEM spot={src.spot} em={grupo[0].movEsp} filas={grupo} />
                 <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
                   Dentro de la franja está lo que el mercado da por normal hasta el vencimiento corto. Una pata
                   ahí dentro puede ser tocada sin que pase nada raro.
@@ -8187,9 +8332,9 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                         : "Ratio bajo el 40%: el manual dice que no."}
                     </div>
                   )}
-                  <button onClick={() => onOpenPosition && onOpenPosition({ tkr: res.tkr, tipo: "DC", block: 3, right: "", qty: "100",
+                  <button onClick={() => onOpenPosition && onOpenPosition({ tkr: src.tkr, tipo: "DC", block: 3, right: "", qty: "100",
                     expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
-                    underlying: String(res.spot), entryDate: new Date().toISOString().slice(0, 10) })}
+                    underlying: String(src.spot), entryDate: new Date().toISOString().slice(0, 10) })}
                     style={{ background: T.tile, border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
                     Abrir como posición
                   </button>
