@@ -199,7 +199,14 @@ Lo que hay que tener presente:
 - **OpenD NO conoce `US.SPX`, `US.SPXW` ni `US.VIX`** (comprobado en el VPS). Sí `US.QQQ` y
   `US.SPY`, que es lo que el manual dice que sirve igual. No perder tiempo reintentando el SPX.
 - **El VIX no lo da nadie**: Finnhub responde *"Market data subscription required for CFD indices"*.
-  Se estima con la IV ATM y **queda editable**, diciendo de dónde sale.
+  Se probó a estimarlo con la IV ATM y Victor lo rechazó (*"quita el VIX que ese pseudo no
+  funciona"*, v4.63): daba un número con pinta de dato que no lo era, y encima decidía un semáforo.
+  Ahora solo hay un campo para teclearlo. **Un hueco honesto es mejor que una cifra inventada.**
+- **El veredicto exige el ratio Y la curva de IV** (v4.63). El ratio pintaba de verde la tarjeta
+  mientras la IV iba en contra; el texto lo decía pero el color decía lo contrario, y el color se lee
+  antes. Solo hay `OK` si ratio >50% **y** IV corta > IV larga.
+- **Varios strikes por par**, no uno: la banda tiene que llegar a delta 0,10, y con 12 strikes por
+  lado se quedaba a ±4% del precio y todos los objetivos caían en el mismo.
 - **Las semanas con festivo se detectan solas**: SPY/QQQ vencen todos los días hábiles, así que si
   falta un día entre semana, ese día el mercado estaba cerrado. Sin lista que mantener.
 - **La put solo por debajo del precio y la call solo por encima**, y nada con |delta| ≥ 0,5. Sin ese

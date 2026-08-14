@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.62"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.63"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1927,7 +1927,8 @@ async function buscarDobles(cfg, ticker, deltaObj) {
   const cad = await puenteFetch(cfg, "/cadena", { codigo: cod,
     desde: iso(new Date(hoy.getTime() + 86400000)), hasta: iso(new Date(hoy.getTime() + 18 * 86400000)) });
   if (!cad || !cad.ok) return { error: (cad && cad.error) || "El servidor no contestó al pedir la cadena." };
-  const vtos = (cad.vencimientos || []).slice().sort().filter((v) => dias(v) >= 0);
+  /* v4.63: desde MAÑANA. Un vencimiento de hoy no es una entrada, es una expiración. */
+  const vtos = (cad.vencimientos || []).slice().sort().filter((v) => dias(v) >= 1);
   if (vtos.length < 2) return { error: "No hay suficientes vencimientos de " + tkr + " en las próximas dos semanas." };
 
   /* pares válidos según el manual */
@@ -1955,16 +1956,22 @@ async function buscarDobles(cfg, ticker, deltaObj) {
 
   /* strikes: una banda alrededor del precio en cada vencimiento implicado */
   const contratos = cad.contratos || [];
-  const necesarios = [...new Set(pares.flatMap((p) => [p.corto, p.largo]))];
+  const necesarios = [...new Set(pares.flatMap((p) => [p.corto, p.largo]))].sort();
   const metaDe = {};
   const pedir = new Set();
-  necesarios.forEach((v) => {
+  /* v4.63: la banda era de 12 strikes por lado y se quedaba a ±4% del precio — no llegaba a las
+     deltas bajas, así que todos los objetivos caían en el MISMO strike y salía un solo montaje por
+     par. Ahora 14 por lado y solo del lado que toca (puts abajo, calls arriba), que con strikes de
+     $5 en QQQ son ~10% y cubre de sobra hasta delta 0,10.
+     El tope de vencimientos existe por el cupo: 6 × 2 lados × 14 = 168 códigos, bajo el máximo de
+     200 que admite una llamada. */
+  necesarios.slice(0, 6).forEach((v) => {
     ["PUT", "CALL"].forEach((tipo) => {
       const lado = contratos
         .filter((c) => c && String(c.tipo || "").toUpperCase() === tipo && String(c.vencimiento || "").slice(0, 10) === v)
-        .filter((c) => Math.abs(n(c.strike) - spot) <= spot * 0.10)
+        .filter((c) => (tipo === "PUT" ? n(c.strike) <= spot : n(c.strike) >= spot))
         .sort((a, b) => Math.abs(n(a.strike) - spot) - Math.abs(n(b.strike) - spot))
-        .slice(0, 12);
+        .slice(0, 14);
       lado.forEach((c) => { metaDe[c.codigo] = { strike: n(c.strike), expiry: v, tipo }; pedir.add(c.codigo); });
     });
   });
@@ -1977,20 +1984,16 @@ async function buscarDobles(cfg, ticker, deltaObj) {
   const iv = (c) => { const m = marcas[c]; return m ? numOrNaN(m.iv) : NaN; };
   const buscaCodigo = (v, tipo, strike) => Object.keys(metaDe).find((c) => metaDe[c].expiry === v && metaDe[c].tipo === tipo && Math.abs(metaDe[c].strike - strike) < 0.001);
 
-  /* el VIX estimado: IV de la opción de SPY en el dinero a ~30 días. Si el ticker no es SPY habría
-     que pedir otra cadena; para no gastar cupo se usa la IV del propio ticker en el vencimiento más
-     largo de los que ya se han traído, y se DICE de dónde sale. */
-  let ivRef = NaN, ivRefDe = "";
-  const vLargo = necesarios.slice().sort()[necesarios.length - 1];
-  const atmC = buscaCodigo(vLargo, "CALL", (contratos.filter((c) => String(c.vencimiento || "").slice(0, 10) === vLargo)
-    .map((c) => n(c.strike)).sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot))[0]) || spot);
-  if (atmC) { ivRef = iv(atmC); ivRefDe = tkr + " ATM " + dias(vLargo) + "d"; }
+  /* v4.63 (Victor: "quita el VIX que ese pseudo no funciona"): fuera la estimación del VIX.
+     Sacarlo de la IV de una opción daba un número con pinta de dato que no lo era. Si hace falta,
+     se teclea el del bróker. */
 
-  const filas = pares.map((p) => {
+  const filas = [];
+  pares.forEach((p) => {
     /* la put SIEMPRE por debajo del precio y la call SIEMPRE por encima. No es un adorno: sin ese
        corte, un strike muy dentro de dinero al otro lado puede tener un |delta| parecido al buscado
        y colarse — y saldría una "put" 30 puntos por encima del spot, que no es este montaje. */
-    const elige = (tipo) => {
+    const elige = (tipo, objetivo) => {
       let mejor = null, dif = Infinity;
       Object.keys(metaDe).forEach((c) => {
         const m = metaDe[c];
@@ -1998,21 +2001,31 @@ async function buscarDobles(cfg, ticker, deltaObj) {
         if (tipo === "PUT" ? m.strike > spot : m.strike < spot) return;
         const d = Math.abs(dl(c));
         if (!isFinite(d) || d >= 0.5) return; /* delta ≥ 0,5 es dentro de dinero: no es la pata corta */
-        const x = Math.abs(d - deltaObj);
+        const x = Math.abs(d - objetivo);
         if (x < dif) { dif = x; mejor = c; }
       });
       return mejor;
     };
-    const cortoP = elige("PUT"), cortoC = elige("CALL");
-    if (!cortoP || !cortoC) return null;
+    /* v4.63 (Victor: "me tienes que dar más info… varios strikes"): antes salía UN montaje por par,
+       el de delta 20. Ahora salen varios alrededor del objetivo, para poder ver cuánto se abre o se
+       cierra la horquilla en vez de tener que fiarse de un solo número. */
+    const objetivos = [...new Set([deltaObj - 0.10, deltaObj - 0.05, deltaObj, deltaObj + 0.05, deltaObj + 0.10]
+      .map((x) => Math.round(x * 100) / 100).filter((x) => x >= 0.05 && x <= 0.45))];
+    const vistos = new Set();
+    objetivos.forEach((obj) => {
+    const cortoP = elige("PUT", obj), cortoC = elige("CALL", obj);
+    if (!cortoP || !cortoC) return;
     const kP = metaDe[cortoP].strike, kC = metaDe[cortoC].strike;
+    if (vistos.has(kP + "|" + kC)) return; /* dos objetivos pueden caer en el mismo strike */
+    vistos.add(kP + "|" + kC);
     const largoP = buscaCodigo(p.largo, "PUT", kP), largoC = buscaCodigo(p.largo, "CALL", kC);
-    if (!largoP || !largoC) return null;
+    if (!largoP || !largoC) return;
     const primaCorta = px(cortoP) + px(cortoC);
     const primaLarga = px(largoP) + px(largoC);
-    if (!isFinite(primaCorta) || !isFinite(primaLarga) || primaLarga <= 0) return null;
-    return {
-      id: p.corto + "|" + p.largo, corto: p.corto, largo: p.largo,
+    if (!isFinite(primaCorta) || !isFinite(primaLarga) || primaLarga <= 0) return;
+    filas.push({
+      id: p.corto + "|" + p.largo + "|" + kP + "|" + kC, corto: p.corto, largo: p.largo,
+      par: p.corto + "|" + p.largo,
       diaCorto: DIAS_DC[diaSemanaIso(p.corto)], diaLargo: DIAS_DC[diaSemanaIso(p.largo)],
       dteCorto: dias(p.corto), dteLargo: dias(p.largo),
       strikeP: kP, strikeC: kC,
@@ -2023,11 +2036,11 @@ async function buscarDobles(cfg, ticker, deltaObj) {
       festivo: [...new Set([...semanaCorta(p.corto), ...semanaCorta(p.largo)])],
       patas: { sp: { k: kP, p: px(cortoP) }, sc: { k: kC, p: px(cortoC) },
                lp: { k: kP, p: px(largoP) }, lc: { k: kC, p: px(largoC) } },
-    };
-  }).filter(Boolean);
+    });
+    });
+  });
   if (!filas.length) return { error: "No se ha podido completar ningún montaje: faltan precios o deltas de alguna pata." };
-  filas.sort((a, b) => b.ratio - a.ratio);
-  return { spot, spotSpy, tkr, filas, ivRef, ivRefDe, pedidos: codigos.length };
+  return { spot, spotSpy, tkr, filas, pedidos: codigos.length };
 }
 const MARCA_FRESCA_MS = 20 * 60 * 1000;
 const fechaDatoMs = (txt) => {
@@ -7710,15 +7723,6 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
     if (r.error) { setErr(r.error); return; }
     setRes(r);
   };
-  const vix = n(vixManual) > 0 ? n(vixManual) : (res && isFinite(res.ivRef) ? res.ivRef : NaN);
-  const vixOk = isFinite(vix) && vix >= VIX_MIN && vix <= VIX_MAX;
-
-  const Chip = ({ ok, aviso, children }) => (
-    <span style={{ fontSize: 10, fontWeight: 800, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap",
-      color: ok ? T.green : aviso ? T.gold : T.red,
-      background: ok ? T.tileGreen : aviso ? T.tileAmber : T.tileRed }}>{children}</span>
-  );
-
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
       <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 11 }}>
@@ -7745,73 +7749,94 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
       </div>
 
       {res && (
-        <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+        <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 9 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
             <span style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>{res.tkr} ${money2(res.spot)}</span>
-            <span style={{ marginLeft: "auto" }}><Chip ok={vixOk} aviso={!isFinite(vix)}>VIX ≈ {isFinite(vix) ? vix.toFixed(1) : "—"}</Chip></span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginLeft: "auto" }}>{res.filas.length} montajes</span>
           </div>
+          {/* v4.63: el VIX estimado se ha quitado. Se escribe a mano o no se juzga: un número
+              inventado con pinta de dato es peor que un hueco. */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.4, flex: 1, minWidth: 0 }}>
-              {vixOk ? "Dentro de la ventana 15–25 del manual." : isFinite(vix) ? "FUERA de la ventana 15–25: el manual dice no entrar." : "Sin dato de volatilidad."}
-              {" "}Estimado de la IV de {res.ivRefDe || "las opciones"} — ni OpenD ni Finnhub dan el VIX. Si tienes el de tu bróker, escríbelo:
+            <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.4, flex: 1, minWidth: 130 }}>
+              {isFinite(n(vixManual)) && n(vixManual) > 0
+                ? (n(vixManual) >= VIX_MIN && n(vixManual) <= VIX_MAX
+                    ? "VIX " + n(vixManual).toFixed(1) + ": dentro de la ventana 15–25 del manual."
+                    : "VIX " + n(vixManual).toFixed(1) + ": FUERA de 15–25. El manual dice no entrar.")
+                : "El VIX no lo da ni OpenD ni Finnhub. Escríbelo si quieres el semáforo del manual:"}
             </span>
-            <input value={vixManual} onChange={(e) => setVixManual(e.target.value.replace(",", "."))} inputMode="decimal" placeholder="VIX" aria-label="VIX real"
-              style={{ width: 74, flexShrink: 0, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 10, padding: "8px 6px", fontSize: 14, fontWeight: 700, color: T.ink, outline: "none", textAlign: "center" }} />
+            <input value={vixManual} onChange={(e) => setVixManual(e.target.value.replace(",", "."))} inputMode="decimal" placeholder="VIX" aria-label="VIX"
+              style={{ width: 74, flexShrink: 0, background: T.tile,
+                border: `1.5px solid ${isFinite(n(vixManual)) && n(vixManual) > 0 ? (n(vixManual) >= VIX_MIN && n(vixManual) <= VIX_MAX ? T.green : T.red) : T.line}`,
+                borderRadius: 10, padding: "8px 6px", fontSize: 14, fontWeight: 700, color: T.ink, outline: "none", textAlign: "center" }} />
           </div>
         </div>
       )}
 
-      {res && res.filas.map((f) => {
-        const ratioOk = f.ratio >= 0.5, ratioPasa = f.ratio >= 0.4;
-        const subeIv = isFinite(f.ivCorta) && isFinite(f.ivLarga) && f.ivCorta > f.ivLarga;
+      {res && [...new Set(res.filas.map((f) => f.par))].map((par) => {
+        const grupo = res.filas.filter((f) => f.par === par).sort((a, b) => b.strikeP - a.strikeP);
+        const c = grupo[0];
         return (
-          <div key={f.id} style={{ background: T.card, borderRadius: 18, padding: 13, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 9 }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-              <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink }}>
-                {f.diaCorto} {ibkrDate(f.corto)} <span style={{ color: T.sub }}>→</span> {f.diaLargo} {ibkrDate(f.largo)}
+          <div key={par} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, minWidth: 0, padding: "0 3px" }}>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>
+                {c.diaCorto} {ibkrDate(c.corto)} <span style={{ color: T.sub }}>→</span> {c.diaLargo} {ibkrDate(c.largo)}
               </span>
-              <Chip ok={ratioOk} aviso={ratioPasa && !ratioOk}>ratio {pct(f.ratio, 0)}</Chip>
+              <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{c.dteCorto}d / {c.dteLargo}d</span>
             </div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
-              put ${f.strikeP} · call ${f.strikeC} <span style={{ fontWeight: 600 }}>({f.dteCorto}d / {f.dteLargo}d · Δ {Math.abs(f.deltaP).toFixed(2)} / {Math.abs(f.deltaC).toFixed(2)})</span>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
-              <div style={{ background: T.tile, borderRadius: 11, padding: "8px 10px", boxShadow: T.inset }}>
-                <div style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Débito neto</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(f.debito * 100)}</div>
-              </div>
-              <div style={{ background: T.tile, borderRadius: 11, padding: "8px 10px", boxShadow: T.inset }}>
-                <div style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>IV corta / larga</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: subeIv ? T.green : T.ink, fontVariantNumeric: "tabular-nums" }}>
-                  {isFinite(f.ivCorta) ? f.ivCorta.toFixed(1) : "—"} / {isFinite(f.ivLarga) ? f.ivLarga.toFixed(1) : "—"}
-                </div>
-              </div>
-            </div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-              {ratioOk ? "Ratio por encima del 50% que pide el manual como ideal."
-                : ratioPasa ? "Ratio entre el 40% y el 50%: pasa el mínimo, no llega al ideal."
-                : "Ratio por debajo del 40%: el manual dice que no."}
-              {subeIv ? " La corta tiene más IV que la larga, que es lo que quieres." : " Ojo: la larga tiene más IV que la corta."}
-            </div>
-            {f.festivo.length > 0 && (
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: T.gold, background: T.tileAmber, borderRadius: 9, padding: "7px 9px", lineHeight: 1.4 }}>
-                Semana con festivo (no hay vencimiento el {f.festivo.join(" ni el ")}). El manual avisa de peor tasa de acierto.
+            {c.festivo.length > 0 && (
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: T.gold, background: T.tileAmber, borderRadius: 9, padding: "6px 9px", lineHeight: 1.4 }}>
+                Semana con festivo (no hay vencimiento el {c.festivo.join(" ni el ")}). El manual avisa de peor tasa de acierto.
               </div>
             )}
-            <button onClick={() => onOpenPosition && onOpenPosition({ tkr: res.tkr, tipo: "DC", block: 3, right: "", qty: "100",
-              expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
-              underlying: String(res.spot), entryDate: new Date().toISOString().slice(0, 10) })}
-              style={{ background: T.tile, border: "none", borderRadius: 12, padding: "10px 0", fontSize: 13, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
-              Abrir como posición
-            </button>
+            {grupo.map((f) => {
+              const ratioOk = f.ratio >= 0.5, ratioPasa = f.ratio >= 0.4;
+              /* v4.63 (Victor: "el IV de la corta debería ser más alto que la larga… y sin embargo
+                 me lo pones en verde"). Tenía razón: el ratio pintaba de verde toda la tarjeta
+                 mientras la curva de IV iba en contra. Ahora el veredicto EXIGE las dos: solo hay
+                 verde si el ratio pasa del 50% Y la corta tiene más IV que la larga. */
+              const ivOk = isFinite(f.ivCorta) && isFinite(f.ivLarga) && f.ivCorta > f.ivLarga;
+              const bien = ratioOk && ivOk, mal = !ratioPasa || !ivOk;
+              const col = bien ? T.green : mal ? T.red : T.gold;
+              const fondo = bien ? T.tileGreen : mal ? T.tileRed : T.tileAmber;
+              return (
+                <div key={f.id} style={{ background: T.card, borderRadius: 14, padding: "10px 12px", boxShadow: T.raise, border: T.edge,
+                  display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, minWidth: 0 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+                      ${f.strikeP}P / ${f.strikeC}C
+                      <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{"  Δ " + Math.abs(f.deltaP).toFixed(2) + "/" + Math.abs(f.deltaC).toFixed(2)}</span>
+                    </span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: col, background: fondo, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                      {bien ? "OK" : mal ? "NO" : "JUSTO"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ color: ratioOk ? T.green : ratioPasa ? T.gold : T.red }}>ratio {pct(f.ratio, 0)}</span>
+                    <span style={{ color: ivOk ? T.green : T.red }}>IV {isFinite(f.ivCorta) ? f.ivCorta.toFixed(1) : "—"} / {isFinite(f.ivLarga) ? f.ivLarga.toFixed(1) : "—"}</span>
+                    <span style={{ color: T.sub }}>débito ${money2(f.debito * 100)}</span>
+                  </div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                    {ratioOk ? "Ratio sobre el 50% ideal." : ratioPasa ? "Ratio entre 40% y 50%: pasa el mínimo." : "Ratio bajo el 40%: el manual dice que no."}
+                    {ivOk ? " La corta tiene más IV que la larga." : " La larga tiene MÁS IV que la corta — vas comprando la cara y vendiendo la barata."}
+                  </div>
+                  <button onClick={() => onOpenPosition && onOpenPosition({ tkr: res.tkr, tipo: "DC", block: 3, right: "", qty: "100",
+                    expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
+                    underlying: String(res.spot), entryDate: new Date().toISOString().slice(0, 10) })}
+                    style={{ background: T.tile, border: "none", borderRadius: 10, padding: "8px 0", fontSize: 12, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
+                    Abrir como posición
+                  </button>
+                </div>
+              );
+            })}
           </div>
         );
       })}
+
       {res && (
         <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5, padding: "0 4px" }}>
           Reglas del manual de OptionsKit: VIX 15–25 · delta 20 de partida · pares mié/vie, jue/vie, vie/lun, vie/vie ·
-          ratio corto/largo ≥40%, ideal &gt;50%. La curva de futuros del VIX no se puede leer desde aquí (son futuros);
-          en su lugar va la IV de la pata corta contra la larga, que es la misma idea sobre tu operación.
+          ratio corto/largo ≥40%, ideal &gt;50%. Verde solo si el ratio pasa del 50% <b>y</b> la pata corta tiene más IV
+          que la larga: si compras la cara y vendes la barata, el ratio bueno no te salva.
         </div>
       )}
     </div>
