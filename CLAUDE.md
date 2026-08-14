@@ -242,6 +242,13 @@ Lo que hay que tener presente:
   con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
   se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
   Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **El bache de la curva se pinta y se nombra** (v4.72, Victor: *"que se vea mejor ese backwardation
+  en fechas"*). El veredicto global de punta a punta ("de 3 a 49 días SUBE: contango") tapaba que POR
+  EL CAMINO baja, que es lo único que importa: un tramo que cae es un tramo donde la corta es la
+  cara. Tramo verde y grueso el que baja, su caída escrita encima, eje en FECHAS, y las del bache con
+  prioridad sobre las de los extremos (los vencimientos de delante van tan juntos que solo caben dos
+  o tres etiquetas). Los tramos que bajan se enumeran solo si son la EXCEPCIÓN: en backwardation
+  entera bajan los nueve y enumerarlos era el párrafo ilegible que se quitó en la v4.70.
 - **Calendario de dos toques** (v4.71, Victor enseñando OptionStrat: *"pulsas la primera y la
   segunda… para ir probando"*). Tira de vencimientos: un toque la corta (azul), otro la larga
   (violeta). Va por el MISMO `buscarDobles` con el parámetro `manual`, no por un camino paralelo:
