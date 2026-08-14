@@ -202,9 +202,18 @@ Lo que hay que tener presente:
   Se probó a estimarlo con la IV ATM y Victor lo rechazó (*"quita el VIX que ese pseudo no
   funciona"*, v4.63): daba un número con pinta de dato que no lo era, y encima decidía un semáforo.
   Ahora solo hay un campo para teclearlo. **Un hueco honesto es mejor que una cifra inventada.**
-- **El veredicto exige el ratio Y la curva de IV** (v4.63). El ratio pintaba de verde la tarjeta
-  mientras la IV iba en contra; el texto lo decía pero el color decía lo contrario, y el color se lee
-  antes. Solo hay `OK` si ratio >50% **y** IV corta > IV larga.
+- **DOS sellos, no un veredicto único** (v4.68, tras el péndulo). La v4.62 juzgaba solo por el ratio
+  y pintaba verde con la IV en contra (Victor lo cazó). La v4.63 exigió las dos… y entonces salía
+  `NO` en TODO: la curva de volatilidad **sube con el plazo casi siempre** —el contango de las págs.
+  7-10, que el propio manual describe como el mercado tranquilo en el que quiere que entres—, así
+  que con vencimientos a dos días pedir IV corta > IV larga es pedir algo que casi nunca pasa. Un
+  semáforo que siempre dice lo mismo no informa. Ahora: sello `RATIO` con el veredicto del manual
+  (única regla con número: ≥40%, ideal >50%) y sello `CURVA` aparte con la brecha en puntos. Ninguno
+  tapa al otro.
+- **El ratio NO se compara entre montajes** (v4.68). Depende sobre todo del hueco de días: entre 6 y
+  7 días, √(6/7) = 93% de salida aunque las dos patas tengan la misma volatilidad. Marcando "la
+  mejor" por ratio en bruto ganaba SIEMPRE el 6/7, por construcción y no por calidad. Se elige por
+  la **brecha de IV**, que es dato de OpenD y no depende del hueco, entre las que pasan el ratio.
 - **Los cuatro pares se cuentan DESDE EL VIERNES DE ENTRADA** (v4.67, Victor: *"las entradas son
   siempre en viernes… eso es 5/7, 6/7, 7/10, 7/14"*). No son "dos vencimientos que caigan en esos
   días de la semana": son 5/7, 6/7, 7/10 y 7/14 días contados desde ese viernes. Buscándolos por día

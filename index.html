@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.67"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.68"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2095,13 +2095,23 @@ async function buscarDobles(cfg, ticker, deltaObj) {
     cuantas: filas.filter((f) => f.par === m.clave).length }));
   return { spot, spotSpy, tkr, entrada: iso(entrada), montajes: conFestivo, filas, pedidos: codigos.length };
 }
-/* v4.63: el veredicto exige el ratio Y la curva de IV. Vive aquí y no dentro de la fila porque
-   desde la v4.67 la cabecera plegable de cada montaje también lo necesita: si la cabecera juzgara
-   por su cuenta, podría decir verde sobre un grupo cuyas filas dicen rojo. */
+/* v4.68 — DOS sellos, no un veredicto único.
+
+   Historia, porque el péndulo ha ido y venido. La v4.62 juzgaba solo por el ratio y Victor avisó
+   con razón de que pintaba verde con la curva de IV en contra. La v4.63 exigió las dos cosas… y
+   entonces salía NO en todo: la curva de volatilidad **sube con el plazo casi siempre** (el contango
+   de las págs. 7-10, que el propio manual describe como el mercado tranquilo en el que quiere que
+   entres). Con vencimientos a dos días de distancia, exigir que la corta tenga más IV que la larga
+   es pedir algo que casi nunca pasa, y un semáforo que siempre dice lo mismo no informa de nada.
+
+   El manual solo pone número a UNA regla: el ratio (≥40%, ideal >50%, pág. 5, "the higher, the
+   better"). De la curva dice que importa, pero no da umbral. Así que el sello del ratio lleva el
+   veredicto del manual, y la curva va en su propio sello con la brecha en puntos. Ninguno tapa al
+   otro y nada dice "todo bien" mientras la curva va en contra. */
 const veredictoDC = (f) => {
   const ratioOk = f.ratio >= 0.5, ratioPasa = f.ratio >= 0.4;
-  const ivOk = isFinite(f.ivCorta) && isFinite(f.ivLarga) && f.ivCorta > f.ivLarga;
-  return { ratioOk, ratioPasa, ivOk, bien: ratioOk && ivOk, mal: !ratioPasa || !ivOk };
+  const brecha = isFinite(f.ivCorta) && isFinite(f.ivLarga) ? f.ivCorta - f.ivLarga : NaN;
+  return { ratioOk, ratioPasa, brecha, ivOk: isFinite(brecha) && brecha > 0 };
 };
 /* Los montajes de un resultado. Las búsquedas guardadas ANTES de la v4.67 no traen `montajes`:
    para ellas se reconstruyen desde las filas y se ven como siempre (regla 2: campo nuevo que falta
@@ -2112,11 +2122,20 @@ const gruposDC = (res) => (res.montajes && res.montajes.length ? res.montajes
       return { clave: par, corto: c.corto, largo: c.largo, diaCorto: c.diaCorto, diaLargo: c.diaLargo,
         falta: "", nota: "", festivo: c.festivo || [] };
     }));
-/* Cuál se abre sola: la mejor de las que pasan las dos reglas. Si ninguna pasa, ninguna — que
-   abrir una mala por defecto sugiere que es la recomendada. */
+/* Cuál se abre sola.
+   v4.68: NO por el ratio. El ratio depende sobre todo del hueco de días —entre 6 y 7 días,
+   √(6/7) = 93% de salida aunque las dos patas tengan la misma volatilidad—, así que comparar el
+   ratio del 6/7 con el del 7/14 es comparar huecos, no operaciones: ganaba SIEMPRE el 6/7, por
+   construcción. Se elige por la BRECHA DE IV, que es dato de OpenD y no depende del hueco, entre
+   las que pasan el mínimo del manual. Si ninguna pasa el ratio, no se abre ninguna: abrir una mala
+   por defecto la haría parecer la recomendada. */
 const mejorClaveDC = (res) => {
-  let mejor = null;
-  (res.filas || []).forEach((f) => { if (veredictoDC(f).bien && (!mejor || f.ratio > mejor.ratio)) mejor = f; });
+  let mejor = null, mb = -Infinity;
+  (res.filas || []).forEach((f) => {
+    const v = veredictoDC(f);
+    if (!v.ratioPasa || !isFinite(v.brecha)) return;
+    if (v.brecha > mb) { mb = v.brecha; mejor = f; }
+  });
   return mejor ? mejor.par : null;
 };
 const MARCA_FRESCA_MS = 20 * 60 * 1000;
@@ -7880,8 +7899,8 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
         const grupo = res.filas.filter((f) => f.par === m.clave).sort((a, b) => b.strikeP - a.strikeP);
         const mejor = grupo.slice().sort((a, b) => b.ratio - a.ratio)[0];
         const vm = mejor ? veredictoDC(mejor) : null;
-        const colM = vm ? (vm.bien ? T.green : vm.mal ? T.red : T.gold) : T.sub;
-        const fondoM = vm ? (vm.bien ? T.tileGreen : vm.mal ? T.tileRed : T.tileAmber) : T.tile;
+        const colM = vm ? (vm.ratioOk ? T.green : vm.ratioPasa ? T.gold : T.red) : T.sub;
+        const fondoM = vm ? (vm.ratioOk ? T.tileGreen : vm.ratioPasa ? T.tileAmber : T.tileRed) : T.tile;
         const eleg = abiertoM[tk] !== undefined ? abiertoM[tk] : mejorClaveDC(res);
         const abiertaM = eleg === m.clave && grupo.length > 0;
         return (
@@ -7897,7 +7916,7 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                 </span>
                 {vm && (
                   <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 800, color: colM, background: fondoM, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
-                    {vm.bien ? "OK" : vm.mal ? "NO" : "JUSTO"}
+                    {vm.ratioOk ? "RATIO OK" : vm.ratioPasa ? "RATIO JUSTO" : "RATIO NO"}
                   </span>
                 )}
                 <span style={{ marginLeft: vm ? 0 : "auto", fontSize: 12, fontWeight: 800, color: T.sub }}>{abiertaM ? "▾" : grupo.length ? "▸" : ""}</span>
@@ -7906,7 +7925,8 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                 {m.falta
                   ? "No hay vencimiento el " + m.falta + ": ese día el mercado está cerrado, así que este montaje no se puede montar esta semana."
                   : grupo.length
-                    ? grupo.length + (grupo.length === 1 ? " montaje · mejor ratio " : " montajes · mejor ratio ") + pct(mejor.ratio, 0)
+                    ? grupo.length + (grupo.length === 1 ? " montaje · ratio " : " montajes · ratio hasta ") + pct(mejor.ratio, 0)
+                      + (isFinite(vm.brecha) ? (vm.brecha > 0 ? " · la corta paga " + Math.abs(vm.brecha).toFixed(1) + " pts MÁS de IV" : " · la larga paga " + Math.abs(vm.brecha).toFixed(1) + " pts más de IV") : "")
                       + (m.festivo && m.festivo.length ? " · semana con festivo" : "") + " · " + m.nota
                     : "Sin candidatas: ninguna pata corta llega a esa delta con los strikes que hay."}
               </div>
@@ -7917,9 +7937,9 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
               </div>
             )}
             {abiertaM && grupo.map((f) => {
-              const { ratioOk, ratioPasa, ivOk, bien, mal } = veredictoDC(f);
-              const col = bien ? T.green : mal ? T.red : T.gold;
-              const fondo = bien ? T.tileGreen : mal ? T.tileRed : T.tileAmber;
+              const { ratioOk, ratioPasa, ivOk, brecha } = veredictoDC(f);
+              const col = ratioOk ? T.green : ratioPasa ? T.gold : T.red;
+              const fondo = ratioOk ? T.tileGreen : ratioPasa ? T.tileAmber : T.tileRed;
               return (
                 <div key={f.id} style={{ background: T.card, borderRadius: 14, padding: "10px 12px", boxShadow: T.raise, border: T.edge,
                   display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
@@ -7928,18 +7948,27 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
                       ${f.strikeP}P / ${f.strikeC}C
                       <span style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{"  Δ " + Math.abs(f.deltaP).toFixed(2) + "/" + Math.abs(f.deltaC).toFixed(2)}</span>
                     </span>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: col, background: fondo, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
-                      {bien ? "OK" : mal ? "NO" : "JUSTO"}
+                    <span style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: col, background: fondo, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                        {ratioOk ? "RATIO ✓" : ratioPasa ? "RATIO ~" : "RATIO ✗"}
+                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: ivOk ? T.green : T.sub, background: ivOk ? T.tileGreen : T.tile, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                        {isFinite(brecha) ? (ivOk ? "CURVA ✓" : "CURVA ✗") : "CURVA —"}
+                      </span>
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                     <span style={{ color: ratioOk ? T.green : ratioPasa ? T.gold : T.red }}>ratio {pct(f.ratio, 0)}</span>
-                    <span style={{ color: ivOk ? T.green : T.red }}>IV {isFinite(f.ivCorta) ? f.ivCorta.toFixed(1) : "—"} / {isFinite(f.ivLarga) ? f.ivLarga.toFixed(1) : "—"}</span>
+                    <span style={{ color: ivOk ? T.green : T.sub }}>IV {isFinite(f.ivCorta) ? f.ivCorta.toFixed(1) : "—"} / {isFinite(f.ivLarga) ? f.ivLarga.toFixed(1) : "—"}</span>
                     <span style={{ color: T.sub }}>débito ${money2(f.debito * 100)}</span>
                   </div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-                    {ratioOk ? "Ratio sobre el 50% ideal." : ratioPasa ? "Ratio entre 40% y 50%: pasa el mínimo." : "Ratio bajo el 40%: el manual dice que no."}
-                    {ivOk ? " La corta tiene más IV que la larga." : " La larga tiene MÁS IV que la corta — vas comprando la cara y vendiendo la barata."}
+                    {ratioOk ? "Ratio sobre el 50% ideal: pones " + money2(f.debito * 100) + " $ de tu bolsillo, y ese débito es tu pérdida máxima."
+                      : ratioPasa ? "Ratio entre 40% y 50%: pasa el mínimo del manual." : "Ratio bajo el 40%: el manual dice que no."}
+                    {isFinite(brecha)
+                      ? (ivOk ? " La corta paga " + brecha.toFixed(1) + " puntos MÁS de IV que la larga: vendes la cara y compras la barata, que es lo ideal."
+                              : " La larga paga " + Math.abs(brecha).toFixed(1) + " puntos más de IV. Es lo normal (la curva sube con el plazo), no una avería, pero la curva no está de tu lado.")
+                      : ""}
                   </div>
                   <button onClick={() => onOpenPosition && onOpenPosition({ tkr: res.tkr, tipo: "DC", block: 3, right: "", qty: "100",
                     expiry: f.corto, dcdd: { expiryLong: f.largo, legs: f.patas },
@@ -7960,9 +7989,13 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
       {Object.keys(guardadas).length > 0 && (
         <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5, padding: "0 4px" }}>
           Reglas del manual de OptionsKit: VIX 15–25 · delta 20 de partida · los cuatro montajes 5/7, 6/7, 7/10 y 7/14
-          contados desde el viernes de entrada · ratio corto/largo ≥40%, ideal &gt;50%. Verde solo si el ratio pasa del
-          50% <b>y</b> la pata corta tiene más IV que la larga: si compras la cara y vendes la barata, el ratio bueno
-          no te salva.
+          contados desde el viernes de entrada · ratio corto/largo ≥40%, ideal &gt;50%.
+          <br />
+          El <b>ratio</b> es la única regla con número del manual y mide lo que arriesgas: cuanto más alto, menos
+          débito pones y menos puedes perder. La <b>curva</b> es aparte y no tumba el ratio: que la larga pague algo
+          más de IV es lo normal, la curva casi siempre sube con el plazo. <b>No compares el ratio entre montajes</b>:
+          el del 6/7 sale altísimo solo porque hay un día de hueco. Para comparar, mira la curva — por eso se abre sola
+          la de mejor curva entre las que pasan el ratio.
         </div>
       )}
     </div>
