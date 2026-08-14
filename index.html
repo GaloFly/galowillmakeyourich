@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.77"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.78"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -863,7 +863,7 @@ const griegasDePosicion = (p) => {
 const griegasDeCartera = (posiciones) => {
   let theta = 0, deltaUsd = 0, conGriegas = 0, sinGriegas = 0, sinSpot = 0, sinMarcas = 0, sinLasGriegas = 0;
   let viejasN = 0, tsViejo = null;
-  const faltan = [];
+  const faltan = [], muestras = [];
   (posiciones || []).forEach((p) => {
     if (!p || p.closed) return;
     if (natOf(p) === "ACC") {
@@ -882,6 +882,11 @@ const griegasDeCartera = (posiciones) => {
            (pasa con el mercado cerrado, o con contratos que OpenD no cubre) */
       if (!marcasDeTodasLasPatas(p)) sinMarcas++; else sinLasGriegas++;
       if (p.tkr && faltan.length < 6 && !faltan.includes(p.tkr)) faltan.push(p.tkr);
+      /* v4.78: una muestra de lo que el servidor contestó de verdad, para poder ver DÓNDE se corta */
+      if (muestras.length < 2 && p.optGriegasCrudas && typeof p.optGriegasCrudas === "object") {
+        const cod = Object.keys(p.optGriegasCrudas)[0];
+        if (cod) muestras.push({ tkr: p.tkr, cod, ...p.optGriegasCrudas[cod] });
+      }
       return;
     }
     conGriegas++;
@@ -892,7 +897,7 @@ const griegasDeCartera = (posiciones) => {
   const totalOpciones = conGriegas + sinGriegas;
   if (!totalOpciones) return null; /* sin ni una posición de opciones no hay nada que decir */
   return { theta, deltaUsd, conGriegas, sinGriegas, sinSpot, sinMarcas, sinLasGriegas, totalOpciones, faltan,
-           viejasN, tsViejo };
+           viejasN, tsViejo, muestras };
 };
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
 const effPnl = (p) => {
@@ -3366,9 +3371,33 @@ function GriegasCard({ g, privado, hayPuente }) {
           {soloFaltaRefrescar
             ? "Todavía no hay datos. Pulsa 🔄 Precios y tu servidor mandará el precio y las griegas de cada contrato."
             : "Tu servidor mandó los precios pero no las griegas (delta y theta) de " + g.faltan.join(", ") +
-              (g.sinGriegas > g.faltan.length ? " y alguna más" : "") +
-              ". Suele pasar con el mercado cerrado o con contratos que OpenD no cubre. Vuelve a probar en horario de mercado."}
+              (g.sinGriegas > g.faltan.length ? " y alguna más" : "") + "."}
         </div>
+        {/* v4.78: la respuesta LITERAL del servidor para un contrato. Decir solo "no están" no
+            distingue si el servidor no las manda, si las manda vacías o si son de otro momento — y
+            son averías distintas con arreglos distintos. Con esto se ve dónde se corta. */}
+        {!soloFaltaRefrescar && g.muestras && g.muestras.length > 0 && (
+          <div style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub }}>Lo que contestó tu servidor:</span>
+            {g.muestras.map((m) => (
+              <div key={m.cod} style={{ background: T.tile, borderRadius: 10, padding: "7px 9px", boxShadow: T.inset,
+                fontSize: 10.5, fontWeight: 700, color: T.sub, lineHeight: 1.5, wordBreak: "break-all", fontVariantNumeric: "tabular-nums" }}>
+                <div style={{ color: T.ink }}>{m.cod}</div>
+                <div>
+                  {"precio " + (m.ultimo != null ? m.ultimo : "—")}
+                  {" · IV " + (m.iv != null && m.iv !== "" ? m.iv : "—")}
+                  {" · delta " + (m.delta != null && m.delta !== "" ? m.delta : "—")}
+                  {" · theta " + (m.theta != null && m.theta !== "" ? m.theta : "—")}
+                </div>
+                <div>{"hora del dato " + (m.fecha || "—") + (m.cacheado ? " · de la caché del servidor" : "")}</div>
+              </div>
+            ))}
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+              Si ahí sale la IV pero no la delta, el servidor está recibiendo el contrato y OpenD no da las griegas.
+              Si no sale ni la IV, el contrato no le llega bien. Mándame esta captura.
+            </span>
+          </div>
+        )}
       </div>
     );
   }
@@ -12181,7 +12210,7 @@ function App() {
        —re-descargable con un 🔄 Precios—, igual que el % del día, que tampoco se guarda. Y sobre
        todo: los backups se comparten por chat, y un amigo sin servidor no debe heredar precios
        congelados de otro. Quitarlas no rompe nada: si faltan, la posición calcula como siempre. */
-    const posOut = positions.map(({ optMarks, optGriegas, optLast, optCodigo, optTs, optIv, optDelta, optTheta, optOi, ...p }) => ({
+    const posOut = positions.map(({ optMarks, optGriegas, optGriegasCrudas, optLast, optCodigo, optTs, optIv, optDelta, optTheta, optOi, ...p }) => ({
       ...p,
       margen: p.margen != null ? p.margen : "",
       margenPct: p.margenPct != null ? p.margenPct : "100",
@@ -12438,6 +12467,13 @@ function App() {
            hace cualquier broker fuera de horario. Sigue sin fusionarse la tabla entera: solo se
            rellenan los códigos que la posición tiene HOY, así una rolada los descarta igual. */
         const viejas = p.optGriegas && typeof p.optGriegas === "object" ? p.optGriegas : {};
+        /* v4.78: cuando una griega NO llega se guarda EN CRUDO lo que sí llegó de ese contrato.
+           Victor, con el mercado abierto: "se siguen sin ver las griegas del portfolio". El código de
+           la app está bien, así que o el servidor no las manda o las manda de otra forma — y hasta
+           ahora la app solo sabía decir "no están", que no distingue una avería de otra. Con esto la
+           tarjeta puede enseñar la respuesta literal para UN contrato y en la siguiente captura ya se
+           ve dónde se corta. Es dato de mercado: no viaja en el backup. */
+        const crudas = {};
         let algunaFresca = false, tsDato = null;
         cods.forEach((c) => {
           const m = marcas[c];
@@ -12445,6 +12481,7 @@ function App() {
           tabla[c] = String(m.ultimo);
           const nueva = { iv: m.iv, delta: m.delta, theta: m.theta, oi: m.interes_abierto, fecha: m.fecha_dato || null };
           const sirve = isFinite(numOrNaN(nueva.delta)) && isFinite(numOrNaN(nueva.theta));
+          if (!sirve) crudas[c] = { ultimo: m.ultimo, iv: m.iv, delta: m.delta, theta: m.theta, fecha: m.fecha_dato || null, cacheado: m.cacheado };
           if (sirve) {
             griegas[c] = nueva;
             /* v4.58: fresca no es "ha llegado" sino "es de ahora". Desde que el puente usa el
@@ -12457,6 +12494,7 @@ function App() {
         });
         if (Object.keys(tabla).length) {
           q = { ...q, optMarks: tabla, optGriegas: griegas, optTs: ahora,
+            optGriegasCrudas: Object.keys(crudas).length ? crudas : undefined,
             /* cuándo se capturaron las griegas de verdad, y si ESTE refresco las trajo frescas.
                Se guarda el hecho, no una hora que luego haya que comparar: comparar marcas de tiempo
                obligaba a inventarse un margen ("¿un minuto? ¿diez?") y eso siempre se equivoca. */

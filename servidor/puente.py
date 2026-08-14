@@ -414,14 +414,26 @@ def opcion():
         # punto medio entre lo que te pagan (bid) y lo que piden (ask).
         # get_stock_quote no siempre trae bid/ask, así que se pide el snapshot —que no gasta
         # suscripción— y si tampoco los da, se devuelven nulos y la app usa el último precio.
+        #
+        # v4 (14-ago-2026) — LAS GRIEGAS SALEN DE AQUÍ, NO DE get_stock_quote.
+        # Victor, con el mercado ABIERTO: "se siguen sin ver las griegas del portfolio".
+        # Este era el fallo: las griegas se leían del registro de `get_stock_quote`, que NO trae
+        # las columnas option_delta / option_theta / option_implied_volatility — esas solo vienen
+        # en el snapshot. O sea que por esta ruta llegaban SIEMPRE vacías, con el mercado abierto
+        # o cerrado, y como la app cae a /opcion en cuanto /opciones falla por lo que sea, el
+        # portfolio se quedaba sin griegas sin que nada avisara.
+        # (Es el mismo error de la v4.57 al revés: entonces creímos que OpenD no daba griegas
+        # fuera de horario, y resultó que preguntábamos por la puerta equivocada.)
+        snap_f = {}
         bid = ask = None
         try:
             ret_s, snap = contexto().get_market_snapshot([codigo])
             if ret_s == RET_OK:
                 fs = snap.to_dict("records")
                 if fs:
-                    bid = fs[0].get("bid_price")
-                    ask = fs[0].get("ask_price")
+                    snap_f = fs[0]
+                    bid = snap_f.get("bid_price")
+                    ask = snap_f.get("ask_price")
         except Exception:
             pass  # el snapshot es un extra: si falla, no se rompe la consulta
         medio = None
@@ -438,11 +450,16 @@ def opcion():
             "medio": medio,
             "cierre_anterior": f.get("prev_close_price"),
             "volumen": f.get("volume"),
-            "interes_abierto": f.get("option_open_interest"),
-            "iv": f.get("option_implied_volatility"),
-            "delta": f.get("option_delta"),
-            "theta": f.get("option_theta"),
-            "fecha_dato": f.get("data_date"),
+            # del SNAPSHOT, no del quote: ver el comentario de arriba
+            "interes_abierto": snap_f.get("option_open_interest"),
+            "iv": snap_f.get("option_implied_volatility"),
+            "delta": snap_f.get("option_delta"),
+            "theta": snap_f.get("option_theta"),
+            "gamma": snap_f.get("option_gamma"),
+            "vega": snap_f.get("option_vega"),
+            # la hora del propio dato, que es lo que decide si es de ahora o del último cierre.
+            # El snapshot la trae junta en `update_time`; el quote, partida en fecha y hora.
+            "fecha_dato": snap_f.get("update_time") or f.get("data_date"),
             "hora_dato": f.get("data_time"),
         }}, 200
 
