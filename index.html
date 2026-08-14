@@ -199,7 +199,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.72"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.73"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7902,8 +7902,18 @@ const diaMesCorto = (v) => parseInt(v.slice(8, 10), 10) + " " + MESES_CORTOS[par
    Ahora cada tramo se pinta por su cuenta: verde el que BAJA (a tu favor), gris el que sube. Y el eje
    va en FECHAS, no en días sueltos, que es como se eligen los vencimientos. Los tramos que bajan se
    nombran con sus dos fechas debajo, no hay que adivinarlos del dibujo. */
-function CurvaIV({ curva, spot, usados }) {
-  const pts = (curva || []).filter((c) => isFinite(c.iv) && c.iv > 0);
+/* v4.73 — una caída de menos de esto NO es un tramo a la baja, es el redondeo. Con el umbral en
+   0,01 salía en pantalla "del 4 sep al 11 sep (−0.0)": un tramo pintado de verde y anunciado como
+   favorable cuya caída, escrita, era cero. Ruido disfrazado de señal, que es peor que no decir nada. */
+const BAJADA_MIN = 0.1;
+function CurvaIV({ curva, spot, usados, maxDte }) {
+  const todos = (curva || []).filter((c) => isFinite(c.iv) && c.iv > 0);
+  /* v4.73 (Victor: "que haga un poco más de zoom para ver claro dónde explorar DC"): con la ventana
+     de 60 días, los vencimientos donde vive el montaje —los quince primeros— se apelotonaban en la
+     quinta parte izquierda del gráfico. Con zoom se dibuja solo la ventana del montaje; si al recortar
+     quedaran menos de tres puntos no habría curva, así que en ese caso se enseña entera. */
+  const recorte = isFinite(maxDte) ? todos.filter((c) => c.dte <= maxDte) : todos;
+  const pts = recorte.length >= 3 ? recorte : todos;
   if (pts.length < 3) return null;
   /* MT = 18 y no 12: la etiqueta con el valor va 6px POR ENCIMA de su punto, y con 12 el punto más
      alto la dejaba cortada por el borde de arriba. */
@@ -7917,7 +7927,7 @@ function CurvaIV({ curva, spot, usados }) {
   const sube = ys[ys.length - 1] - ys[0];
   /* tramos que BAJAN: la corta es la cara. Se guardan con sus fechas para poder nombrarlos. */
   const bajadas = [];
-  for (let i = 1; i < pts.length; i++) if (pts[i].iv < pts[i - 1].iv - 0.01) bajadas.push({ de: pts[i - 1], a: pts[i], cae: pts[i - 1].iv - pts[i].iv });
+  for (let i = 1; i < pts.length; i++) if (pts[i - 1].iv - pts[i].iv >= BAJADA_MIN) bajadas.push({ de: pts[i - 1], a: pts[i], cae: pts[i - 1].iv - pts[i].iv });
   const mayor = bajadas.slice().sort((a, b) => b.cae - a.cae)[0];
   /* etiquetas del eje: primera, última y las puntas del bache más grande, descartando las que se
      pisarían con una ya puesta */
@@ -7933,7 +7943,7 @@ function CurvaIV({ curva, spot, usados }) {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Estructura de volatilidad">
         {pts.slice(1).map((p, i) => {
-          const a = pts[i], baja = p.iv < a.iv - 0.01;
+          const a = pts[i], baja = a.iv - p.iv >= BAJADA_MIN;
           return <line key={"s" + p.v} x1={px(a.dte)} y1={py(a.iv)} x2={px(p.dte)} y2={py(p.iv)}
             stroke={baja ? T.green : T.sub} strokeWidth={baja ? 3 : 2} strokeLinecap="round" />;
         })}
@@ -8096,6 +8106,8 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
   const [abiertoM, setAbiertoM] = useState({});
   /* v4.71: el par que se está eligiendo a mano en el calendario, por ticker */
   const [pick, setPick] = useState({});
+  /* v4.73: la curva arranca con zoom en la ventana del montaje, que es donde se decide */
+  const [curvaAncha, setCurvaAncha] = useState(false);
   const [probando, setProbando] = useState("");
   const graba = (v) => { setGuardadas(v); guardaBusquedas(KEY_BUSCA_DC, v); };
 
@@ -8195,12 +8207,21 @@ function DobleCalendarContent({ puente, onOpenPosition }) {
 
         {desplegado && res.curva && res.curva.length >= 3 && (
           <div style={{ background: T.card, borderRadius: 18, padding: 13, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>Estructura de volatilidad</span>
-              <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>IV en el dinero por vencimiento</span>
+              {/* v4.73: zoom en la ventana del montaje o curva entera. Arranca con zoom, que es donde
+                  se decide; la vista larga sigue a un toque porque da el contexto de la curva. */}
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                {[["Donde se monta", false], ["60 días", true]].map(([lbl, v]) => (
+                  <button key={lbl} onClick={() => setCurvaAncha(v)}
+                    style={{ background: curvaAncha === v ? T.dark : T.tile, border: "none", borderRadius: 8, padding: "5px 9px",
+                      fontSize: 10.5, fontWeight: 800, color: curvaAncha === v ? "#fff" : T.sub, cursor: "pointer", whiteSpace: "nowrap" }}>{lbl}</button>
+                ))}
+              </div>
             </div>
             <CurvaIV curva={res.curva} spot={res.spot}
-              usados={new Set((res.montajes || []).flatMap((m) => [m.corto, m.largo]))} />
+              usados={new Set((res.montajes || []).flatMap((m) => [m.corto, m.largo]))}
+              maxDte={curvaAncha ? Infinity : Math.max(...(res.curva || []).filter((c) => (res.montajes || []).some((m) => m.corto === c.v || m.largo === c.v)).map((c) => c.dte), 14) + 4} />
             <div style={{ fontSize: 12, fontWeight: 800, color: T.ink, paddingTop: 2 }}>Movimiento esperado</div>
             {/* v4.70: dos columnas. Eran diez filas a lo ancho, y una lista de diez líneas casi
                 iguales no se lee: se hojea. Los vencimientos que usa algún montaje van resaltados,
