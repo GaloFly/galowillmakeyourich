@@ -1,5 +1,52 @@
 # CHANGELOG — Bloques
 
+Bloques v4.71 — Calendario de dos toques: probar cualquier par
+
+## Lo que pidió
+Victor, enseñando la tira de OptionStrat: *"¿Estaría bien este menú que pone el calendario y pulsas
+la primera y la segunda? La primera sería el vencimiento corto y la segunda el largo, para ir
+probando. Ya sé que tenemos fijos el 6/7, el 7/10, etcétera, pero igual que también puedas probar un
+vencimiento nuevo y te saque los precios. ¿Cómo lo ves? O igual no tiene sentido."*
+
+Sí lo tiene, y bastante: el manual dice que esto va de la curva de volatilidad (pág. 6), y la curva
+cambia cada semana. Los cuatro pares son un buen punto de partida, no una jaula.
+
+## Cómo queda
+Una tarjeta **Probar otro par** con la tira de vencimientos disponibles, agrupados por mes, cada uno
+con su día y a cuántos días está del viernes de entrada. Un toque elige la **corta** (azul), el
+siguiente la **larga** (violeta), el tercero vuelve a empezar. No deja elegir una larga anterior a la
+corta: al revés no es un calendar. Botón **Ver precios** y el par aparece al final de la lista, con
+distintivo `A MANO`, y con exactamente lo mismo que los otros: banda del movimiento esperado, sellos
+de ratio y curva, y los porcentajes del EM.
+
+**Los días se cuentan desde el viernes de entrada**, igual que 5/7 o 7/14, así que un par probado a
+mano se puede comparar con los fijos sin cambiar de reloj. Elegir el 26 y el 28 de agosto sale
+`12/14`, no `12d, 14d` desde hoy.
+
+## Por dónde va
+Por el **mismo** camino que los cuatro fijos, no por uno paralelo. Es la regla de la casa y aquí
+importa el doble: lo que se compara es precisamente un par contra otro, así que si los montara por
+sitios distintos una diferencia de cálculo se leería como una diferencia de mercado.
+
+Coste: la cadena se pide con el mismo rango de 60 días, así que el puente la sirve de su caché de 6
+horas, y como solo hay dos vencimientos implicados salen **76 códigos** en vez de los 160 de la
+búsqueda completa. Una búsqueda nueva descarta el par a mano — sus precios serían de otro momento.
+
+## Un fallo de layout, cazado midiendo
+La primera versión de la tira se veía rota: los chips se comprimían hasta solaparse y los números se
+partían por la mitad. Faltaba `flexShrink: 0` en los días y en los grupos de mes. La prueba ahora
+**mide** los chips: ninguno puede bajar de 36 px ni pisar al vecino. Y la etiqueta del mes pasa de
+centrada a la izquierda, porque un mes de quince días es más ancho que la pantalla y centrada se
+quedaba fuera de la vista.
+
+## Comprobado
+Elegir 12d y 14d en el calendario y pulsar Ver precios saca el montaje `12/14 · A MANO · mié AUG 26
+→ vie AUG 28` con sus cinco candidatas y su banda, en una llamada de 76 códigos. Los 20 chips miden
+36 px exactos y no se solapan. Los cuatro fijos siguen saliendo igual, no desborda a lo ancho, y
+`npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+---
+
 Bloques v4.70 — La banda del movimiento esperado, dibujada
 
 ## Lo que dijo

@@ -242,6 +242,12 @@ Lo que hay que tener presente:
   con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
   se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
   Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **Calendario de dos toques** (v4.71, Victor enseñando OptionStrat: *"pulsas la primera y la
+  segunda… para ir probando"*). Tira de vencimientos: un toque la corta (azul), otro la larga
+  (violeta). Va por el MISMO `buscarDobles` con el parámetro `manual`, no por un camino paralelo:
+  lo que se compara es un par contra otro, y dos caminos harían leer una diferencia de cálculo como
+  una diferencia de mercado. Los días se cuentan desde el viernes de entrada, como los fijos. La
+  cadena se pide con el mismo rango → caché del puente; solo 2 vencimientos → ~76 códigos.
 - **La banda del EM se DIBUJA** (v4.70, Victor: *"cuesta leerlo, que sea muy visual"*). Gráfico de
   rangos con el eje en movimientos esperados: franja ±1 EM sombreada y una línea por candidata de su
   put a su call. Y el % del EM de cada pata en su propio chip. Lo que se repite igual en las cinco
