@@ -1,5 +1,35 @@
 # CHANGELOG — Bloques
 
+Bloques v4.66 — El icono de DC, ahora sí
+
+## El síntoma
+Victor, sobre la v4.65: *"Sigue sin icono."* La pestaña DC salía con su texto pero sin dibujo, un
+hueco en blanco entre Earnings y Screener.
+
+## La causa
+El dibujo de la v4.64 se metió en el juego de iconos **equivocado**. La app tiene tres: `NavIcon`
+(la barra de abajo), `SetIcon` (Ajustes) y `ActIcon` (todo lo demás, incluida la fila de pestañas de
+Herramientas). El calendario doble se añadió a `NavIcon`, que esa fila no usa. `ActIcon` no reconocía
+el nombre `dobles`, así que no pintaba nada — y un `<svg>` sin trazos dentro **ocupa su sitio igual**:
+no falla, no avisa, simplemente no se ve.
+
+## El arreglo
+El dibujo pasa a `ActIcon`, con un comentario al lado diciendo por qué va ahí. Se quita de `NavIcon`,
+donde no lo usaba nadie.
+
+## Por qué se coló dos veces
+La comprobación miraba el **texto** de la pestaña ("¿pone DC?") y la captura la miré por encima. La
+prueba ahora cuenta los **trazos dentro del SVG** de las cinco pestañas: Puts 3 · Earnings 3 · DC 4 ·
+Screener 1 · Alertas 1. Con un icono vacío ese número es 0 y salta. Es el mismo patrón de siempre:
+lo que no se mide se cuela.
+
+## Comprobado
+`build … ok — app v4.66`, `node --check` limpio, `npm run prueba` con las 18 cifras intactas, y en
+Chromium con viewport iPhone: dibujo presente, la fila sigue cabiendo sin deslizarse y la pestaña
+sigue abriendo la herramienta.
+
+---
+
 Bloques v4.65 — La pestaña se llama DC
 
 ## Lo que pidió
