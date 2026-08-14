@@ -1,5 +1,32 @@
 # CHANGELOG — Bloques
 
+Bloques v4.76 — DC detrás de Screener, y otro icono
+
+## Lo que pidió
+Victor: *"El menú de DC ponlo después de Screener, y el logo piensa otro que ese no me gusta."*
+
+## Cómo queda
+El orden pasa a ser **Puts · Earnings · Screener · DC · Alertas**. Sigue apareciendo solo con
+servidor propio, así que sus dos amigos ven las cuatro de siempre en el orden de siempre.
+
+Y el icono deja de ser los dos calendarios solapados: ahora es **la doble joroba**, que es la forma
+del resultado del montaje —dos picos en los strikes y el hundimiento del centro—, o sea el dibujo que
+él mira en el modelador.
+
+## Cómo se eligió
+Dibujando cinco candidatos y mirándolos **a 22 píxeles de verdad**, que es el tamaño al que se ven:
+la doble joroba, un reloj de arena, dos campanas, un reloj con un rango debajo y dos velas de tiempo.
+A ese tamaño las campanas se emborronan en algo parecido a una "MM", el reloj con rango se llena de
+ruido en la esquina y las velas parecen cualquier cosa. El reloj de arena se lee perfecto pero solo
+dice "tiempo". La doble joroba se lee y además significa algo.
+
+## Comprobado
+Las cinco pestañas siguen cabiendo sin deslizarse, el orden es el pedido, los cinco iconos tienen
+trazos dentro (el de DC, dos) y la pestaña sigue abriendo la herramienta. `npm run prueba` con las 18
+cifras intactas y `payoff.mjs` sigue cuadrando.
+
+---
+
 Bloques v4.75 — El modelador
 
 ## Lo que pidió
