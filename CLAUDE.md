@@ -179,6 +179,10 @@ entre el 70% y el 100% del spot, 5 por vencimiento → `/opciones` con los ~15 c
   con un aviso: OpenD no lo sabe, no es dato de mercado. Editable como cualquier campo.
 - **Las candidatas no entran solas** en el comparador: lista aparte y botón Añadir por fila.
 - **No hay criterio nuevo**: ordena y decide el `basis` que ya tuviera elegido Victor.
+- **Filtra por DELTA, no por strike** (v4.61, Victor: *"los deltas están muy agresivos, deberían
+  estar 0.3 para abajo"*). Se bajan ~15 strikes por vencimiento y se descartan los que pasan del
+  umbral —editable, 0,30 por defecto—; de los que quedan se enseñan los 5 que más pagan. Filtrar por
+  strike metía una casi ATM (Δ 0,49). Sin delta un contrato NO se cuela, pero se cuenta y se dice.
 - La POP se deriva de la delta (`1 − |delta|`); sin delta se deja vacía, no se inventa.
 - **Agrupado por VENCIMIENTO, no por strike** (v4.60, Victor: *"viene muy raw"*). Dentro de un
   vencimiento se elige cuánto riesgo quieres; entre vencimientos, si compensa irse más lejos. En una

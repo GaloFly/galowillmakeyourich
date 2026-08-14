@@ -191,7 +191,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.60"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.61"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1774,7 +1774,7 @@ const MARGEN_REGT = (spot, strike) => {
   return Math.max(a, b, 0) * 100;
 };
 const iso = (d) => d.toISOString().slice(0, 10);
-async function buscarPuts(cfg, ticker, dtesObjetivo, porVto) {
+async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   const tkr = String(ticker || "").trim().toUpperCase();
   if (!tkr) return { error: "Escribe un ticker." };
   const cod = "US." + tkr;
@@ -1809,16 +1809,20 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto) {
     if (mejor) elegidos.push(mejor);
   });
 
-  /* 4. los strikes: puts por debajo del precio, unos pocos, los más cercanos al dinero */
+  /* 4. los strikes. Se piden MÁS de los que se van a enseñar (v4.61): el filtro de verdad es la
+     DELTA —Victor: "los deltas están muy agresivos, deberían estar 0.3 para abajo"— y la delta no
+     se sabe hasta preguntar el precio. Así que se bajan unos cuantos y se filtra después.
+     Filtrar por strike era un mal sustituto: los 5 más cercanos al dinero incluían una casi ATM. */
   const contratos = cad.contratos || [];
   const porCodigo = {};
   const candidatas = [];
+  const BAJAR = Math.max(porVto * 3, 12); /* margen para que quepan 5 por debajo del umbral */
   elegidos.forEach((v) => {
     const puts = contratos
       .filter((c) => c && /PUT/i.test(String(c.tipo || "")) && String(c.vencimiento || "").slice(0, 10) === v)
-      .filter((c) => n(c.strike) > 0 && n(c.strike) <= spot && n(c.strike) >= spot * 0.70)
+      .filter((c) => n(c.strike) > 0 && n(c.strike) <= spot && n(c.strike) >= spot * 0.60)
       .sort((a, b) => n(b.strike) - n(a.strike))   /* del más cercano al dinero hacia abajo */
-      .slice(0, porVto);
+      .slice(0, BAJAR);
     puts.forEach((c) => {
       porCodigo[c.codigo] = { strike: n(c.strike), expiry: v, dte: Math.max(0, dias(v)) };
       candidatas.push(c.codigo);
@@ -1851,7 +1855,32 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto) {
     });
   });
   if (!filas.length) return { error: "El servidor no dio precio de ninguna de las " + candidatas.length + " candidatas." };
-  return { spot, filas, vencimientos: elegidos, pedidos: candidatas.length, errores };
+
+  /* 6. el filtro por delta, y solo entonces se recortan a las que se enseñan.
+     Sin delta NO se cuela: si no se puede comprobar que respeta el umbral, fuera — pero se cuenta,
+     para poder decirlo en vez de que desaparezcan en silencio. */
+  const tope = isFinite(n(deltaMax)) && n(deltaMax) > 0 ? Math.abs(n(deltaMax)) : 1;
+  let sinDelta = 0, fueraDeTope = 0;
+  const dentro = filas.filter((f) => {
+    const d = numOrNaN(f.delta);
+    if (!isFinite(d)) { sinDelta++; return false; }
+    if (Math.abs(d) > tope) { fueraDeTope++; return false; }
+    return true;
+  });
+  /* de las que pasan, las de MÁS prima: dentro de tu límite de riesgo, la que más paga.
+     Son las de strike más alto, que es lo mismo. */
+  const porVencimiento = {};
+  dentro.sort((a, b) => n(b.strike) - n(a.strike)).forEach((f) => {
+    (porVencimiento[f.expiry] = porVencimiento[f.expiry] || []).push(f);
+  });
+  const finales = [];
+  Object.keys(porVencimiento).forEach((v) => finales.push(...porVencimiento[v].slice(0, porVto)));
+  if (!finales.length) {
+    return { error: "Ninguna de las " + filas.length + " puts miradas baja de delta " + tope.toFixed(2) +
+      ". Prueba con un umbral más alto o con vencimientos más largos." };
+  }
+  return { spot, filas: finales, vencimientos: elegidos, pedidos: candidatas.length,
+           miradas: filas.length, fueraDeTope, sinDelta, tope, errores };
 }
 const MARCA_FRESCA_MS = 20 * 60 * 1000;
 const fechaDatoMs = (txt) => {
@@ -10007,6 +10036,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
      botón se pinta. El resultado NO entra en las operaciones guardadas — se enseña aparte y se
      añade la que se elija. Así una búsqueda de quince candidatas no te llena el comparador. */
   const [buscaTkr, setBuscaTkr] = useState("");
+  const [buscaDelta, setBuscaDelta] = useState("0.30");
   const [buscando, setBuscando] = useState(false);
   const [buscaErr, setBuscaErr] = useState("");
   const [halladas, setHalladas] = useState(null); /* { spot, filas, vencimientos, pedidos } */
@@ -10014,7 +10044,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
     const tkr = buscaTkr.trim().toUpperCase();
     if (!tkr) return;
     setBuscando(true); setBuscaErr(""); setHalladas(null);
-    const r = await buscarPuts(puente, tkr, [30, 45, 60], 5);
+    const r = await buscarPuts(puente, tkr, [30, 45, 60], 5, n(buscaDelta) || 0.30);
     setBuscando(false);
     if (r.error) { setBuscaErr(r.error); return; }
     setHalladas(r);
@@ -10215,10 +10245,13 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
       </div>
 
       {/* v4.59: BUSCADOR DE PUTS — solo con servidor propio. Sin él no se pinta ni el botón:
-          nada de enseñar una función que no se puede usar. */}
+          nada de enseñar una función que no se puede usar.
+          v4.61: todas las rejillas de aquí llevan gridTemplateColumns "minmax(0, 1fr)". Sin eso una
+          rejilla se ensancha hasta el texto más largo que contenga y desborda TODA la página — ya
+          pasó en Ajustes, y volvió a pasar aquí con la línea de "15 descartadas por delta". */}
       {puenteConfigurado(puente) && (
-        <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, marginBottom: 14, display: "grid", gap: 11 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, marginBottom: 14, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 11 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
             <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>Buscar puts</span>
             <span style={{ fontSize: 10, fontWeight: 800, color: T.purple, background: T.tilePurple, borderRadius: 6, padding: "2px 6px" }}>TU SERVIDOR</span>
           </div>
@@ -10227,13 +10260,18 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
               onKeyDown={(e) => { if (e.key === "Enter") lanzarBusqueda(); }}
               placeholder="Ticker (NVDA)" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
               style={{ flex: 1, minWidth: 0, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "11px 12px", fontSize: 15, fontWeight: 700, color: T.ink, outline: "none" }} />
+            {/* v4.61: el umbral de delta a mano. 0,30 por defecto — lo que pidió Victor — pero hay
+                días de querer 0,20 y días de querer 0,40, y es un número, no una decisión de diseño. */}
+            <input value={buscaDelta} onChange={(e) => setBuscaDelta(e.target.value.replace(",", "."))}
+              inputMode="decimal" aria-label="Delta máxima"
+              style={{ width: 78, flexShrink: 0, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 12, padding: "11px 8px", fontSize: 15, fontWeight: 700, color: T.ink, outline: "none", textAlign: "center" }} />
             <button onClick={lanzarBusqueda} disabled={buscando || !buscaTkr.trim()}
-              style={{ background: T.dark, border: "none", borderRadius: 12, padding: "0 18px", fontSize: 14, fontWeight: 800, color: "#fff", cursor: "pointer", opacity: buscando || !buscaTkr.trim() ? 0.5 : 1, flexShrink: 0 }}>
-              {buscando ? "Buscando…" : "Buscar"}
+              style={{ background: T.dark, border: "none", borderRadius: 12, padding: "0 16px", fontSize: 14, fontWeight: 800, color: "#fff", cursor: "pointer", opacity: buscando || !buscaTkr.trim() ? 0.5 : 1, flexShrink: 0 }}>
+              {buscando ? "…" : "Buscar"}
             </button>
           </div>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-            Mira los vencimientos más cercanos a 30, 45 y 60 días y trae 5 strikes por debajo del precio de cada uno.
+            Ticker y <b>delta máxima</b>. Mira los vencimientos más cercanos a 30, 45 y 60 días y trae las 5 puts que más pagan sin pasarse de esa delta.
           </div>
           {buscaErr && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{buscaErr}</div>}
           {halladas && (() => {
@@ -10265,19 +10303,22 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             conMetricas.forEach((c) => { (porVto[c.expiry] = porVto[c.expiry] || []).push(c); });
             const vtos = Object.keys(porVto).sort();
             return (
-              <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
                 {/* el precio del subyacente, a la vista y grande: es la referencia contra la que se
                     lee cada strike, y estaba escondido en una línea gris */}
                 <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset }}>
                   <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>{buscaTkr}</span>
                   <span style={{ fontSize: 17, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(halladas.spot)}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginLeft: "auto" }}>{conMetricas.length} candidatas · mejor por {nombreCrit}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginLeft: "auto", textAlign: "right", minWidth: 0 }}>
+                    {conMetricas.length} con Δ ≤ {n(halladas.tope).toFixed(2)}{halladas.fueraDeTope ? " · " + halladas.fueraDeTope + " descartadas por delta" : ""}
+                    <br />mejor por {nombreCrit}
+                  </span>
                 </div>
                 {vtos.map((v) => {
                   const filas = porVto[v].slice().sort((a, b) => n(b.strike) - n(a.strike));
                   const dte = filas[0] ? filas[0].dte : "";
                   return (
-                    <div key={v} style={{ display: "grid", gap: 6 }}>
+                    <div key={v} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
                       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
                         <span style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>{ibkrDate(v)}</span>
                         <span style={{ fontSize: 11, fontWeight: 700, color: T.sub }}>{dte} días</span>
@@ -10287,7 +10328,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                         const otm = halladas.spot ? (halladas.spot - n(f.strike)) / halladas.spot : NaN;
                         return (
                           <div key={f.codigo} style={{ background: esMejor ? T.tileGreen : T.tile, borderRadius: 12, padding: "9px 11px",
-                            boxShadow: T.raiseSm, border: esMejor ? `1.5px solid ${T.green}` : T.edge, display: "grid", gap: 5 }}>
+                            boxShadow: T.raiseSm, border: esMejor ? `1.5px solid ${T.green}` : T.edge, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
                             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
                               <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
                                 ${f.strike}
@@ -10300,7 +10341,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                                 quedaban 250 px para cuatro cifras y se partía siempre; el margen se
                                 baja a su propia línea, que además es donde debe estar lo estimado. */}
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                              <span style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                              <span style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 2, minWidth: 0 }}>
                                 <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                                   {isFinite(f.annRom) ? pct(f.annRom, 0) + " ann" : "—"}
                                   {f.pop ? " · POP " + Math.round(n(f.pop)) + "%" : ""}
