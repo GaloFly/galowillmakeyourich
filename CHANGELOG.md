@@ -1,5 +1,57 @@
 # CHANGELOG — Bloques
 
+Bloques v4.61 — El buscador filtra por DELTA, no por strike
+
+## Lo que dijo Victor
+*"Los deltas están muy agresivos, deberían de estar 0.3 para abajo."*
+
+Tenía razón y el fallo era de raíz: el buscador cogía **los 5 strikes más cercanos al dinero**, y el
+primero salía casi ATM (Δ 0,49). Filtrar por strike era un mal sustituto de lo que él mira de verdad,
+que es la delta.
+
+## Cómo queda
+Un campo más al lado del ticker: **delta máxima**, 0,30 por defecto. Se bajan bastantes más strikes
+de los que se enseñan (la delta no se sabe hasta pedir el precio), se descartan los que se pasan del
+umbral, y de los que quedan se enseñan **los 5 que más pagan** — que son los de strike más alto.
+
+Es decir: *dentro de tu límite de riesgo, la que más paga*.
+
+La cabecera lo dice: *"14 con Δ ≤ 0.30 · 15 descartadas por delta"*. Las descartadas se cuentan en
+vez de desaparecer en silencio.
+
+Y el umbral queda a mano porque hay días de querer 0,20 y días de querer 0,40: es un número, no una
+decisión de diseño.
+
+## Lo que cuesta
+Se piden 45 contratos en vez de 15 — pero **sigue siendo UNA sola llamada** al servidor, así que
+para tu cuenta compartida cuesta exactamente lo mismo que antes.
+
+Si un contrato no trae delta, **no se cuela**: si no se puede comprobar que respeta el umbral, fuera.
+Pero se cuenta, para poder decirlo.
+
+## Dos errores míos por el camino, los dos ya conocidos
+1. **Rejilla sin `minmax(0, 1fr)`.** La tarjeta se ensanchó hasta el texto más largo que contenía
+   ("15 descartadas por delta") y **desbordó la página entera**: el botón Buscar y los precios
+   quedaban cortados por la derecha. Ya pasó una vez en Ajustes y está anotado en las notas del
+   proyecto. Detectado midiendo, no a ojo: elementos con el borde derecho en 428 px sobre una
+   pantalla de 390.
+2. **Comentario `{/* */}` justo antes de un elemento dentro de `{condición && (`.** Rompe la
+   compilación. Tercera vez que pasa; también estaba anotado.
+
+## Verificación
+Con la cadena simulada de 636 contratos:
+
+| | Resultado |
+|---|---|
+| Deltas mostradas | 0.29 · 0.26 · 0.23 · 0.21 · 0.19 (×3 vencimientos) |
+| **La más agresiva** | **0.29 — ninguna se pasa de 0.30** |
+| Descartadas por delta | 15, y se dice |
+| Contratos pedidos | 45, en **una** llamada |
+| Ancho de la página | documento 390 = ventana 390, **sin desbordar** |
+| Consola | sin errores |
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas.
+
 Bloques v4.60 — El buscador de puts, legible
 
 ## Lo que dijo Victor
