@@ -189,6 +189,23 @@ entre el 70% y el 100% del spot, 5 por vencimiento → `/opciones` con los ~15 c
   lista plana hay que hacer las dos comparaciones a la vez y por eso no se leía. El spot encabeza el
   resultado —es la referencia de cada strike— y la mejor va marcada según el `basis` elegido.
 
+## Herramienta Double Calendar (v4.62)
+
+Pestaña en Herramientas, **solo con servidor propio**, con las reglas del manual de OptionsKit que
+pasó Victor el 14-ago-2026. Están citadas con su página en el comentario de `buscarDobles()`.
+
+Lo que hay que tener presente:
+
+- **OpenD NO conoce `US.SPX`, `US.SPXW` ni `US.VIX`** (comprobado en el VPS). Sí `US.QQQ` y
+  `US.SPY`, que es lo que el manual dice que sirve igual. No perder tiempo reintentando el SPX.
+- **El VIX no lo da nadie**: Finnhub responde *"Market data subscription required for CFD indices"*.
+  Se estima con la IV ATM y **queda editable**, diciendo de dónde sale.
+- **Las semanas con festivo se detectan solas**: SPY/QQQ vencen todos los días hábiles, así que si
+  falta un día entre semana, ese día el mercado estaba cerrado. Sin lista que mantener.
+- **La put solo por debajo del precio y la call solo por encima**, y nada con |delta| ≥ 0,5. Sin ese
+  corte se colaba un strike dentro de dinero del otro lado con un |delta| parecido al buscado, y
+  salía una "put" por encima del spot.
+
 ## La red de seguridad de los que NO tienen servidor (`npm run prueba`)
 
 Preocupación de Victor (13-ago-2026): *"esto a la gente que no tenga el servidor le va a afectar,

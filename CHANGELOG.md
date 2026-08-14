@@ -1,5 +1,66 @@
 # CHANGELOG — Bloques
 
+Bloques v4.62 — Herramienta Double Calendar / Double Diagonal
+
+## Lo que pidió
+Victor pasó el manual de OptionsKit (24 páginas) y pidió una herramienta que, con esas reglas,
+le ayude a encontrar entradas en SPX o QQQ, con lectura del VIX incluida.
+
+## Las reglas que se han programado, con su página
+
+| Regla | Pág. |
+|---|---|
+| Entrar **solo con el VIX entre 15 y 25** | 20 |
+| Empezar en **delta 20** y ajustar desde ahí | 4 |
+| Pares de vencimientos: **mié/vie · jue/vie · vie/lun · vie/vie** | 4 y 13 |
+| **Ratio corto/largo ≥ 40%**, ideal >50% | 5 |
+| Peor tasa de acierto en **semanas con festivo** | 4 |
+| Sirve para **SPY y QQQ** | 4 y 13 |
+
+## Tres cosas del manual que NO se pueden aplicar tal cual, y se dicen en pantalla
+
+**1. El SPX no existe para OpenD.** Comprobado en el VPS: `US.SPX`, `US.SPXW` y `US.VIX` dan
+"Unknown stock". Sí están `US.QQQ` y `US.SPY` — que es lo que el propio manual dice que vale igual.
+
+**2. El VIX no lo da nadie.** Ni OpenD ni Finnhub (*"Market data subscription required for CFD
+indices"*). Se **estima** con la IV de la opción en el dinero, se dice de dónde sale, y **queda
+editable**: si Victor teclea el de su bróker, manda el suyo. Es una regla de entrada dura y no vale
+dar por bueno un número cuyo origen no se ve.
+
+**3. La curva de futuros del VIX** (contango/backwardation, págs. 7-10) son futuros, otro producto.
+En su lugar se enseña **la IV de la pata corta contra la de la larga** — la misma idea aplicada a la
+operación concreta en vez de a un índice de referencia.
+
+## Un detalle del que estoy contento
+Las **semanas con festivo se detectan solas**. SPY y QQQ tienen vencimiento todos los días hábiles,
+así que si en una semana falta un día entre semana, ese día el mercado estaba cerrado. Sin lista de
+festivos que mantener y sin fecha de caducidad.
+
+## Un fallo que la prueba cazó
+La primera versión ponía **la put y la call en el mismo strike, y por encima del precio**. Causa:
+elegía por |delta| más cercano a 0,20 sin mirar de qué lado del precio estaba, y un strike muy dentro
+de dinero al otro lado puede tener un |delta| parecido. Ahora la put solo puede estar por debajo del
+precio y la call por encima, y se descarta cualquier delta ≥ 0,50 (eso es dentro de dinero, no es una
+pata corta).
+
+## Verificación
+Cadena simulada de QQQ con vencimiento todos los días hábiles de tres semanas y **el lunes de la
+segunda semana quitado a propósito**, para probar la detección de festivos:
+
+| | Resultado |
+|---|---|
+| Pares encontrados | **6**, todos de las combinaciones del manual |
+| Strikes | put $700 · call $755 con el precio en $725 — **ninguno del lado equivocado** |
+| Ratios | 98% · 95% · 95% · 94% · 87% · 77%, ordenados de mejor a peor |
+| Aviso de festivo | en **4 de 6** — exactamente los que tocan la semana sin lunes |
+| VIX estimado | 17,8 → dentro de la ventana, en verde |
+| Llamadas al servidor | **3** en total (cotiza, cadena, opciones) |
+| Ancho | no desborda |
+| Consola | sin errores |
+
+`npm run prueba` en verde: las 18 cifras de un usuario sin servidor, idénticas. La pestaña **solo
+existe con servidor propio**.
+
 Bloques v4.61 — El buscador filtra por DELTA, no por strike
 
 ## Lo que dijo Victor
