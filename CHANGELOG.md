@@ -1,5 +1,49 @@
 # CHANGELOG — Bloques
 
+Bloques v4.78 — Las griegas del portfolio: el fallo estaba en el puente
+
+## El síntoma
+Victor, **con el mercado abierto** y tras pulsar 🔄 Precios: *"nada, se siguen sin ver las griegas
+del portfolio"*. La tarjeta decía "tu servidor mandó los precios pero no las griegas".
+
+## La causa: se preguntaban por la puerta equivocada (otra vez)
+El puente tiene dos rutas para el precio de un contrato:
+
+- **`/opciones`** (varios de golpe) usa `get_market_snapshot`, que **sí** trae delta, theta e IV.
+- **`/opcion`** (uno a uno) usaba `get_stock_quote` para todo… y ese registro **no tiene** las
+  columnas `option_delta`, `option_theta` ni `option_implied_volatility`. Solo pedía el snapshot para
+  la horquilla bid/ask y tiraba el resto.
+
+Así que por la ruta de uno en uno las griegas llegaban **siempre vacías**, con el mercado abierto o
+cerrado. Y la app cae a esa ruta en cuanto `/opciones` falla por cualquier motivo, sin decir nada. Es
+exactamente el mismo error que la v4.57: entonces dimos por bueno que "OpenD no da griegas fuera de
+horario" y resultó que preguntábamos por la puerta equivocada.
+
+**Arreglo:** `/opcion` lee ahora la IV, la delta, la theta, la gamma, la vega y el interés abierto del
+snapshot que ya estaba pidiendo, y la hora del dato de `update_time`. Requiere **actualizar el
+servidor** (un comando).
+
+## Y la app deja de decir solo "no están"
+Cuando falta una griega, la tarjeta enseña ahora **la respuesta literal del servidor** para uno de
+esos contratos: código, precio, IV, delta, theta, la hora del dato y si venía de la caché del
+servidor. Decir "no están" no distingue tres averías distintas —que el servidor no las mande, que las
+mande vacías, o que sean de otro momento— y cada una se arregla de otra forma. Con esto se ve dónde
+se corta sin abrir una terminal.
+
+Ese dato crudo es dato de mercado: **no viaja en el backup**, como las marcas y las griegas.
+
+## Un detalle de la captura
+Eran las **15:31**, dentro de la franja **15:29–15:46** en la que el puente no llama a OpenD para no
+molestar a la captura de root. En esa franja sirve lo que tenga en caché, y lo que no esté cacheado no
+llega. Puede haber sumado.
+
+## Comprobado
+Con griegas vacías simuladas, la tarjeta enseña `US.TMDX260918P70000 · precio 3.1 · IV — · delta — ·
+theta — · hora del dato 2026-08-14 09:39:29`. Los demás escenarios de la tarjeta siguen igual, el
+puente compila y `npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+---
+
 Bloques v4.77 — La tarjeta entera antes de añadir, y la IV en la fila
 
 ## Lo que pidió
