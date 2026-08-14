@@ -242,6 +242,13 @@ Lo que hay que tener presente:
   con su lectura en una frase, y el movimiento esperado por vencimiento. **El movimiento esperado no
   se modela: es el precio de la straddle en el dinero**, dato de mercado, y se dice en pantalla.
   Cuesta CERO llamadas extra: dos contratos por vencimiento entran en la misma llamada (~160 de 200).
+- **La curva arranca con ZOOM en la ventana del montaje** (v4.73, Victor: *"que haga un poco más de
+  zoom para ver claro dónde explorar DC"*). A 60 días, los quince primeros vencimientos —donde vive
+  el montaje— caían en la quinta parte izquierda. Con zoom: 6 puntos y 4 fechas en el eje en vez de
+  10 y 2. La vista larga sigue a un toque.
+- **Una caída de menos de 0,1 puntos de IV NO es un tramo a la baja** (`BAJADA_MIN`, v4.73). Con el
+  umbral en 0,01 salía "del 4 sep al 11 sep (−0.0)": verde, anunciado como favorable, y con la caída
+  escrita a cero. Ruido disfrazado de señal, que invita a montar sobre una diferencia inexistente.
 - **El bache de la curva se pinta y se nombra** (v4.72, Victor: *"que se vea mejor ese backwardation
   en fechas"*). El veredicto global de punta a punta ("de 3 a 49 días SUBE: contango") tapaba que POR
   EL CAMINO baja, que es lo único que importa: un tramo que cae es un tramo donde la corta es la

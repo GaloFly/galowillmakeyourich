@@ -1,5 +1,33 @@
 # CHANGELOG — Bloques
 
+Bloques v4.73 — Zoom donde se monta, y fuera las caídas de cero
+
+## Lo que pidió
+Victor: *"Que haga un poco más de zoom para ver claro dónde explorar DC."*
+
+## El zoom
+La curva llegaba a 60 días, y los vencimientos donde vive el montaje —los quince primeros— se
+apelotonaban en la quinta parte izquierda del gráfico. Ahora arranca con **zoom en la ventana del
+montaje**, que es donde se decide, y la vista larga sigue a un toque con el botón **60 días**, porque
+el contexto de la curva entera también vale.
+
+Con el zoom el gráfico pasa de diez puntos a seis, y las fechas del eje de dos a cuatro: `17 ago`,
+`21 ago`, `24 ago`, `28 ago`. La diferencia se ve de golpe.
+
+## Y un fallo que se veía en su captura
+Ponía **"del 4 sep al 11 sep (−0.0)"**: un tramo pintado de verde, anunciado como favorable, cuya
+caída escrita era **cero**. El umbral para llamar "tramo a la baja" a un tramo estaba en 0,01 puntos
+de IV, que es el redondeo. Ahora hace falta una caída de al menos **0,1 puntos**. Ruido disfrazado de
+señal es peor que no decir nada: un `−0.0` en verde invita a montar algo sobre una diferencia que no
+existe.
+
+## Comprobado
+En los cuatro escenarios de la prueba —contango con bache, backwardation entera, contango puro y
+semana con festivo— el zoom deja seis puntos y la vista larga diez, y **no aparece ni una caída
+escrita como `−0.0`**. Sin desbordes en viewport iPhone y `npm run prueba` con las 18 cifras intactas.
+
+---
+
 Bloques v4.72 — El bache de la curva, con sus fechas
 
 ## Lo que dijo
