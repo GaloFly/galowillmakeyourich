@@ -1,5 +1,36 @@
 # CHANGELOG — Bloques
 
+Bloques v4.82 — Cortar el bucle desde el servidor
+
+## Por qué hacía falta otra versión
+El arreglo de la v4.81 es el correcto… y **no le sirve de nada a un teléfono que ya está encerrado**.
+Victor: *"sigue sin funcionar"*. Claro: en su iPhone el que manda es el service worker VIEJO, la
+navegación muere antes de ejecutar una sola línea, y sin ejecutar nada no hay quien pida el service
+worker nuevo. El bucle se cierra sobre sí mismo.
+
+## El arreglo
+Se corta por el otro lado: **que Cloudflare deje de redirigir**. Un archivo `_redirects` en la carpeta
+publicada:
+
+    /index.html    /            200
+    /rescate.html  /rescate     200
+
+El `200` no es una redirección sino un *servir-en-el-sitio*. Sin redirección, el service worker viejo
+deja de recibir lo que tiene prohibido devolver, y todo vuelve a funcionar **sin que el teléfono tenga
+que hacer nada**. GitHub Pages ignora ese archivo —nunca redirigió—, así que no le afecta.
+
+## Comprobado
+Prueba nueva `encerrado.mjs`, que reproduce su caso exacto en tres actos:
+1. un teléfono con el service worker viejo contra un servidor que redirige → la página de rescate
+   falla, igual que le fallaba a él;
+2. se publica la v4.82 y el servidor deja de redirigir;
+3. **el mismo teléfono, sin tocar nada, vuelve a abrir la app** — y la caché pasa a ser la nueva, o
+   sea que el service worker arreglado ya se instaló.
+
+`npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+---
+
 Bloques v4.81 — LA CAUSA: un service worker no puede devolver una redirección
 
 ## El mensaje que lo resolvió todo
