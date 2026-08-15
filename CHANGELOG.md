@@ -1,5 +1,41 @@
 # CHANGELOG — Bloques
 
+Bloques v4.80 — Una salida que no depende de la app: /rescate.html
+
+## Por qué
+Victor, después de la v4.79: *"No arranca"*. El cartel de arranque de la v4.79 no le sirve de nada si
+lo que no le llega es **el propio index**: no puede ver un mensaje que está dentro de la página que no
+carga. Hacía falta una salida en **otra dirección**.
+
+Antes de escribirla se comprobó que el programa publicado está sano: clonando el repo desde cero y
+compilando como lo hace Cloudflare (`npm ci && npm run build`), la app arranca en la primera apertura,
+en la segunda con el service worker al mando, y también **sin red**. Así que el problema está en el
+camino hasta el teléfono, no en el código.
+
+## Qué es
+`app.alphavext.com/rescate.html` — una página sola, sin React, sin `app.js`, sin depender de nada.
+Hace las dos cosas que hacen falta cuando la app no abre:
+
+1. **Dice qué versión está sirviendo el servidor ahora mismo**, pidiendo el index con un cachebuster.
+   Eso distingue las dos averías posibles: *"la actualización no ha llegado al servidor"* o *"mi
+   teléfono tiene basura guardada"*. Sin ese dato solo se puede adivinar.
+2. **Repara**: desregistra el service worker y borra sus cachés, y abre la app.
+
+**No toca `localStorage`**, que es donde viven las posiciones. Eso no es una promesa: la prueba lo
+comprueba sembrando posiciones y una clave de API, pulsando Reparar y verificando que siguen ahí
+carácter por carácter.
+
+Va en su propia dirección a propósito: si el index está envenenado en la caché del teléfono, esta URL
+nunca lo estuvo.
+
+## Comprobado
+Con el service worker ya instalado, la página de rescate carga, informa (*"El servidor está sirviendo
+la versión 4.80. Esta app espera la 4.80"*), desregistra, borra las cachés y abre el Portfolio. Las
+posiciones y la clave de API sobreviven intactas. La red de seguridad de arranque de la v4.79 sigue
+pasando sus tres casos y `npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+---
+
 Bloques v4.79 — La pantalla en blanco: el service worker servía HTML donde iba el programa
 
 ## El síntoma
