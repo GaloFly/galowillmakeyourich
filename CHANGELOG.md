@@ -1,5 +1,45 @@
 # CHANGELOG — Bloques
 
+Bloques v4.79 — La pantalla en blanco: el service worker servía HTML donde iba el programa
+
+## El síntoma
+Victor, tras actualizar: *"no se abre la app"*, con una captura de una pantalla **completamente en
+blanco**. Sin un mensaje, sin saber si era la red, la actualización o algo roto.
+
+## La causa
+El service worker, cuando una petición fallaba y no la tenía en su caché, devolvía **`index.html`
+para cualquier cosa**. Ese respaldo tiene sentido para una navegación —es el truco de siempre para
+que una app de una sola página funcione sin red—, pero aplicado a **`app.js`** significa que el
+navegador recibe HTML donde espera JavaScript, revienta al primer `<` y **no queda nada que pintar**.
+
+Y encaja con el momento: cada versión referencia el programa con un hash nuevo (`app.js?v=…`), justo
+para que no se sirva el viejo. Tras una actualización, el index pide un archivo que **todavía no está
+en su caché**; si en ese instante la red falla o tarda, el service worker devolvía el index como si
+fuera el programa. Pantalla en blanco.
+
+## Los dos arreglos
+1. **El respaldo de `index.html` es solo para navegaciones.** Para un script, si no hay red ni copia,
+   se devuelve un error honesto — que es lo que permite detectarlo.
+2. **La app ya no puede quedarse en blanco.** El HTML lleva desde el primer instante un cartel que
+   dice *"La app no ha podido arrancar"*, avisa de que **los datos siguen en el teléfono**, y ofrece
+   dos botones: **Reintentar** y **Vaciar la caché y reintentar** (que borra el service worker y los
+   archivos del programa, nunca las posiciones). Debajo escribe el detalle técnico del fallo. React lo
+   sustituye al montar, así que si se ve es que el arranque falló de verdad.
+
+   Está escrito sin CSS externo ni dependencias a propósito: tiene que funcionar justo cuando no
+   funciona nada.
+
+## Comprobado
+Prueba nueva `arranque.mjs`, con los dos desastres que producen una pantalla vacía:
+- **el `app.js` no llega** → sale el cartel, con el detalle `http://…/app.js?v=8a28141407`;
+- **el `app.js` llega pero es HTML** (exactamente lo que hacía el service worker viejo) → sale el
+  cartel con `Uncaught SyntaxError: Unexpected token '<'`, que es la firma del fallo;
+- **y con todo bien**, el cartel desaparece y arranca el Portfolio.
+
+`npm run prueba` sigue dando las 18 cifras idénticas sin servidor propio.
+
+---
+
 Bloques v4.78 — Las griegas del portfolio: el fallo estaba en el puente
 
 ## El síntoma
