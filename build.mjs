@@ -119,8 +119,18 @@ self.addEventListener("fetch", (e) => {
         caches.open(CACHE).then((c) => c.put(clean.href, copy));
       }
       return res;
-    }).catch(() => caches.match(clean.href)
-      .then((hit) => hit || caches.match("./index.html")))
+    }).catch(() => caches.match(clean.href).then((hit) => {
+      if (hit) return hit;
+      /* v4.79 — PANTALLA EN BLANCO. Antes, si algo fallaba y no estaba en la caché, se devolvía
+         index.html PARA CUALQUIER COSA. Aplicado a app.js eso significa que el navegador recibía
+         HTML donde esperaba JavaScript, reventaba al primer "<" y la app se quedaba en blanco sin
+         una palabra. Justo lo que le pasó a Victor tras una actualización: el index nuevo pide un
+         app.js con hash nuevo, un instante sin red, y a la caché aún no había llegado.
+         El respaldo de index.html es para NAVEGACIONES y solo para eso. Para un script es mejor
+         un error honesto: así el arranque del index lo detecta y lo dice. */
+      if (req.mode === "navigate") return caches.match("./index.html");
+      return Response.error();
+    }))
   );
 });
 `;

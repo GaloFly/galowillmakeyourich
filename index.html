@@ -22,7 +22,26 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" crossorigin></script>
 </head>
 <body>
-<div id="root"></div>
+<!-- v4.79: RED DE SEGURIDAD DE ARRANQUE.
+     Si el JS no carga o revienta antes de pintar nada, la app se quedaba EN BLANCO — sin una
+     palabra, sin saber si es la red, la actualización o que se rompió algo. Le pasó a Victor y no
+     tenía ni qué contarme. Este cartel está en el HTML desde el primer instante; React lo sustituye
+     al montar, así que si se ve es que el arranque falló. Y si algo revienta, `onerror` lo escribe
+     aquí mismo. Sin CSS externo ni JS: tiene que funcionar precisamente cuando no funciona nada. -->
+<div id="root"><div id="arranque" style="font:600 15px/1.5 -apple-system,system-ui,sans-serif;color:#1a1d24;padding:26px 22px;max-width:520px;margin:0 auto">
+  <div style="font-size:19px;font-weight:800;margin-bottom:10px">La app no ha podido arrancar</div>
+  <div style="color:#5b6472;margin-bottom:16px">Tus datos <b>siguen en el teléfono</b>, no se ha perdido nada: esto es solo que no se ha cargado el programa.</div>
+  <button onclick="location.reload(true)" style="width:100%;border:none;border-radius:12px;padding:13px 0;font:800 15px -apple-system,system-ui,sans-serif;background:#1BA34C;color:#fff;margin-bottom:9px">Reintentar</button>
+  <button onclick="if(navigator.serviceWorker&amp;&amp;navigator.serviceWorker.getRegistrations){navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister()}))}).then(function(){return caches&amp;&amp;caches.keys?caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x)}))}):null}).then(function(){location.reload(true)})}else{location.reload(true)}" style="width:100%;border:none;border-radius:12px;padding:13px 0;font:800 15px -apple-system,system-ui,sans-serif;background:#eceff3;color:#1a1d24">Vaciar la caché y reintentar</button>
+  <div id="arranque-error" style="font:600 12px/1.5 ui-monospace,Menlo,monospace;color:#C2681E;margin-top:14px;word-break:break-all"></div>
+  <div style="color:#8A93A6;font-size:12px;margin-top:12px">El segundo botón borra solo los archivos del programa, nunca tus posiciones.</div>
+</div></div>
+<script>
+window.addEventListener("error", function (e) {
+  var d = document.getElementById("arranque-error");
+  if (d) d.textContent = "Detalle: " + ((e && (e.message || (e.target && e.target.src))) || "no se pudo cargar un archivo");
+}, true);
+</script>
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -199,7 +218,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.78"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.79"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
