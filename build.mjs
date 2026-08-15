@@ -235,6 +235,26 @@ document.getElementById("rep").onclick = function () {
 };
 </script></body></html>`;
 await writeFile(OUT + "/rescate.html", rescate);
+
+/* v4.82 — QUITAR LA REDIRECCIÓN DESDE EL SERVIDOR.
+   El arreglo del service worker de la v4.81 es el correcto, pero llega tarde a un teléfono que ya
+   está encerrado: el que manda ahí es el service worker VIEJO, la navegación muere antes de ejecutar
+   nada, y sin ejecutar nada no hay quien pida el service worker nuevo. El bucle se cierra solo.
+
+   Así que se corta por el otro lado: si Cloudflare deja de redirigir, el service worker viejo deja
+   de recibir respuestas redirigidas y todo vuelve a funcionar sin que el teléfono tenga que hacer
+   nada. `_redirects` con código 200 no es una redirección sino un servir-en-el-sitio, que es
+   justo lo que hace falta.
+
+   GitHub Pages ignora este archivo (nunca redirigió), así que no le afecta. */
+await writeFile(OUT + "/_redirects", [
+  "# Cloudflare Pages redirige por su cuenta /algo.html -> /algo (301), y un service worker NO",
+  "# puede devolver una respuesta redirigida: el navegador la rechaza y la app se queda en blanco.",
+  "# Con 200 se sirve el contenido en su sitio, sin redirección de por medio.",
+  "/index.html    /            200",
+  "/rescate.html  /rescate     200",
+  "",
+].join("\n"));
 for (const f of icons) await copyFile(f, OUT + "/" + f);
 for (const f of ["react.production.min.js", "react-dom.production.min.js"])
   await copyFile("vendor/" + f, OUT + "/vendor/" + f);
