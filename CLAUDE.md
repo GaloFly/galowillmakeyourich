@@ -96,6 +96,33 @@ Comprobación de que la tubería está entera: subir a `main` y ver aparecer **u
 Deployments con ese commit. Si solo está la vieja, está cortada — el ✓ verde de una entrega anterior
 no dice nada del enganche.
 
+### El día que la app no abría (15-ago-2026) — y NO era nuestra
+
+Victor: *"no se abre la app"*, pantalla en blanco, cuatro horas de diagnóstico. La causa era
+**Vodafone bloqueando el dominio `alphavext.com`** en datos móviles (su Secure Net); con VPN entraba.
+`galofly.github.io` funcionaba porque no está bloqueado, y esa asimetría es la que me hizo perseguir
+tres teorías equivocadas seguidas (la caché del teléfono, un despliegue viejo de Cloudflare, el
+service worker). Lecciones, por orden de valor:
+
+1. **Pedir el mensaje de error literal ANTES de teorizar.** Lo que resolvió esto fue abrir la
+   dirección en Safari normal y leer lo que ponía. Se podía haber hecho en el minuto uno.
+2. **Una pantalla en blanco no es un diagnóstico, es la ausencia de uno.** De ahí el cartel de
+   arranque (v4.79) y `rescate.html` (v4.80): ahora un fallo así se explica solo.
+3. **Un service worker NO puede devolver una respuesta redirigida** — el navegador la rechaza y deja
+   la página en blanco. Y `cache.put` la rechaza igual, así que un `addAll` con un recurso redirigido
+   **falla entero y el SW nuevo no se instala jamás**: el viejo se queda encerrado y no puede
+   sustituirse a sí mismo. Arreglado en la v4.81 (`sinRedir` + instalación tolerante).
+4. **Cloudflare Pages redirige `/algo.html` → `/algo`; GitHub Pages no.** Esa diferencia sola basta
+   para que la misma app vaya en un sitio y no en el otro. Se neutraliza con `_redirects` y código
+   200 (v4.82), que además es lo único que puede rescatar a un teléfono ya encerrado.
+5. **Vodafone intercepta con una redirección a su portal**, así que un bloqueo del operador llega al
+   service worker como... una respuesta redirigida. Los puntos 3 y 5 juntos explican por qué salía
+   blanco en vez del aviso del operador.
+
+Corolario operativo: **no apagar `galofly.github.io` hasta que `app.alphavext.com` abra sin VPN.**
+Mientras el operador lo bloquee, esa dirección es la única salida — y el botón de Backup vive dentro
+de la app.
+
 Falta: añadir `https://app.alphavext.com` a `BLOQUES_ORIGENES` en `/etc/bloques/entorno` del VPS y
 reiniciar `bloques-puente`, o la app en el dominio nuevo no podrá hablar con el puente (CORS).
 
