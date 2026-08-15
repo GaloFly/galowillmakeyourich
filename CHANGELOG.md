@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+Bloques v4.81 — LA CAUSA: un service worker no puede devolver una redirección
+
+## El mensaje que lo resolvió todo
+Victor, abriendo la dirección de Cloudflare en una pestaña limpia:
+**"Response served by service worker has redirections"**.
+
+Ahí estaba todo. Hasta ese momento el diagnóstico había ido dando tumbos —culpé a la caché del
+teléfono, y después a Cloudflare por publicar una copia vieja— y las dos veces me equivoqué: el panel
+demostró que Cloudflare había desplegado la v4.80 hacía once minutos, en verde.
+
+## Qué pasaba
+Un service worker **no puede devolver una respuesta que venga de una redirección**: el navegador la
+rechaza por seguridad y la página se queda en blanco.
+
+Y **Cloudflare Pages redirige** las direcciones acabadas en `.html` a la versión sin extensión
+(`/index.html` → `/`, `/rescate.html` → `/rescate`). **GitHub Pages no lo hace.** Por eso exactamente
+la misma app, con exactamente los mismos archivos, funcionaba en un sitio y en el otro no. Ese detalle
+—que llevaba ahí desde la mudanza— es toda la diferencia.
+
+Y había una segunda vuelta de tuerca, peor: **`cache.put` también rechaza una respuesta redirigida**.
+La instalación del service worker guardaba todos los archivos de golpe con `addAll`, así que al
+tropezar con `/index.html` redirigido **fallaba entera** y el service worker nuevo no llegaba a
+instalarse nunca. Por eso no se arreglaba solo por más versiones que publicara: el que mandaba seguía
+siendo el viejo, y el viejo no podía sustituirse a sí mismo. Estaba encerrado.
+
+## Los arreglos
+- **`sinRedir`**: si una respuesta viene de una redirección se reconstruye a partir de su cuerpo. Es
+  la misma respuesta, sin la marca que molesta.
+- **La instalación va archivo por archivo y es tolerante**: si uno falla, se salta y los demás entran.
+  Que un archivo suelto no pueda volver a dejar al service worker viejo mandando para siempre.
+
+## Comprobado
+Prueba nueva `redir.mjs`: un servidor que **imita a Cloudflare Pages** —redirige los `.html` y
+devuelve el index para lo que no existe— y la app abierta contra él con service worker de verdad.
+
+- Con el service worker **nuevo**: arranca a la primera, a la segunda, a la tercera, la página de
+  rescate carga, funciona **sin red** y vuelve a funcionar al recuperarla. Ni un error.
+- Con el service worker **viejo** (reconstruido a propósito para la prueba): la página de rescate
+  falla con un error de red — que es exactamente lo que Victor veía.
+
+La red de seguridad de arranque de la v4.79 sigue pasando sus tres casos, y `npm run prueba` sigue
+dando las 18 cifras idénticas sin servidor propio.
+
+## Lo que tiene que pasar ahora
+El navegador comprueba `sw.js` en cada apertura, y esa comprobación **no pasa por el service worker**.
+Así que al abrir la app debería descargar el nuevo, instalarlo —ahora ya sin fallar— y tomar el
+mando. Con los datos intactos, que nunca se tocaron.
+
+---
+
 Bloques v4.80 — Una salida que no depende de la app: /rescate.html
 
 ## Por qué
