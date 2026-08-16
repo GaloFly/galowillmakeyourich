@@ -1,5 +1,47 @@
 # CHANGELOG — Bloques
 
+Bloques v4.83 — La franja de arriba, negra cuando la app está en negro
+
+## El síntoma
+Victor, con la app en modo oscuro: *"con este update la cabecera se ha quedado blanca, se puede poner
+negra?"*. En la captura, la tira de arriba del iPhone —la de la hora, la cobertura y la batería— sale
+en beige claro mientras el resto de la pantalla es negro entero.
+
+## La causa
+iOS pinta esa franja con el color que le dice el `<meta name="theme-color">`, y lo lee **una sola vez,
+al abrir la app, antes de ejecutar nada**. El nuestro estaba escrito en el archivo con el beige del
+tema claro (`#EEE9E0`), y quien lo corregía a negro era el propio programa una vez arrancado — para
+entonces la franja ya estaba pintada y iOS no vuelve a mirarla. Lo mismo con el fondo de la página,
+que es lo que se ve por detrás de esa zona: también estaba fijo en beige.
+
+Dicho de otro modo: el color de la franja lo decidía un archivo que no sabe si el usuario tiene la app
+en claro o en oscuro.
+
+## El arreglo
+Un trozo de programa diminuto en la cabecera del archivo, que corre **antes de que se pinte un solo
+píxel** y antes de que cargue nada más. Lee la misma preferencia guardada que usa la app
+(`bloques_dark_override`) y deja ya puestos, en el momento justo:
+
+- el `theme-color` (negro `#0A0A0A` o beige, según el tema),
+- el `color-scheme` (para que los controles del sistema salgan del color correcto),
+- el fondo de la página entera.
+
+El interruptor ☀️/🌙 sigue funcionando igual y ahora también refresca esas tres cosas al vuelo, sin
+recargar. Y de paso, el cartel de arranque de la v4.79 —el que aparece cuando el programa no carga—
+ya no se ve como una hoja blanca en medio de una app negra: se adapta al tema.
+
+## Cómo se comprobó
+Prueba nueva (`cabecera.mjs`) que congela la página **antes de que exista React** y mira el color en
+ese instante exacto, que es el único que importa:
+
+- en oscuro, con la preferencia guardada: `theme-color` ya negro y fondo ya negro **antes** de que
+  arranque el programa (comprobando además que de verdad se midió antes: `window.React` no existía);
+- en claro, sin preferencia guardada: sigue beige, nada se ha vuelto negro por accidente;
+- el cartel de arranque, con el programa bloqueado a propósito, en los dos temas.
+
+`npm run prueba` (la red de seguridad de los usuarios sin servidor propio): **OK**, las 18 cifras
+idénticas.
+
 Bloques v4.82 — Cortar el bucle desde el servidor
 
 ## Por qué hacía falta otra versión
