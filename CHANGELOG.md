@@ -1,5 +1,41 @@
 # CHANGELOG — Bloques
 
+Bloques v4.84 — La tarjeta de griegas se pliega
+
+## Lo que pidió Victor
+*"Pon que se pueda colapsar el menú de griegas de la cartera"*.
+
+## Lo que se ha hecho
+Se toca la cabecera y la tarjeta se pliega. Recuerda cómo la dejaste, así que si la prefieres cerrada
+no hay que volver a cerrarla cada vez. Es el mismo mecanismo que ya tienen los Eventos Macro (v1.82),
+flecha incluida.
+
+**Plegada no se calla**, que es la parte que importa. Deja a la vista, en una línea:
+
+- el **theta del día** con su color (verde si recoges, rojo si pagas),
+- la **delta en dólares**,
+- y la chapa **EN VIVO / DEL CIERRE**, que es lo que dice si esos dos números son de ahora o del
+  último cierre.
+
+Si faltan posiciones, plegada también lo dice ("de 4 de 6"). Y cuando **no hay griegas**, plegada
+avisa en ámbar de cuál de los dos motivos es y qué hacer, en vez de quedarse en un título mudo. Es la
+misma regla de la v4.55 y de la v4.46: **callarse no es un estado neutro, no se distingue de una
+avería**. Plegar tiene que ahorrar sitio, no información.
+
+De paso, arreglada una frase que cantaba cuando solo tienes una posición de opciones: decía
+*"De las 1 posiciones de opciones que tienes"*.
+
+## Cómo se comprobó
+Prueba nueva (`griegas-plegar.mjs`), en las DOS formas de la tarjeta —con griegas y sin ellas—:
+
+- plegada ocupa menos (de 10 líneas a 4 con griegas; de 8 a 3 sin ellas);
+- plegada **sigue diciendo** el theta (+$1,66 al día), la delta (+$328) y la chapa `DEL CIERRE`;
+- sin griegas, plegada sigue avisando de que faltan;
+- al recargar sigue como la dejaste, y al volver a abrirla vuelve exactamente a lo de antes;
+- cero errores de JavaScript.
+
+`npm run prueba`: **OK**, las 18 cifras idénticas.
+
 Bloques v4.83 — La franja de arriba, negra cuando la app está en negro
 
 ## El síntoma

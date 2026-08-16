@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.83"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.84"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3403,6 +3403,31 @@ function MudanzaAviso({ onBackup }) {
    alguna se queda fuera se dice cuál. Un número que parece de toda la cartera y es de la mitad
    engaña más que no ponerlo. */
 function GriegasCard({ g, privado, hayPuente }) {
+  /* v4.84 (Victor: "pon que se pueda colapsar el menú de griegas de la cartera"). Mismo patrón que
+     Eventos Macro (v1.82): se pliega tocando la cabecera y recuerda cómo la dejaste.
+     Plegada NO SE CALLA: deja a la vista el theta del día y la delta en dólares, que es el 80% del
+     valor en el 20% del sitio, y la chapa EN VIVO / DEL CIERRE, que es lo que dice si esos dos
+     números son de ahora. Y si NO hay griegas, plegada lo dice en ámbar en una línea — un hueco
+     silencioso no se distingue de una avería (la lección de la v4.55 y de la v4.46).
+     Los hooks van ANTES de los `return null` de abajo: React cuenta los hooks de cada render y si
+     un camino se salta uno, revienta. */
+  const [abierta, setAbierta] = useState(() => {
+    try { return localStorage.getItem("bloques_griegas_open") !== "0"; } catch (e) { return true; }
+  });
+  const plegar = () => setAbierta((v) => {
+    const nv = !v;
+    try { localStorage.setItem("bloques_griegas_open", nv ? "1" : "0"); } catch (e) {}
+    return nv;
+  });
+  const Cabecera = ({ chapa }) => (
+    <div onClick={plegar} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer" }}>
+      <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, minWidth: 0 }}>Griegas de la cartera</span>
+      <span style={{ display: "flex", alignItems: "center", gap: 7, flex: "none" }}>
+        {chapa}
+        <span style={{ fontSize: 12, fontWeight: 800, color: T.sub, transform: abierta ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▸</span>
+      </span>
+    </div>
+  );
   /* v4.55 (Victor: "no me salen las griegas de la cartera"): antes, si no había ni una griega la
      tarjeta simplemente NO SE PINTABA. Eso deja a quien mira adivinando si es que no hay datos, si
      está rota, o si no se ha actualizado — el mismo error de callarse que ya se arregló en la
@@ -3414,7 +3439,14 @@ function GriegasCard({ g, privado, hayPuente }) {
     const soloFaltaRefrescar = g.sinMarcas && !g.sinLasGriegas;
     return (
       <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 9, marginBottom: 14 }}>
-        <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>Griegas de la cartera</span>
+        <Cabecera />
+        {/* plegada, el aviso se reduce a una línea — pero sigue estando, y en ámbar */}
+        {!abierta && (
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.gold, lineHeight: 1.4 }}>
+            {soloFaltaRefrescar ? "Todavía sin datos — pulsa 🔄 Precios." : "Tu servidor no manda las griegas. Ábrelo para ver el detalle."}
+          </div>
+        )}
+        {abierta && (<>
         <div style={{ fontSize: 12, fontWeight: 600, color: T.ink, lineHeight: 1.5, background: T.tileAmber, borderRadius: 12, padding: "9px 11px" }}>
           {soloFaltaRefrescar
             ? "Todavía no hay datos. Pulsa 🔄 Precios y tu servidor mandará el precio y las griegas de cada contrato."
@@ -3446,6 +3478,7 @@ function GriegasCard({ g, privado, hayPuente }) {
             </span>
           </div>
         )}
+        </>)}
       </div>
     );
   }
@@ -3463,12 +3496,21 @@ function GriegasCard({ g, privado, hayPuente }) {
       {/* v4.57: la chapa dice la verdad. Fuera de horario OpenD no manda delta ni theta, así que se
           conservan las últimas y aquí pasa a "DEL CIERRE" — poner "EN VIVO" sobre unas griegas de
           ayer sería mentir en una etiqueta, que es la peor forma de mentir. */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>Griegas de la cartera</span>
+      <Cabecera chapa={
         <span style={{ fontSize: 10, fontWeight: 800, color: g.viejasN ? T.gold : T.purple, background: g.viejasN ? T.tileAmber : T.tilePurple, borderRadius: 6, padding: "2px 6px" }}>
           {g.viejasN ? "DEL CIERRE" : "EN VIVO"}
-        </span>
-      </div>
+        </span>} />
+      {/* plegada: los dos números que importan, en una línea. Se tapan igual con el modo privado. */}
+      {!abierta && (
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.4, fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ color: g.theta >= 0 ? T.green : T.red }}>
+            {tapa((g.theta >= 0 ? "+$" : "-$") + money2(Math.abs(g.theta)))}
+          </span>
+          {" al día · delta " + tapa((g.deltaUsd >= 0 ? "+$" : "-$") + money(Math.abs(g.deltaUsd)))}
+          {g.sinGriegas ? " · de " + g.conGriegas + " de " + (g.conGriegas + g.sinGriegas) : ""}
+        </div>
+      )}
+      {abierta && (<>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
         <Tile etiqueta="Theta / día" color={g.theta >= 0 ? T.green : T.red}
           valor={tapa((g.theta >= 0 ? "+$" : "-$") + money2(Math.abs(g.theta)))}
@@ -3485,13 +3527,16 @@ function GriegasCard({ g, privado, hayPuente }) {
           ? "Sale de " + g.conGriegas + " de tus " + (g.conGriegas + g.sinGriegas) + " posiciones de opciones. " +
             "Sin precio del servidor: " + g.faltan.join(", ") + (g.sinGriegas > g.faltan.length ? " y alguna más" : "") +
             " — el theta real es mayor que este."
-          : "De las " + g.conGriegas + " posiciones de opciones que tienes, todas. La delta incluye tus acciones."}
+          : (g.conGriegas === 1
+              ? "Sale de la única posición de opciones que tienes. La delta incluye tus acciones."
+              : "De las " + g.conGriegas + " posiciones de opciones que tienes, todas. La delta incluye tus acciones.")}
         {g.sinSpot ? " (" + g.sinSpot + " sin cotización del subyacente no suman a la delta.)" : ""}
         {/* v4.58: la frase de antes decía que el servidor "no manda griegas" con el mercado cerrado.
             Desde que el puente usa el snapshot SÍ las manda — son las del cierre, que es distinto:
             no faltan, es que no se mueven hasta que abra. */}
         {g.viejasN && g.tsViejo ? " Delta y theta son del cierre de " + fechaCorta(g.tsViejo) + ": con el mercado cerrado no cambian." : ""}
       </div>
+      </>)}
     </div>
   );
 }
