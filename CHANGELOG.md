@@ -1,5 +1,54 @@
 # CHANGELOG — Bloques
 
+Bloques v4.85 — De dónde sale el theta (y las griegas congeladas)
+
+## La pregunta
+Victor, viendo `THETA / DÍA -$522.59`: *"esto me lo tienes que explicar, porque pago theta si solo
+tengo las opciones largas de IBIT y PMCC de ASTS"*.
+
+Y la sospecha era buena: en esa misma tarjeta, IBIT y ASTS estaban entre las CUATRO posiciones que
+quedaban FUERA del cálculo por no tener precio del servidor. O sea que sus únicas largas ni siquiera
+entraban en ese −$522, y aun así el total decía que paga.
+
+## El problema de fondo
+**Un total que no se puede abrir no se puede contradecir.** Si ese número estuviera mal, no habría
+forma de verlo; y si está bien, tampoco había forma de entenderlo. Un dato que solo se puede creer o
+no creer no sirve para decidir.
+
+## Lo que se ha hecho
+
+**1. Desglose por posición.** Botón «Ver de dónde sale» dentro de la tarjeta: una fila por posición
+con su theta del día y su delta en dólares, **ordenadas de la que más te cuesta a la que más te
+paga**. Así se ve de un vistazo si el total lo explica una posición concreta o si no lo explica nada.
+Se dice también lo que NO está ahí: las acciones (que sí suman a la delta de arriba) y las posiciones
+sin griegas.
+
+**2. Griegas CONGELADAS, que era el fallo escondido.** Desde la v4.57, cuando un contrato deja de
+llegar del servidor la app conserva las últimas griegas que tuvo de ESE contrato, para no quedarse en
+blanco un fin de semana. Está bien pensado… hasta que pasan días: esas griegas **seguían sumando al
+total como si fueran de hoy**, y no había forma de notarlo. Ahora, la posición cuyas griegas van más
+de un día por detrás de la más reciente sale marcada en ámbar con su fecha: `congelada del 3 ago`.
+
+**3. La frase de la antigüedad ya no tranquiliza de más.** Decía *"Delta y theta son del cierre de 3
+ago: con el mercado cerrado no cambian"*. Eso vale para un fin de semana; con datos de hace doce días
+es falso — el mercado ha abierto nueve sesiones desde entonces. Pasados cuatro días ahora dice la edad
+real y qué hacer: *"Ojo: las más antiguas son del 3 ago, hace 12 días. Pulsa 🔄 Precios; si siguen
+igual, esos contratos ya no le llegan a tu servidor."* Y se aclara que esa fecha es la de la MÁS
+ANTIGUA, no la de todas, que es lo que parecía.
+
+## Cómo se comprobó
+Prueba nueva (`desglose.mjs`) con una cartera montada para reproducir justo lo que le chirriaba:
+cuatro posiciones que COBRAN theta y una larga congelada de hace doce días que paga más que las cuatro
+juntas.
+
+- el total sale **−$84,34/día** aunque cuatro de cinco cobren — cuadra al céntimo con la cuenta hecha
+  a mano aparte (+$5,66 de las cortas − $90,00 de la larga);
+- la posición que lo explica sale **la primera** del desglose, y las otras tres en verde;
+- la congelada aparece marcada con su fecha;
+- la frase de la antigüedad ya no dice "con el mercado cerrado no cambian" y sí dice los días.
+
+`npm run prueba`: **OK**, las 18 cifras idénticas.
+
 Bloques v4.84 — La tarjeta de griegas se pliega
 
 ## Lo que pidió Victor

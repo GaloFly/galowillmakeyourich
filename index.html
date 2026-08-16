@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.84"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.85"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -910,8 +910,8 @@ const griegasDePosicion = (p) => {
 };
 const griegasDeCartera = (posiciones) => {
   let theta = 0, deltaUsd = 0, conGriegas = 0, sinGriegas = 0, sinSpot = 0, sinMarcas = 0, sinLasGriegas = 0;
-  let viejasN = 0, tsViejo = null;
-  const faltan = [], muestras = [];
+  let viejasN = 0, tsViejo = null, tsNuevo = null;
+  const faltan = [], muestras = [], detalle = [];
   (posiciones || []).forEach((p) => {
     if (!p || p.closed) return;
     if (natOf(p) === "ACC") {
@@ -941,11 +941,27 @@ const griegasDeCartera = (posiciones) => {
     theta += g.theta;
     if (isFinite(g.deltaUsd)) deltaUsd += g.deltaUsd; else sinSpot++;
     if (g.viejas) { viejasN++; if (isFinite(g.ts) && (tsViejo == null || g.ts < tsViejo)) tsViejo = g.ts; }
+    if (isFinite(g.ts) && (tsNuevo == null || g.ts > tsNuevo)) tsNuevo = g.ts;
+    /* v4.85: QUIÉN pone cada dólar. Victor, viendo −$522/día: "esto me lo tienes que explicar,
+       porque pago theta si solo tengo las opciones largas de IBIT y PMCC de ASTS". Y tiene razón en
+       sospechar: un total que no se puede abrir no se puede contradecir, y si estuviera mal nadie lo
+       sabría. Con el desglose, o se ve qué posición lo explica, o se ve que el número está mal. */
+    detalle.push({ id: p.id, tkr: p.tkr || "—", tipo: p.tipo || "", theta: g.theta,
+                   deltaUsd: isFinite(g.deltaUsd) ? g.deltaUsd : NaN, ts: g.ts });
   });
   const totalOpciones = conGriegas + sinGriegas;
   if (!totalOpciones) return null; /* sin ni una posición de opciones no hay nada que decir */
+  /* de más negativo a más positivo: arriba, lo que te está costando */
+  detalle.sort((a, b) => a.theta - b.theta);
+  /* v4.85: griegas CONGELADAS. Cuando un contrato deja de llegar del servidor, la app conserva las
+     últimas que tuvo de ESE contrato (v4.57) para no quedarse en blanco fuera de horario. Bien para
+     un fin de semana; mal si pasan días, porque siguen sumando al total como si fueran de hoy y no
+     hay forma de notarlo. Se marcan las que van más de un día por detrás de la más reciente. */
+  const congeladas = tsNuevo != null
+    ? detalle.filter((d) => isFinite(d.ts) && tsNuevo - d.ts > 864e5).length : 0;
+  const diasViejo = tsViejo != null ? Math.floor((Date.now() - tsViejo) / 864e5) : NaN;
   return { theta, deltaUsd, conGriegas, sinGriegas, sinSpot, sinMarcas, sinLasGriegas, totalOpciones, faltan,
-           viejasN, tsViejo, muestras };
+           viejasN, tsViejo, tsNuevo, muestras, detalle, congeladas, diasViejo };
 };
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
 const effPnl = (p) => {
@@ -3419,6 +3435,7 @@ function GriegasCard({ g, privado, hayPuente }) {
     try { localStorage.setItem("bloques_griegas_open", nv ? "1" : "0"); } catch (e) {}
     return nv;
   });
+  const [desglose, setDesglose] = useState(false); /* v4.85: quién pone cada dólar del total */
   const Cabecera = ({ chapa }) => (
     <div onClick={plegar} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer" }}>
       <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, minWidth: 0 }}>Griegas de la cartera</span>
@@ -3534,8 +3551,66 @@ function GriegasCard({ g, privado, hayPuente }) {
         {/* v4.58: la frase de antes decía que el servidor "no manda griegas" con el mercado cerrado.
             Desde que el puente usa el snapshot SÍ las manda — son las del cierre, que es distinto:
             no faltan, es que no se mueven hasta que abra. */}
-        {g.viejasN && g.tsViejo ? " Delta y theta son del cierre de " + fechaCorta(g.tsViejo) + ": con el mercado cerrado no cambian." : ""}
+        {/* v4.85: "del cierre" y "de hace trece días" no son lo mismo, y la frase de antes decía lo
+            primero en los dos casos — "con el mercado cerrado no cambian" tranquiliza sobre unas
+            griegas que llevan semanas congeladas. Ahora, pasado un fin de semana largo, se dice la
+            edad y qué hacer. Y se aclara que la fecha es la de la MÁS ANTIGUA, no la de todas. */}
+        {g.viejasN && g.tsViejo
+          ? (isFinite(g.diasViejo) && g.diasViejo >= 4
+              ? " Ojo: las más antiguas son del " + fechaCorta(g.tsViejo) + ", hace " + g.diasViejo +
+                " días. Pulsa 🔄 Precios; si siguen igual, esos contratos ya no le llegan a tu servidor."
+              : " Delta y theta son del cierre de " + fechaCorta(g.tsViejo) + " (la más antigua): con el mercado cerrado no cambian.")
+          : ""}
       </div>
+      {/* v4.85: EL DESGLOSE. Un total que no se puede abrir no se puede contradecir. */}
+      {g.detalle && g.detalle.length > 0 && (
+        <div>
+          <div onClick={() => setDesglose((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", padding: "2px 2px 6px" }}>
+            <span style={{ fontSize: 11.5, fontWeight: 800, color: T.purple }}>
+              {desglose ? "Ocultar el desglose" : "Ver de dónde sale"}
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: T.purple, transform: desglose ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▸</span>
+          </div>
+          {desglose && (
+            <div style={{ display: "grid", gap: 5 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "0 9px" }}>
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Posición</span>
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Theta / día · Delta $</span>
+              </div>
+              {g.detalle.map((d) => {
+                /* congelada = sus griegas van más de un día por detrás de la más reciente de la cartera */
+                const congelada = isFinite(d.ts) && g.tsNuevo != null && g.tsNuevo - d.ts > 864e5;
+                return (
+                  <div key={d.id} style={{ background: T.tile, borderRadius: 10, padding: "7px 9px", boxShadow: T.inset,
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 12, fontWeight: 800, color: T.ink }}>{d.tkr}</span>
+                      <span style={{ display: "block", fontSize: 10, fontWeight: 600, color: congelada ? T.gold : T.sub, lineHeight: 1.35 }}>
+                        {d.tipo}{congelada ? " · congelada del " + fechaCorta(d.ts) : ""}
+                      </span>
+                    </span>
+                    <span style={{ flex: "none", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {/* dos decimales SIEMPRE aquí: en una columna, "-$90" al lado de "+$1.66"
+                          se lee como si fueran de escalas distintas */}
+                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: d.theta >= 0 ? T.green : T.red }}>
+                        {tapa((d.theta >= 0 ? "+$" : "-$") +
+                          Math.abs(d.theta).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}
+                      </span>
+                      <span style={{ display: "block", fontSize: 10, fontWeight: 700, color: T.sub }}>
+                        {isFinite(d.deltaUsd) ? tapa("Δ " + (d.deltaUsd >= 0 ? "+$" : "-$") + money(Math.abs(d.deltaUsd))) : "Δ —"}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "1px 2px" }}>
+                Ordenadas de lo que más te cuesta a lo que más te paga. Aquí NO están tus acciones, que sí
+                suman a la delta de arriba{g.sinGriegas ? ", ni las " + g.sinGriegas + " posiciones sin griegas" : ""}.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
       </>)}
     </div>
   );
