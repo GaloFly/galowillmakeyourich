@@ -1,5 +1,45 @@
 # CHANGELOG — Bloques
 
+Bloques v4.89 — Los tres cuadros, cuadrados; y el IV/HV dice por qué no está
+
+## "Están descuadrados estos cuadros"
+Antes de tocar nada se midieron en píxeles, que con las capturas de Victor ya ha pasado varias veces
+que el problema real no era el aparente. Y aquí también:
+
+    Position Size                ancho=89 alto=83 · hueco abajo=37
+    Return on margin             ancho=89 alto=83 · hueco abajo=25
+    Annualized return on margin  ancho=89 alto=83 · hueco abajo=12
+
+Las tres cajas eran **idénticas**, y el valor y la etiqueta arrancaban a la misma altura. Lo desigual
+era **el hueco de abajo**: 37, 25 y 12 px. Porque "Position Size" ocupa una línea, "Return on margin"
+dos y "Annualized return on margin" tres; la rejilla estira las tres a la altura de la más alta y el
+texto se queda pegado arriba, así que a cada una le sobra por un sitio distinto.
+
+**Arreglo:** se reserva el mismo alto de etiqueta en las tres. Entonces ninguna necesita estirarse y
+el hueco sale igual — **12, 12 y 12** — sin recortar una palabra y sin que la caja crezca (sigue en
+83 px). Solo se aplica en filas de cuadros con etiquetas de largo muy distinto; el resto de tarjetas
+se comportan como siempre.
+
+## "No sale IV/HV"
+El bloque de la v4.87 no aparecía, y **faltar en silencio no se distingue de estar roto** — la misma
+lección de la v4.55 y de la calculadora de earnings. Los dos motivos posibles tienen soluciones
+distintas, así que ahora se dicen los dos en su sitio:
+
+> Sin IV/HV de MRVL: o esta búsqueda es anterior a la actualización —vuelve a buscarlo y ya sale—, o
+> tu servidor aún no tiene la ruta nueva (hay que reinstalarlo).
+
+El primero es el caso normal y el que no era evidente: el buscador **guarda las búsquedas** desde la
+v4.64, y una hecha antes de la v4.87 no trae el dato nuevo por mucho que la app y el puente ya estén
+al día. No se re-descarga sola: sería gastar cupo de la cuenta compartida por una búsqueda que quizá
+ni se vuelva a mirar.
+
+## Cómo se comprobó
+- Los tres cuadros, medidos otra vez tras el cambio: **12 · 12 · 12 px**, mismo ancho, misma altura,
+  valores y etiquetas alineados.
+- El bloque de volatilidad sigue pintando `IV 103.7 · HV 30d 145.2 · IV/HV 0.71 · IV rank 27` con
+  servidor al día, y sigue callándose (sin romper la búsqueda) con un servidor sin la ruta.
+- Cero errores de JavaScript. `npm run prueba`: **OK**, las 18 cifras idénticas.
+
 Bloques v4.88 — El Screener, con respaldo cuando GitHub estrangula la descarga
 
 ## El síntoma
