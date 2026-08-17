@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.89"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.90"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2799,8 +2799,14 @@ function Tile({ label, value, tone, lineasEtiqueta }) {
   return (
     <div style={{ background: t.bg, borderRadius: 15, padding: "11px 8px", textAlign: "center", minWidth: 0, boxShadow: T.inset, border: rim }}>
       <div style={{ fontSize: 16, fontWeight: 800, color: t.val, letterSpacing: -0.3 }}>{value}</div>
+      {/* v4.90: reservar el alto NO bastaba. La v4.89 igualaba la medición (12/12/12 px de hueco) pero
+          el vacío seguía viéndose igual: solo se movía de "debajo de la caja" a "debajo del texto,
+          dentro de la etiqueta". Victor lo vio en pantalla estando ya en la 4.89 — yo había medido el
+          número en vez de mirar el dibujo. Ahora el texto se CENTRA en el espacio reservado, así el
+          vacío se reparte arriba y abajo y las tres etiquetas pesan lo mismo a la vista. */}
       <div style={{ fontSize: 10, color: T.sub, marginTop: 2, fontWeight: 500, lineHeight: 1.25,
-        minHeight: lineasEtiqueta ? (lineasEtiqueta * 1.25) + "em" : undefined }}>{label}</div>
+        minHeight: lineasEtiqueta ? (lineasEtiqueta * 1.25) + "em" : undefined,
+        display: lineasEtiqueta ? "flex" : undefined, alignItems: "center", justifyContent: "center" }}>{label}</div>
     </div>
   );
 }
