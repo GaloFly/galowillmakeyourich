@@ -471,9 +471,21 @@ comentario que dice a dónde se fue.)
   es un riesgo que no compensa por comodidad.
 - Ocupa ~225 MB. En 3,7 GB compartidos con los otros dos sistemas cabe, pero es donde mirar si algún
   día va justa de memoria.
-- La sesión **interactiva** por SSH es otra cosa y el servicio no la toca: `su - agente` y luego
-  `tmux attach -t claude` (las sesiones de tmux son de un usuario; desde root no se ven las de
-  `agente`, y ese es el motivo habitual de «no me sale la sesión»).
+- La sesión **interactiva** por SSH es OTRA cosa, con su propio servicio: `claude-sesion.service`
+  recrea al arrancar la máquina la sesión de tmux `claude` con Claude dentro (`--continue`, para no
+  empezar en blanco). Ahí **no hace falta `script`**: la terminal se la da el propio tmux. Lleva
+  guardián `tmux has-session ||` para no duplicarla, y si Claude se cierra deja una consola abierta
+  en vez de matar la sesión. Se llega con `su - agente` y luego `tmux attach -t claude`.
+  Las sesiones de tmux son **de un usuario**: desde root no se ven las de `agente`, y ese es el
+  motivo habitual de «no me sale la sesión».
+- **Son dos Claudes despiertos, ~450 MB entre los dos.** Si la máquina va justa de memoria,
+  `systemctl stop claude-sesion` libera la mitad sin quitar el acceso desde el móvil.
+- **Una sola mano en esa máquina a la vez.** El 17-ago-2026, mientras montábamos esto, la otra sesión
+  de Claude propuso `rm` del fichero del servicio y `tmux kill-server`, Victor lo pegó en su ventana
+  de root y se deshizo lo hecho, además de llevarse todas las sesiones de tmux. La barrera de
+  permisos funcionó (`agente` no tiene sudo y no habría podido); lo que se la saltó fue el
+  copiar-pegar en la ventana equivocada. Regla: si hay dos Claudes trabajando en el VPS, que solo
+  uno toque la infraestructura.
 
 ## Semántica que confunde y ya se aclaró
 
