@@ -440,6 +440,41 @@ Dominio: **alphavext.com**. `puente.` es el nuestro (8777); `alertas.` es de otr
 OPRA ya está contratado y entra por OpenD — no hay que integrar nada nuevo, pero tampoco hay una
 segunda vía: todo lo de arriba aplica igual a los datos de opciones.
 
+### Claude Code EN esa máquina (17-ago-2026)
+
+El control remoto —lo que hace que el VPS salga en la app de Claude del móvil— lo sostiene
+`claude-remoto.service`: systemd, usuario **`agente`**, `Restart=always`. Antes era **una línea
+`@reboot` del crontab de `agente`**: arrancaba al encender y **no resucitaba si el proceso se caía**,
+sin aviso y sin log. De ahí el *"se ha desconectado mi sesión del servidor"* que no había forma de
+diagnosticar. (Copia del crontab viejo en `~agente/crontab.bak`; la línea se sustituyó por un
+comentario que dice a dónde se fue.)
+
+- **Claude Code NO arranca bajo systemd a pelo.** Sin terminal en la entrada estándar se cree que lo
+  llamas en modo automático y muere con `Error: Input must be provided either through stdin or as a
+  prompt argument when using --print`. Por eso el cron viejo lo metía en tmux y le mandaba las teclas:
+  no era manía, era la única forma de darle una terminal. El servicio lo resuelve con
+  `script -qfec "…" /dev/null`, que le da una terminal falsa **y se queda en primer plano** — así
+  `Restart=always` vigila al proceso de verdad. Un `tmux new-session -d` termina al instante y
+  systemd no vería nunca la caída: volvería a tener el agujero de antes con más ceremonia.
+- **Comprobado, no supuesto**: matado a mano, volvió con PID nuevo. `systemctl status claude-remoto`
+  y `journalctl -u claude-remoto` dicen si se ha caído y cuántas veces.
+- **Contar instancias sin engañarse**: `pgrep -f 'claude --remote-control'` devuelve DOS aunque solo
+  haya una, porque el envoltorio `script` lleva esa cadena en sus argumentos. Lo bueno es
+  `ps -eo user,pid,cmd --no-headers | grep 'remote-control' | grep -v grep` y leer los PID y padres.
+- **La app lista SESIONES, no procesos.** Cada arranque registra una entrada con nombre aleatorio
+  (`hidden-donut`, `sleepy-sifakis`…) y las viejas siguen en verde un rato. Ver dos «Connected» NO
+  significa dos procesos. Para saber cuál es cuál: `systemctl stop claude-remoto` y mirar cuál cae —
+  así se demostró que `API Moomoo` no está en esta máquina (con el servicio parado no queda ni un
+  proceso de ningún usuario).
+- **Corre como `agente`, nunca como root.** Sin sudo no puede tocar OpenD, ni los servicios, ni nada
+  de root. Un agente con consola como root en la máquina que tiene la puerta de la cuenta de trading
+  es un riesgo que no compensa por comodidad.
+- Ocupa ~225 MB. En 3,7 GB compartidos con los otros dos sistemas cabe, pero es donde mirar si algún
+  día va justa de memoria.
+- La sesión **interactiva** por SSH es otra cosa y el servicio no la toca: `su - agente` y luego
+  `tmux attach -t claude` (las sesiones de tmux son de un usuario; desde root no se ven las de
+  `agente`, y ese es el motivo habitual de «no me sale la sesión»).
+
 ## Semántica que confunde y ya se aclaró
 
 - Barra apilada del hero = **reparto del capital desplegado** (cuota de cada bloque sobre la suma
