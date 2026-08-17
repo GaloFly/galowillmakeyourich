@@ -80,6 +80,9 @@ TTL_COTIZA = int(os.environ.get("BLOQUES_TTL_COTIZA", "20"))    # precios: 20 s 
 TTL_OPCION = int(os.environ.get("BLOQUES_TTL_OPCION", "20"))
 TTL_CADENA = int(os.environ.get("BLOQUES_TTL_CADENA", "21600"))  # 6 h: la lista de contratos no cambia
 TTL_SALUD = 30
+# v4.87: la volatilidad del subyacente. La histórica es un dato diario (no se mueve en toda la
+# sesión) y la implícita agregada se mueve poco; 10 min evita gastar cupo compartido en cada búsqueda.
+TTL_SUBYACENTE = int(os.environ.get("BLOQUES_TTL_SUBYACENTE", "600"))
 
 # Presupuesto de suscripciones de ESTE puente. El cupo real es de la cuenta y se comparte;
 # aquí nos limitamos a un trozo pequeño y devolvemos lo que no se usa.
@@ -639,6 +642,61 @@ def cadena():
                 "vencimientos": vencimientos, "tramos": len(tramos)}, 200
 
     payload, http = con_cache(f"cadena:{subyacente}:{desde}:{hasta}", TTL_CADENA, "chain", traer)
+    return jsonify(payload), http
+
+
+@app.route("/subyacente")
+def subyacente():
+    """
+    Volatilidad del SUBYACENTE: implícita agregada, histórica realizada y sus rangos.
+    /subyacente?codigo=US.IREN
+
+    Por qué esta ruta y no el snapshot (comprobado en el VPS el 17-ago-2026, sobre las 142
+    columnas de `get_market_snapshot`): ahí NO hay ni una columna de volatilidad histórica.
+    La única con dato es `option_implied_volatility`, que es la IV de ESE contrato. La histórica
+    vive solo aquí, en `get_option_underlying_overview`.
+
+    Y el aviso que evita el error de bulto: `iv` (IV agregada del subyacente, 103,7 en IREN) NO es
+    lo mismo que el `option_implied_volatility` de un contrato concreto (99,66 en la P25 de ene-27).
+    El cociente IV/HV se calcula con las DOS de aquí, que son de la misma medición; mezclar la de un
+    contrato con la histórica del subyacente daría un número que parece el mismo y no lo es.
+
+    Todo llega en escala PORCENTUAL (103,733 = 103,73%), no en 0-1.
+    """
+    codigo = request.args.get("codigo", "").strip().upper()
+    if not codigo:
+        return error("Falta el parámetro 'codigo'. Ejemplo: /subyacente?codigo=US.IREN")
+
+    def traer():
+        ret, data = contexto().get_option_underlying_overview([codigo])
+        if ret != RET_OK:
+            return {"ok": False, "error": f"OpenD devolvió un error al pedir la volatilidad: {data}"}, 502
+        filas = data.to_dict("records")
+        if not filas:
+            return {"ok": False, "error": f"OpenD no devolvió volatilidad para {codigo}."}, 404
+        f = filas[0]
+        def num(k):
+            v = f.get(k)
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return None if v != v else v  # nan
+        return {"ok": True, "subyacente": {
+            "codigo": f.get("code") or codigo,
+            "nombre": f.get("name"),
+            "iv": num("iv"),
+            "iv_rank": num("iv_rank"),
+            "iv_percentil": num("iv_percentile"),
+            "iv_previa": num("pre_iv"),
+            "hv_30d": num("hv_30d"), "hv_30d_percentil": num("hv_30d_percentile"),
+            "hv_60d": num("hv_60d"), "hv_90d": num("hv_90d"),
+            "hv_365d": num("hv_365d"),
+        }}, 200
+
+    # 10 min: la histórica es un dato diario y no se mueve; la implícita agregada sí, pero no tanto
+    # como para gastar el cupo compartido en cada búsqueda.
+    payload, http = con_cache("subyacente:" + codigo, TTL_SUBYACENTE, "quote", traer)
     return jsonify(payload), http
 
 

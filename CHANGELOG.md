@@ -1,5 +1,68 @@
 # CHANGELOG — Bloques
 
+Bloques v4.87 — IV/HV en el buscador de puts
+
+## Lo que pidió Victor
+*"También que aparezca el IV/HV"*.
+
+## Por qué no salía gratis
+La **HV** —la volatilidad que la acción ha tenido DE VERDAD— no la tenía la app ni se puede deducir
+de los datos de opciones. Antes de montar nada se miraron **las 142 columnas** que devuelve
+`get_market_snapshot` de OpenD, una a una, en el propio VPS: **no hay ni una de volatilidad
+histórica**. La única con dato es `option_implied_volatility`, que es la IV de ESE contrato.
+
+Donde sí vive es en `get_option_underlying_overview`, que además trae los rangos (`iv_rank`,
+`iv_percentile`, `hv_30d/60d/90d/365d` y sus percentiles). Se comprobó que ese método **existe de
+verdad en el SDK instalado** antes de escribir una línea: en esa máquina ya se han dado por buenas
+cuatro piezas documentadas que no existían.
+
+## Lo que se ha hecho
+
+**En el puente** (`servidor/puente.py`): ruta nueva `/subyacente?codigo=US.IREN`. Caché de 10 minutos
+—la histórica es un dato diario y la implícita agregada se mueve poco— para no gastar cupo de la
+cuenta que se comparte con root y con el agente.
+
+**En la app**: el bloque sale en la cabecera del ticker, **una vez por búsqueda**, no en cada fila:
+
+    IV 103.7 · HV 30d 145.2 · IV/HV 0.71 · IV rank 27
+    El mercado cobra por menos movimiento del que IREN ha tenido de verdad: vender prima
+    paga de menos. Y con IV rank 27, la IV está baja para su propio año.
+
+Decisiones que gobiernan esto:
+
+- **Las dos volatilidades del cociente salen de la MISMA medición.** La trampa habría sido dividir la
+  IV de un contrato (la que ya sale en su fila) entre la histórica del subyacente: parecería el mismo
+  número y no lo es. Lo dijo el propio OpenD — en IREN la IV agregada era 103,7 y la de la put de
+  enero, 99,7. Por eso el bloque va en la cabecera y no en cada candidata, y por eso se dice en
+  pantalla que son cosas distintas.
+- **Se dice que la comparación es aproximada**: la histórica es del último mes y las opciones son a
+  30-60 días. Es lo que hace todo el mundo, pero se avisa en vez de aparentar exactitud.
+- **Se enseña el `iv_rank` al lado**, porque un IV/HV bajo y un IV rank bajo dicen cosas distintas y
+  juntas cambian la decisión: la prima puede estar "barata contra lo realizado" y a la vez pagar poco
+  en términos de su propio año.
+- **UNA llamada más por búsqueda**, no por contrato.
+- **No hay veredicto ni semáforo**: se dan los números y una frase que los lee. El umbral de "caro" o
+  "barato" lo pone quien decide, no la app.
+
+## Con un servidor viejo, nada se rompe
+Si el puente aún no tiene la ruta, la búsqueda sale entera y el bloque simplemente no se pinta.
+Comprobado a propósito en la prueba, simulando un servidor sin `/subyacente`.
+
+## Cómo se comprobó
+`fila-put.mjs`, en los dos escenarios:
+
+- con servidor al día: el bloque pinta `IV 103.7 · HV 30d 145.2 · IV/HV 0.71 · IV rank 27`, y el 0,71
+  cuadra con la división hecha aparte (103,733 / 145,215) usando los valores reales que devolvió
+  OpenD para IREN;
+- con servidor viejo: el bloque no aparece y las 10 candidatas siguen saliendo;
+- una sola llamada a `/subyacente` por búsqueda;
+- nada desborda: documento 390 de 390 en iPhone, cero errores de JavaScript.
+
+`npm run prueba`: **OK**, las 18 cifras idénticas.
+
+## Hace falta reinstalar el puente
+La ruta es nueva, así que hasta que no se actualice el servidor el bloque no aparecerá.
+
 Bloques v4.86 — El buscador de puts enseña ROI, no rentabilidad sobre margen
 
 ## Lo que pidió Victor
