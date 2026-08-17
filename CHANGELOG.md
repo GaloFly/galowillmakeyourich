@@ -1,5 +1,49 @@
 # CHANGELOG — Bloques
 
+Bloques v4.86 — El buscador de puts enseña ROI, no rentabilidad sobre margen
+
+## Lo que pidió Victor
+*"En la colapsada al buscar put que aparezca ROI y ROI anualizado, no sobre margen"*.
+
+## Por qué tenía razón
+La fila plegada encabezaba con **270% ann** y, al abrirla, la tarjeta decía **+35,36% Annualized ROI**
+y **+4,36% ROI**. Son la misma operación: el 270% es la rentabilidad sobre el **margen** (lo que te
+bloquea el bróker) y el 4,36% sobre el **notional** (lo que arriesgas de verdad si te asignan). Dos
+cifras legítimas, pero un salto de 270 a 35 entre la fila y su propia tarjeta obliga a abrir cada
+candidata para saber cuál estás mirando.
+
+## Lo que se ha hecho
+La fila plegada enseña ahora **ROI y ROI anualizado**, los mismos dos números que la tarjeta de
+dentro y con el mismo formato (`signPct` con dos decimales, la misma función). El resto se reordena
+en líneas cortas para que no se parta en el iPhone:
+
+    $155  8% fuera                    $171
+    ROI +1.12% · anual +12.72%
+    POP 71% · Δ 0.29 · IV 57.9
+    margen est. $2,044
+
+El margen sigue abajo y en ámbar, que es donde debe estar lo estimado: OpenD no lo manda, lo
+calculamos nosotros con Reg-T.
+
+Detalle que se corrigió sobre la marcha: con el anualizado redondeado a cero decimales la fila decía
+`+13%` y la tarjeta `+12.72%`. Otra vez el mismo número con dos caras. Ahora los dos con dos decimales.
+
+## Cómo se comprobó
+Prueba nueva (`fila-put.mjs`) que compara **la fila contra su propia tarjeta**:
+
+- el ROI de la fila y el de la tarjeta son el mismo texto (`+1.12%`), y el anualizado también
+  (`+12.72%`);
+- no queda ni un `% ann` del ROM en las filas;
+- ninguna fila desborda a lo ancho, y la página mide 390 de 390 en iPhone;
+- cero errores de JavaScript.
+
+`npm run prueba`: **OK**, las 18 cifras idénticas.
+
+## Lo que NO entra todavía
+El **IV/HV** que pidió en el mismo mensaje. La volatilidad histórica no la tiene la app ni se puede
+deducir de los datos de opciones: hace falta el histórico de precios del subyacente. Pendiente de
+comprobar si el snapshot de OpenD ya la trae (costaría cero llamadas extra) antes de añadir nada.
+
 Bloques v4.85 — De dónde sale el theta (y las griegas congeladas)
 
 ## La pregunta

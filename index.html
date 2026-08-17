@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.85"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.86"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -11880,11 +11880,24 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                                   baja a su propia línea, que además es donde debe estar lo estimado. */}
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                                 <span style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 2, minWidth: 0 }}>
+                                  {/* v4.86 (Victor: "en la colapsada al buscar put que aparezca ROI y ROI
+                                      anualizado, no sobre margen"). Antes la fila encabezaba con el ROM
+                                      anualizado (270%) y la tarjeta de dentro con el ROI (+4,36%): dos
+                                      números enormemente distintos para la MISMA operación, y había que
+                                      abrirla para ver cuál era cuál. Ahora la fila enseña los mismos dos
+                                      que la tarjeta, con `signPct` como ella — el margen sigue abajo, en
+                                      ámbar, porque es lo único estimado. */}
                                   <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                                    {isFinite(f.annRom) ? pct(f.annRom, 0) + " ann" : "—"}
-                                    {f.pop ? " · POP " + Math.round(n(f.pop)) + "%" : ""}
-                                    {f.delta ? " · Δ " + Math.abs(n(f.delta)).toFixed(2) : ""}
-                                    {isFinite(n(f.iv)) && n(f.iv) > 0 ? " · IV " + n(f.iv).toFixed(1) : ""}
+                                    {"ROI "}<span style={{ color: T.ink }}>{isFinite(f.roi) ? signPct(f.roi, 2) : "—"}</span>
+                                    {/* DOS decimales, los mismos que la tarjeta: con 0 la fila decía
+                                        +13% y la tarjeta +12.72% para la misma operación */}
+                                    {" · anual "}<span style={{ color: T.ink }}>{isFinite(f.annRoi) ? signPct(f.annRoi, 2) : "—"}</span>
+                                  </span>
+                                  <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                                    {[f.pop ? "POP " + Math.round(n(f.pop)) + "%" : null,
+                                      f.delta ? "Δ " + Math.abs(n(f.delta)).toFixed(2) : null,
+                                      isFinite(n(f.iv)) && n(f.iv) > 0 ? "IV " + n(f.iv).toFixed(1) : null,
+                                     ].filter(Boolean).join(" · ") || "—"}
                                   </span>
                                   <span style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, whiteSpace: "nowrap" }}>margen est. ${money(n(f.margin))}</span>
                                 </span>

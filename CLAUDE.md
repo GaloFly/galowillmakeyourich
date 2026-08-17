@@ -471,15 +471,18 @@ comentario que dice a dónde se fue.)
   es un riesgo que no compensa por comodidad.
 - Ocupa ~225 MB. En 3,7 GB compartidos con los otros dos sistemas cabe, pero es donde mirar si algún
   día va justa de memoria.
-- La sesión **interactiva** por SSH es OTRA cosa, con su propio servicio: `claude-sesion.service`
-  recrea al arrancar la máquina la sesión de tmux `claude` con Claude dentro (`--continue`, para no
-  empezar en blanco). Ahí **no hace falta `script`**: la terminal se la da el propio tmux. Lleva
-  guardián `tmux has-session ||` para no duplicarla, y si Claude se cierra deja una consola abierta
-  en vez de matar la sesión. Se llega con `su - agente` y luego `tmux attach -t claude`.
-  Las sesiones de tmux son **de un usuario**: desde root no se ven las de `agente`, y ese es el
-  motivo habitual de «no me sale la sesión».
-- **Son dos Claudes despiertos, ~450 MB entre los dos.** Si la máquina va justa de memoria,
-  `systemctl stop claude-sesion` libera la mitad sin quitar el acceso desde el móvil.
+- La sesión **interactiva** por SSH **no tiene servicio, y es una decisión, no un olvido**. Se montó
+  `claude-sesion.service` el 17-ago-2026 y se quitó el mismo día: con él, la app listaba SIEMPRE dos
+  fichas —una por cada Claude despierto— y lo que Victor quería era una. Se crea a mano cuando hace
+  falta (`su - agente`, `tmux new -s claude`, `claude --continue`), que solo es tras un reinicio, y
+  esa máquina lleva meses sin reiniciarse. Si algún día se rehace: **ahí no hace falta `script`**, la
+  terminal la da el propio tmux, y conviene el guardián `tmux has-session ||` para no duplicarla.
+- **Ojo con el nombre de la ficha: despistó una hora.** `claude --continue` retoma la última
+  conversación, así que la sesión de terminal salía en la app con el nombre de ESA conversación
+  (`API Moomoo`, el sistema de puts) en vez de con el del host. Parecía un duplicado fantasma que
+  «volvía solo» y era, simplemente, la sesión interactiva. Las tmux además son **de un usuario**:
+  desde root no se ven las de `agente`, otro motivo habitual de «no me sale la sesión».
+- **Un solo Claude despierto, ~225 MB** de los 3,7 GB que comparten los tres sistemas.
 - **Una sola mano en esa máquina a la vez.** El 17-ago-2026, mientras montábamos esto, la otra sesión
   de Claude propuso `rm` del fichero del servicio y `tmux kill-server`, Victor lo pegó en su ventana
   de root y se deshizo lo hecho, además de llevarse todas las sesiones de tmux. La barrera de
