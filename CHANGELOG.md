@@ -1,5 +1,31 @@
 # CHANGELOG — Bloques
 
+Bloques v4.90 — Los cuadros, ahora sí (la v4.89 arregló la medición, no el dibujo)
+
+## Qué pasó
+La v4.89 igualó el hueco de los tres cuadros: la medición pasó de 37/25/12 px a **12/12/12**. Victor,
+ya con la v4.89 instalada: *"sigue mal configurado"*. Y tenía razón.
+
+**Se igualó el número, no lo que se ve.** Reservar el mismo alto de etiqueta no quita el vacío: lo
+mueve de "debajo de la caja" a "debajo del texto, dentro de la etiqueta". Para el ojo, "Position Size"
+con un hueco enorme por debajo sigue exactamente igual — y el ojo es el que se queja.
+
+El fallo de método está claro: se comprobó con una cifra y no se miró el dibujo. En este proyecto está
+escrito desde hace tiempo que las capturas hay que **mirarlas**, no solo medirlas; esta vez se hizo al
+revés y por eso hubo que volver.
+
+## El arreglo de verdad
+El texto de la etiqueta se **centra** en el espacio reservado. Así el vacío se reparte arriba y abajo,
+y las tres etiquetas pesan lo mismo a la vista: la de una línea queda centrada en su hueco, la de tres
+lo llena. Los valores siguen todos a la misma altura y la caja no crece.
+
+## Cómo se comprobó
+Esta vez con un **recorte de la fila** —solo los tres cuadros, ampliados— además de las medidas.
+Mirando el recorte se ve que los tres bloques de texto quedan equilibrados; con las medidas solas la
+v4.89 ya "pasaba" y no valía.
+
+`npm run prueba`: **OK**, las 18 cifras idénticas.
+
 Bloques v4.89 — Los tres cuadros, cuadrados; y el IV/HV dice por qué no está
 
 ## "Están descuadrados estos cuadros"
