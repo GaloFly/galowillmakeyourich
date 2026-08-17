@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.86"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.87"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1956,8 +1956,18 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
     return { error: "Ninguna de las " + filas.length + " puts miradas baja de delta " + tope.toFixed(2) +
       ". Prueba con un umbral más alto o con vencimientos más largos." };
   }
+  /* 7. v4.87 (Victor: "que aparezca el IV/HV"): la volatilidad del SUBYACENTE, en UNA llamada por
+     búsqueda — no por contrato. Va la última y su fallo no rompe nada: si el servidor es viejo y no
+     conoce la ruta, la búsqueda sale igual y el bloque de volatilidad simplemente no se pinta.
+     Comprobado en el VPS el 17-ago-2026: el snapshot de opciones NO trae histórica (142 columnas
+     miradas una a una), solo `get_option_underlying_overview` la tiene. */
+  let vol = null;
+  try {
+    const sv = await puenteFetch(cfg, "/subyacente", { codigo: cod });
+    if (sv && sv.ok && sv.subyacente) vol = sv.subyacente;
+  } catch (e) { vol = null; }
   return { spot, filas: finales, vencimientos: elegidos, pedidos: candidatas.length,
-           miradas: filas.length, fueraDeTope, sinDelta, tope, errores };
+           miradas: filas.length, fueraDeTope, sinDelta, tope, errores, vol };
 }
 /* ---------- v4.62: buscador de Double Calendar / Double Diagonal ----------
    Reglas sacadas del manual de OptionsKit que pasó Victor (14-ago-2026):
@@ -11846,6 +11856,38 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                 <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, padding: "0 3px" }}>
                   {conMetricas.length} con Δ ≤ {n(halladas.tope).toFixed(2)}{halladas.fueraDeTope ? " · " + halladas.fueraDeTope + " descartadas por delta" : ""} · mejor por {nombreCrit}
                 </div>
+                {/* v4.87 (Victor: "que aparezca el IV/HV"). Va aquí, en la cabecera del ticker, y no
+                    en cada fila: la IV agregada y la histórica son propiedades DEL SUBYACENTE, iguales
+                    para las quince candidatas. Y sobre todo, van juntas porque son la misma medición
+                    — la trampa sería dividir la IV de un contrato (la que sale en su fila) entre la
+                    histórica del subyacente: parecería el mismo número y no lo es. Lo avisó OpenD
+                    mismo: en IREN la IV agregada era 103,7 y la de la put de enero, 99,7. */}
+                {halladas.vol && isFinite(n(halladas.vol.iv)) && isFinite(n(halladas.vol.hv_30d)) && n(halladas.vol.hv_30d) > 0 && (() => {
+                  const iv = n(halladas.vol.iv), hv = n(halladas.vol.hv_30d), r = iv / hv;
+                  const rank = n(halladas.vol.iv_rank);
+                  return (
+                    <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset, display: "grid", gap: 4 }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                        {"IV "}<span style={{ color: T.ink }}>{iv.toFixed(1)}</span>
+                        {" · HV 30d "}<span style={{ color: T.ink }}>{hv.toFixed(1)}</span>
+                        {" · IV/HV "}<span style={{ color: r >= 1 ? T.green : T.gold, fontWeight: 800 }}>{r.toFixed(2)}</span>
+                        {isFinite(rank) ? " · IV rank " + rank.toFixed(0) : ""}
+                      </span>
+                      <span style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                        {r >= 1
+                          ? "El mercado cobra por más movimiento del que " + tkGuard + " ha tenido de verdad: vender prima paga de más."
+                          : "El mercado cobra por menos movimiento del que " + tkGuard + " ha tenido de verdad: vender prima paga de menos."}
+                        {isFinite(rank) ? (rank < 30
+                          ? " Y con IV rank " + rank.toFixed(0) + ", la IV está baja para su propio año."
+                          : rank > 70 ? " Y con IV rank " + rank.toFixed(0) + ", la IV está alta para su propio año." : "") : ""}
+                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>
+                        Las dos son del subyacente, no de un contrato: la IV de cada candidata sale en su fila y es otra cosa.
+                        La histórica es del último mes, así que compararla con opciones a 30-60 días es aproximado.
+                      </span>
+                    </div>
+                  );
+                })()}
                 {vtos.map((v) => {
                   const filas = porVto[v].slice().sort((a, b) => n(b.strike) - n(a.strike));
                   const dte = filas[0] ? filas[0].dte : "";
