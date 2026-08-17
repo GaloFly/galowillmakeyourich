@@ -1,5 +1,59 @@
 # CHANGELOG — Bloques
 
+Bloques v4.88 — El Screener, con respaldo cuando GitHub estrangula la descarga
+
+## El síntoma
+Desde el jueves 13-ago, el Screener enseñaba la tabla de ese día y encima, en rojo,
+`No se pudo cargar: HTTP 429`. Dos cosas a la vez y nada que dijera que una explica la otra.
+
+## La causa (diagnosticada desde dos IPs distintas: el VPS y un móvil en 5G)
+El barrido de root **corría y publicaba bien** — el fichero de hoy traía su `generatedAt` a las 11:00
+UTC, la hora de su cron. Lo que fallaba era la **descarga**: `raw.githubusercontent.com` limita las
+peticiones sin autenticar y devolvía 429 a cualquiera. El mismo fichero sí bajaba por el CDN de
+jsDelivr, 200 y 64 KB.
+
+## El arreglo
+
+**Dos orígenes con respaldo.** Primero `raw`, y solo si no contesta 200, el CDN. El orden es ese a
+propósito: `raw` da el fichero recién publicado, mientras que jsDelivr cachea y **puede ir hasta 12 h
+por detrás** — el respaldo puede traerte el barrido de ayer. Con `raw` sano el CDN ni se toca.
+
+El respaldo **solo se activa si la dirección es la de siempre**. Si se cambia la URL a mano, deducirle
+un CDN sería adivinar dónde vive ese fichero.
+
+**Y que el error deje de ser opaco**, que era la mitad del problema:
+
+- La frescura se mide con el `generatedAt` del propio JSON —la hora a la que root hizo el barrido— y
+  **no** con cuándo lo bajó la app. Confundir esas dos es lo que dejaba mirando una tabla del jueves
+  creyendo que era de hoy. Umbral de 30 h a 24.
+- Se dice **de dónde vino**: `vía GitHub` o `vía CDN (puede ir por detrás)`.
+- Y cuando el barrido es viejo, un bloque ámbar **une las dos cosas** en vez de dejarlas sueltas:
+  *"Lo que ves es el barrido del jue 13 ago, 11:00, de hace 4 días. Hoy solo se pudo bajar por el
+  respaldo, que va por detrás."*
+- El 429 se sigue diciendo, pero en **ámbar** cuando el respaldo salvó la carga y en **rojo** solo
+  cuando no hay dato nuevo. Son averías distintas y se leen distinto.
+
+## Lo que NO se ha tocado
+Ni el barrido, ni nada de `/root`, ni el repo de datos. Solo el lado que consume el fichero.
+
+Y una precisión sobre el encargo: **la app no descarga `quotes.json`**. Se buscó en todo el fichero y
+no hay ni una referencia; el Screener solo consume `screener.json`. Si `quotes.json` lo usa alguien,
+es otro sistema y ese 429 le afectará igual, pero no se arregla desde aquí.
+
+## Cómo se comprobó
+`screener429.mjs`, tres escenarios con el 429 literal de GitHub:
+
+| Escenario | Resultado |
+|---|---|
+| `raw` sano | Baja de GitHub, **cero peticiones al CDN**, chapa verde, sin avisos |
+| `raw` 429 + CDN OK | Baja del CDN, lo dice, y explica los 4 días citando el 429 |
+| Los dos caídos | Error en rojo, **un intento por origen**, sin bucles |
+
+Cero errores de JavaScript. `npm run prueba`: **OK**, las 18 cifras idénticas.
+
+*(De paso, la prueba usaba nombres de campo inventados —`tkr`, `capB`— y la tabla salía vacía
+pareciendo un fallo del código. Los reales son `ticker`, `marketCapB`, `optVolume`, `session`.)*
+
 Bloques v4.87 — IV/HV en el buscador de puts
 
 ## Lo que pidió Victor

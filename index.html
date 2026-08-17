@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.87"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.88"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -9345,16 +9345,50 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   const toggleFold = (d) => setFolded((p) => { const nx = p.indexOf(d) >= 0 ? p.filter((x) => x !== d) : [...p, d]; try { localStorage.setItem(KEY_SCRFOLD, JSON.stringify(nx)); } catch (e) {} return nx; });
 
   const lock = useRef(false);
+  /* v4.88: DOS ORÍGENES, con respaldo. Desde el 13-ago-2026 el Screener enseñaba datos viejos con un
+     "HTTP 429" en rojo: el barrido de root corría y publicaba bien, lo que fallaba era la DESCARGA —
+     raw.githubusercontent.com limita las peticiones sin autenticar y devolvía 429 desde dos IPs
+     distintas (el VPS y un móvil en 5G). El mismo fichero sí bajaba por el CDN de jsDelivr.
+     El orden importa y es este a propósito: `raw` da el fichero recién publicado, mientras que
+     jsDelivr cachea y puede ir hasta 12 h por detrás. O sea que el respaldo puede traer el barrido
+     de ayer — por eso se dice en pantalla de dónde vino cada dato.
+     (Si el 429 resultara permanente y no un pico, habría que darle la vuelta al orden; eso solo se
+     sabe dejándolo correr unos días.) */
+  const CDN_URL = "https://cdn.jsdelivr.net/gh/GaloFly/bloques-data@main/screener.json";
+  const origenes = () => {
+    const lista = [{ nombre: "raw", url }];
+    /* el respaldo SOLO se añade si la dirección es la de siempre: deducirle un CDN a una dirección
+       que Victor haya cambiado a mano sería adivinar dónde vive su fichero. */
+    if (url === DEFAULT_URL) lista.push({ nombre: "CDN", url: CDN_URL });
+    return lista;
+  };
   const load = async () => {
     if (lock.current) return;
     lock.current = true; setBusy(true); setMsg("");
+    const fallos = [];
+    let bueno = null;
+    for (const o of origenes()) {
+      try {
+        const u = o.url + (o.url.indexOf("?") >= 0 ? "&" : "?") + "t=" + Date.now();
+        const r = await fetch(u, { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status +
+          (r.status === 429 ? " (GitHub está limitando las descargas)"
+           : r.status === 404 ? " (¿el screener.json aún no está en el repo?)" : ""));
+        const j = await r.json();
+        if (!j || !Array.isArray(j.items)) throw new Error("el JSON no tiene lista de tickers");
+        bueno = { j, origen: o.nombre };
+        break;
+      } catch (e) {
+        fallos.push(o.nombre + " → " + (e && e.message ? e.message : String(e)));
+      }
+    }
     try {
-      const u = url + (url.indexOf("?") >= 0 ? "&" : "?") + "t=" + Date.now();
-      const r = await fetch(u, { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status + (r.status === 404 ? " (¿el screener.json aún no está en el repo?)" : ""));
-      const j = await r.json();
-      if (!j || !Array.isArray(j.items)) throw new Error("el JSON no tiene lista de tickers");
+      if (!bueno) throw new Error(fallos.join(" · "));
+      /* de dónde vino y cuándo se bajó, guardado CON el dato: así al reabrir la app sigue sabiéndose,
+         y no se confunde "cuándo lo bajé" con "de cuándo es el barrido" (que es `generatedAt`). */
+      const j = { ...bueno.j, _origen: bueno.origen, _bajado: Date.now() };
       setData(j);
+      setMsg(fallos.length ? "El origen principal no contestó (" + fallos.join(" · ") + "). Se usó el respaldo." : "");
       try { localStorage.setItem(KEY_SCREEN, JSON.stringify(j)); } catch (e) {}
       /* v3.92 (Victor: "si voy borrando tickers del calendario, cada vez que actualice me van a
          salir"): FUERA la auto-alta de la v3.91 — duró un día. Actualizar el screener NO toca el
@@ -9366,9 +9400,11 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
          del Screener lee los events del propio JSON (srvHist, en memoria) y solo "Añadir a Earnings"
          guarda el ticker en el histórico local. Así las tarjetas de Earnings son exactamente las elegidas.
          (La v3.91 probó a volcar lo filtrado en cada carga; la v3.92 lo retiró: re-aparecían los borrados.) */
-    } catch (e) { setMsg("No se pudo cargar: " + (e && e.message ? e.message : String(e))); }
+    } catch (e) { setMsg("No se pudo cargar por ninguna vía. " + (e && e.message ? e.message : String(e))); }
     setBusy(false); lock.current = false;
   };
+  /* rojo solo cuando no hay dato nuevo; si el respaldo salvó la carga, es un aviso, no una avería */
+  const msgGrave = !!msg && msg.indexOf("No se pudo cargar") === 0;
 
   const DOW = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
   const MON = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -9461,12 +9497,18 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   filtered.forEach((it) => { (groups[it.date] = groups[it.date] || []).push(it); });
   const groupDays = Object.keys(groups).sort();
 
+  /* v4.88: la frescura se mide con `generatedAt` —la hora a la que root hizo el barrido— y NO con
+     cuándo lo bajó la app. Son cosas distintas y confundirlas es lo que dejaba a Victor mirando una
+     tabla del jueves creyendo que era de hoy. El umbral baja de 30 h a 24. */
   let fresh = null;
   if (data && data.generatedAt) {
     const g = new Date(data.generatedAt);
     if (!isNaN(g.getTime())) {
       const hrs = (Date.now() - g.getTime()) / 3600000;
-      fresh = { txt: g.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }), stale: hrs > 30 };
+      const dias = Math.floor(hrs / 24);
+      fresh = { txt: g.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+                stale: hrs > 24, hrs, dias,
+                edad: dias >= 1 ? dias + (dias === 1 ? " día" : " días") : Math.max(1, Math.round(hrs)) + " h" };
     }
   }
 
@@ -9480,11 +9522,30 @@ function ScreenerToolContent({ apiKey, onOpenEarnings }) {
         </button>
         {fresh ? (
           <span style={{ fontSize: 11.5, fontWeight: 700, padding: "5px 10px", borderRadius: 999, background: fresh.stale ? T.tileAmber : T.tileGreen, color: fresh.stale ? T.gold : T.green }}>
-            {fresh.stale ? "⚠ " : "● "}Datos: {fresh.txt}
+            {fresh.stale ? "⚠ Barrido de hace " + fresh.edad : "● Barrido: " + fresh.txt}
           </span>
         ) : <span style={{ fontSize: 11.5, color: T.sub }}>sin datos cargados aún</span>}
+        {/* v4.88: de DÓNDE vino. El respaldo puede traer el barrido de ayer, así que callarlo sería
+            enseñar un dato viejo con pinta de recién bajado. */}
+        {data && data._origen ? (
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: data._origen === "CDN" ? T.gold : T.sub }}>
+            {data._origen === "CDN" ? "vía CDN (puede ir por detrás)" : "vía GitHub"}
+          </span>
+        ) : null}
       </div>
-      {msg ? <div style={{ fontSize: 12, color: T.red, marginBottom: 8, fontWeight: 600 }}>{msg}</div> : null}
+      {/* v4.88: el aviso que faltaba. Antes salía "HTTP 429" en rojo Y una tabla de hace cuatro días,
+          sin que nada dijera que lo uno explica lo otro: parecían dos cosas sueltas y ninguna se
+          entendía. Aquí van juntas, y se distingue lo que no se sabe (por qué no hay barrido nuevo)
+          de lo que sí (que la descarga falló). */}
+      {fresh && fresh.stale ? (
+        <div style={{ fontSize: 12, fontWeight: 600, color: T.gold, background: T.tileAmber, borderRadius: 12, padding: "9px 11px", marginBottom: 8, lineHeight: 1.5 }}>
+          Lo que ves es el barrido del <b>{fresh.txt}</b>, de hace {fresh.edad}.{" "}
+          {msgGrave ? "La descarga de hoy falló: " + msg
+            : msg ? "Hoy solo se pudo bajar por el respaldo, que va por detrás."
+            : "No ha llegado uno más reciente."}
+        </div>
+      ) : null}
+      {msg ? <div style={{ fontSize: 12, color: msgGrave ? T.red : T.gold, marginBottom: 8, fontWeight: 600, lineHeight: 1.45 }}>{msg}</div> : null}
 
       {/* filtros en vivo */}
       {items.length ? (
