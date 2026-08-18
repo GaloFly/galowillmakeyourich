@@ -1,5 +1,63 @@
 # CHANGELOG — Bloques
 
+Bloques v4.95 — Fuera el Fibonacci inventado, y la app empieza a guardar su propio ΔOI
+
+## Lo que se quita, y por qué se quita
+
+La v4.94 dibujaba retrocesos de Fibonacci —38,2%, 50%, 61,8%— calculados por la app sobre el tramo
+mayor de las velas. Victor pasó la regla de su sistema: **esos niveles los calcula un detector que
+corre en el servidor, y aproximarlos está prohibido.** *"Un nivel mal calculado es peor que ningún
+nivel."*
+
+Tiene razón, y el motivo es concreto: mismo concepto, otra cuenta, así que para el mismo ticker su
+detector diría 61,8% = $184 y la app $179. Dos números con el mismo nombre que no coinciden es la
+peor de las tres opciones — peor que tener solo el suyo y peor que no tener ninguno.
+
+Así que fuera. En su sitio queda **el hueco dicho**: "niveles de tu detector: no disponibles", con
+la aclaración de que los soportes y resistencias de arriba los calcula la app sobre las velas y **no
+son los suyos**. El día que salgan del servidor se pintan y ya está.
+
+**Y la EMA 20 pasa a ser la 21**, que es la de su sistema. Tener dos "medias rápidas" distintas en
+dos pantallas que él mira a la vez es fabricar una confusión por un punto de diferencia.
+
+## Lo que se añade: qué se abrió y qué se cerró
+
+El **ΔOI** —cuánto sube o baja el interés abierto de un strike de un día para otro— dice si ahí se
+abrió posición nueva o se cerró. No dice comprado o vendido, pero abrir o cerrar es la mitad honesta
+del dato, y es la que faltaba.
+
+El servidor tiene un histórico nocturno de esto que la app no puede leer. Mientras llega, **la app
+guarda su propia foto, y cuesta CERO llamadas**: los contratos ya se descargan enteros para la
+gamma, el interés abierto viene dentro. El primer cambio sale al segundo día.
+
+Tres decisiones para que no mienta:
+
+- **Se dice la FECHA de la foto anterior, no "ayer".** La app solo guarda los días que él abrió ese
+  ticker: si mira un lunes y un viernes, el cambio es de cuatro días. Decir "ayer" sería mentira el
+  80% de las veces.
+- **Se dice de quién es la foto**: la guarda la app, no el servidor, y por eso tiene huecos.
+- **El criterio es el suyo**: solo salen los strikes que se mueven 500 contratos o un cuarto de lo
+  que había. Sin filtro, la lista es ruido.
+- **No viaja en el backup**, por la misma regla que las marcas y las griegas (v4.56). La diferencia:
+  este dato no se puede volver a bajar. Se rehace mirando dos días, y eso es aceptable; meterlo en
+  un fichero que se comparte por chat, no.
+
+Se guardan como mucho cinco fotos de cada ticker+vencimiento y diez series distintas, las más
+recientes. En `localStorage` viven las posiciones, y una carpeta que crece sin tope acaba comiéndose
+lo que importa.
+
+## Verificación
+- `pruebas/analisis.mjs` — **37 de 37**. El ΔOI se prueba con DOS sesiones, que es donde puede
+  fallar: la primera dice "primera foto guardada", y la segunda arranca con la foto de ayer sembrada
+  a mano y comprueba los cuatro casos del filtro, calculados aparte:
+  C220 de 6.000 a 9.000 → +3.000 **sale**; P180 de 9.000 a 8.000 → −1.000 **sale**;
+  C210 +50 sobre 1.150 → **no sale** (ni 500 contratos ni el 25%); P170 +100 sobre 600, un 16,7% →
+  **no sale**; C170 +50 sobre 150, un 33% → **sí sale**, por porcentaje.
+- Se comprueba además que ya no queda ni un Fibonacci ni una "EMA 20" suelta en la pantalla.
+- `npm run prueba` — OK, 18 retratos idénticos.
+
+---
+
 Bloques v4.94 — Análisis completo: valoración, niveles y de dónde viene el dinero
 
 ## Lo que dijo Victor

@@ -137,22 +137,27 @@ console.log("  resistencia esperada: $230 con 5 toques · soporte esperado: $150
 console.log("  neto grandes: +$4M · neto pequeñas: −$2M · neto total: +$1.5M\n");
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
-const ctx = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block" });
-await ctx.route(/finnhub\.io/, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: SPOT, dp: 0, pc: SPOT, h: SPOT }) }));
 const llamadas = [];
-await ctx.route(/puente\.alphavext\.com/, (route) => {
-  const u = new URL(route.request().url());
-  llamadas.push(u.pathname);
-  const J = (o) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(o) });
-  if (u.pathname === "/cotiza") return J({ ok: true, cotizaciones: { "US.TEST": { ultimo: SPOT, cierre_anterior: SPOT } } });
-  if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.TEST", nombre: "Test Inc", iv: 44.0, hv_30d: 40.0, iv_rank: 62.0 } });
-  if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: [VTO, VTO2] });
-  if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: contratos.length, de_cache: 0, sin_datos: [] });
-  if (u.pathname === "/velas") return J({ ok: true, simbolo: "TEST", velas: VELAS, total: VELAS.length, fuente: "Yahoo Finance" });
-  if (u.pathname === "/valoracion") return J({ ok: true, valoracion: VALORACION });
-  if (u.pathname === "/dinero") return J({ ok: true, dinero: DINERO, columnas: ["capital_in_big"] });
-  return J({ ok: true });
-});
+/* el puente simulado, en una función: la prueba del ΔOI necesita una SEGUNDA sesión y no vale
+   copiar y pegar los mismos manejadores — si se tocan, hay que tocarlos en un solo sitio */
+const montaPuente = async (c, registrar) => {
+  await c.route(/finnhub\.io/, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: SPOT, dp: 0, pc: SPOT, h: SPOT }) }));
+  await c.route(/puente\.alphavext\.com/, (route) => {
+    const u = new URL(route.request().url());
+    if (registrar) llamadas.push(u.pathname);
+    const J = (o) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(o) });
+    if (u.pathname === "/cotiza") return J({ ok: true, cotizaciones: { "US.TEST": { ultimo: SPOT, cierre_anterior: SPOT } } });
+    if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.TEST", nombre: "Test Inc", iv: 44.0, hv_30d: 40.0, iv_rank: 62.0 } });
+    if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: [VTO, VTO2] });
+    if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: contratos.length, de_cache: 0, sin_datos: [] });
+    if (u.pathname === "/velas") return J({ ok: true, simbolo: "TEST", velas: VELAS, total: VELAS.length, fuente: "Yahoo Finance" });
+    if (u.pathname === "/valoracion") return J({ ok: true, valoracion: VALORACION });
+    if (u.pathname === "/dinero") return J({ ok: true, dinero: DINERO, columnas: ["capital_in_big"] });
+    return J({ ok: true });
+  });
+};
+const ctx = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block" });
+await montaPuente(ctx, true);
 const page = await ctx.newPage();
 const errores = [];
 page.on("pageerror", (e) => errores.push(e.message));
@@ -256,10 +261,13 @@ console.log("  primera resistencia:", (resis || "—").replace(/\n/g, " "));
 console.log("  primer soporte:     ", (sopor || "—").replace(/\n/g, " "));
 ok(/RESISTENCIAS\s*\n\$230\s*\n\+15\.0% · 5 toques/i.test(t), "resistencia $230 con SUS 5 toques (las cinco veces que la onda llega arriba)");
 ok(/SOPORTES\s*\n\$150\s*\n-25\.0% · 5 toques/i.test(t), "soporte $150 con sus 5 toques");
-ok(/EMA 20/.test(t) && /EMA 50/.test(t) && /EMA 200/.test(t), "las tres medias exponenciales");
+ok(/EMA 21/.test(t) && /EMA 50/.test(t) && /EMA 200/.test(t), "las medias 21, 50 y 200 — la 21 es la de su sistema, no la 20 del manual");
+ok(!/EMA 20\b/.test(t), "y no queda ninguna EMA 20 suelta que contradiga a la otra pantalla");
 ok(/52 semanas: \$/.test(t), "y el rango de 52 semanas");
-ok(/RETROCESOS DEL TRAMO A LA BAJA \(\$230 → \$150\)/i.test(t), "los retrocesos, sobre el tramo grande: de $230 a $150");
-ok(/50% · \$190/.test(t), "y el 50% cae en $190 = 150 + 80×0,5, calculado a mano");
+ok(!/RETROCESOS/i.test(t) && !/61\.8%/.test(t),
+  "NO se dibuja ningún Fibonacci: sus niveles los calcula el detector del servidor y aproximarlos es peor que no tenerlos");
+ok(/Niveles de tu detector: no disponibles/.test(t), "y el hueco se dice, en vez de dejarlo mudo");
+ok(/no son los de tu detector/.test(t), "avisando de que los soportes de la app NO son los del detector");
 const grafico = await page.evaluate(() => {
   const s = Array.from(document.querySelectorAll("svg")).find((x) => (x.getAttribute("aria-label") || "") === "Precio con sus niveles");
   if (!s) return null;
@@ -276,6 +284,73 @@ ok(/las órdenes grandes compran mientras las pequeñas venden/.test(t), "y se l
 ok(/no dice quién fue el agresor|no se sabe quién fue el agresor|sin decir quién fue el agresor/.test(t),
   "con el aviso de siempre: no dice quién fue el agresor");
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
+
+/* ---- v4.95: el ΔOI necesita DOS días, que es justo donde puede fallar ----
+   Primero se comprueba que la primera vez lo dice en vez de callarse. Luego, en una sesión nueva,
+   se siembra a mano la foto de AYER y se mira si el cambio sale bien y si el filtro descarta lo que
+   no se movió lo bastante. Los números, a mano:
+     C220: ayer 6.000 -> hoy 9.000  = +3.000 abiertos   (pasa: más de 500)
+     P180: ayer 9.000 -> hoy 8.000  = −1.000 cerrados   (pasa)
+     C210: ayer 1.150 -> hoy 1.200  = +50               (NO pasa: ni 500 ni el 25%)
+     P170: ayer   600 -> hoy   700  = +100 pero es el 16,7%... tampoco pasa
+     C170: ayer   150 -> hoy   200  = +50 y es el 33%   (SÍ pasa, por porcentaje) */
+console.log("\n=== v4.95: qué se abrió y qué se cerró ===");
+ok(/Primera foto guardada/.test(t), "la primera vez lo dice: no hay con qué comparar todavía");
+
+const AYER = (() => { const d = new Date(Date.now() - 86400000); return d.toISOString().slice(0, 10); })();
+const ctx3 = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block" });
+await montaPuente(ctx3, false);
+const p3 = await ctx3.newPage();
+const errores3 = [];
+p3.on("pageerror", (e) => errores3.push(e.message));
+await p3.addInitScript(([ayer, vto, foto]) => {
+  localStorage.setItem("bloques_pos_v5", JSON.stringify([]));
+  localStorage.setItem("bloques_acc_v5", JSON.stringify({ IBKR: { cash: "40000", margin: "20000" } }));
+  localStorage.setItem("bloques_dark_override", "dark");
+  localStorage.setItem("bloques_view_v1", "comparador");
+  localStorage.setItem("bloques_puente_v1", JSON.stringify({ url: "https://puente.alphavext.com", token: "clave" }));
+  localStorage.setItem("bloques_oi_v1", JSON.stringify({ ["TEST|" + vto]: { [ayer]: foto } }));
+}, [AYER, VTO, {
+  [cod(220, "C")]: { k: 220, c: 1, oi: 6000 },
+  [cod(180, "P")]: { k: 180, c: 0, oi: 9000 },
+  [cod(210, "C")]: { k: 210, c: 1, oi: 1150 },
+  [cod(170, "P")]: { k: 170, c: 0, oi: 600 },
+  [cod(170, "C")]: { k: 170, c: 1, oi: 150 },
+}]);
+await p3.goto(URL_APP, { waitUntil: "load" });
+await p3.waitForTimeout(2400);
+await p3.evaluate(() => { const b = Array.from(document.querySelectorAll("button, div")).find((e) => (e.textContent || "").trim() === "Todo OK"); if (b) b.click(); });
+await p3.waitForTimeout(300);
+await p3.evaluate(() => { const b = Array.from(document.querySelectorAll("button, div")).find((x) => (x.innerText || "").trim() === "Análisis"); if (b) b.click(); });
+await p3.waitForTimeout(500);
+await p3.locator("label", { hasText: "Ticker" }).locator("input").first().fill("TEST");
+await p3.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => /Analizar/.test(x.textContent || "")); if (b) b.click(); });
+await p3.waitForTimeout(2000);
+const t3 = await p3.evaluate(() => document.body.innerText);
+const cajaOi = await p3.evaluate(() => {
+  const f = Array.from(document.querySelectorAll("div")).filter((x) => (x.textContent || "").indexOf("Qué se abrió") === 0);
+  const d = f.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length).pop();
+  if (d) d.scrollIntoView({ block: "center" });
+  const c = d && d.closest("div"); if (!c) return null;
+  const b = c.getBoundingClientRect();
+  return { x: Math.max(0, b.x - 6), y: Math.max(0, b.y - 6), width: b.width + 12, height: Math.min(b.height + 12, 700) };
+});
+if (cajaOi) { await p3.waitForTimeout(300); await p3.screenshot({ path: D + "/analisis-oi-delta.png", clip: cajaOi }); }
+console.log("  filas:", (t3.match(/[CP]\d+ · de [\d,]+ a [\d,]+/g) || []).join(" | ") || "ninguna");
+ok(/C220 · de 6,000 a 9,000/.test(t3) && /\+3,000 abiertos/.test(t3), "C220: +3.000 contratos ABIERTOS desde la foto de ayer");
+ok(/P180 · de 9,000 a 8,000/.test(t3) && /−1,000 cerrados/.test(t3), "P180: 1.000 CERRADOS");
+ok(!/C210 · de/.test(t3), "C210 (+50 sobre 1.150) NO sale: no llega ni a 500 contratos ni al 25%");
+ok(!/P170 · de/.test(t3), "P170 (+100 sobre 600, un 16,7%) tampoco");
+ok(/C170 · de 150 a 200/.test(t3), "pero C170 SÍ sale: son 50 contratos, y es un tercio de lo que había");
+/* la fecha de la foto anterior tiene que ir ESCRITA. Decir "ayer" sería mentira en cuanto pasen
+   dos días sin abrir el ticker, así que se comprueba que sale la fecha de verdad — y que además
+   se avisa de que no tiene por qué ser ayer. */
+const frase = (t3.match(/Comparado con la foto del[^\n]*/) || [""])[0];
+console.log("  frase:", frase);
+ok(/Comparado con la foto del \w{3} \d{1,2} '\d{2}/.test(frase), "sale la FECHA de la foto anterior, escrita");
+ok(/no necesariamente ayer/.test(t3), "y se avisa de que no tiene por qué ser de ayer");
+ok(!errores3.length, "sin errores de JS en la segunda sesión " + JSON.stringify(errores3.slice(0, 2)));
+await ctx3.close();
 
 /* sin servidor NO debe existir la pestaña */
 const ctx2 = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block" });
