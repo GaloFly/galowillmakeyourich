@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.90"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.91"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -346,7 +346,13 @@ const NATS = [
 const natsForBlock = (block) => {
   if (block === 0) return [{ id: "ACC", label: "ETF" }, { id: "CASH", label: "Cash" }]; /* B0: liquidez — ETF (treasury/money market) o cash */
   if (block === 1) return NATS.filter((x) => x.id !== "CASH" && x.id !== "DEF"); /* B1: sin estrategias de débito */
-  if (block === 3) return NATS.filter((x) => x.id === "CRED" || x.id === "DEF"); /* B3: táctico/definido — sin acciones (v5.00) */
+  /* v4.91 (Victor: "permite que se puedan abrir posiciones de acciones en B3, largas y cortas").
+     La v5.00 había sacado las acciones de B3 porque el bloque es de riesgo DEFINIDO y una acción a
+     pelo no lo tiene: su pérdida máxima es todo el capital (y en una corta, ilimitada). Vuelven, pero
+     con la pieza que faltaba: el STOP. Con stop, la acción SÍ tiene riesgo definido —la distancia del
+     BEP al stop por el número de acciones— y encaja en B3 igual que un spread. Sin stop se comporta
+     como siempre y se avisa en pantalla de que ahí no hay riesgo definido. */
+  if (block === 3) return NATS.filter((x) => x.id === "ACC" || x.id === "CRED" || x.id === "DEF");
   return NATS.filter((x) => x.id !== "COLLAR" && x.id !== "CASH");
 };
 /* estrategias por bloque (desplegable de la etiqueta p.tipo) */
@@ -354,11 +360,11 @@ const STRATS = {
   0: ["Treasury ETF", "Money Market", "Cash"],
   1: ["Long Stock", "Short Put", "Covered Call", "Collar"],
   2: ["Long Stock", "Short Put", "Covered Call", "Diagonal", "PMCC", "Long Call", "Spread"], /* v3.51: verticales también en B2; v3.53: renombrado "Credit Spread"→"Spread" */
-  3: ["Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Spread"], /* v3.53: renombrado "Credit Spread"→"Spread" */
+  3: ["Long Stock", "Short Stock", "Calendar", "DC", "Diagonal", "DD", "Iron Man", "Iron Fly", "Iron Condor", "Earnings", "Call Broken Wing", "Put Broken Wing", "Spread"], /* v3.53: renombrado "Credit Spread"→"Spread" */
 };
 const natFromStrat = (strat) => {
   const t = (strat || "").toLowerCase();
-  if (t === "long stock") return "ACC";
+  if (t === "long stock" || t === "short stock") return "ACC";
   if (t === "short put" || t === "short call" || t === "covered call") return "CRED";
   if (t === "collar") return "COLLAR";
   if (t === "cash") return "CASH";
@@ -378,6 +384,31 @@ const natOf = (p) => p.nat || inferNat(p);
 const isCashNat = (p) => natOf(p) === "CASH";
 const isOptionNat = (p) => { const x = natOf(p); return x !== "ACC" && x !== "CASH"; };
 const contractsOf = (p) => n(p.qty) / 100;
+/* ---------- v4.91: acciones CORTAS y stop-loss ----------
+   Una acción corta se guarda como una ACC normal con `corto: true` y la CANTIDAD EN POSITIVO. Se
+   descartó guardarla con qty negativa: la cantidad se usa en lotes, BEP medio, márgenes, agrupaciones
+   y una docena de sitios más que dan por hecho que es positiva, y un signo suelto ahí habría salido
+   por donde no se mira. El signo lo pone `signoAcc`, igual que en las opciones lo pone `signo`.
+   También se reconoce por el nombre de la estrategia: así una posición editada a mano a "Short Stock"
+   se comporta como corta aunque le falte la marca. */
+const esAccCorta = (p) => natOf(p) === "ACC" && (!!p.corto || /short/.test((p.tipo || "").toLowerCase()));
+const signoAcc = (p) => (esAccCorta(p) ? -1 : 1);
+/* Riesgo por STOP: lo que pierdes si salta, = |BEP − stop| × acciones. Es lo que pidió Victor y es lo
+   que convierte una acción en riesgo definido. Devuelve NaN si falta algo — y entonces todo se
+   comporta como antes, sin inventarse un riesgo que no está puesto. */
+const riesgoStop = (p) => {
+  if (natOf(p) !== "ACC") return NaN;
+  const stop = numOrNaN(p.stop), base = n(effBep(p)), q = Math.abs(n(p.qty));
+  if (!isFinite(stop) || stop <= 0 || !isFinite(base) || !base || !q) return NaN;
+  return Math.abs(base - stop) * q;
+};
+/* ¿el stop está puesto del lado correcto? En una larga va POR DEBAJO del BEP; en una corta, por
+   encima. Al revés no es un stop, es un objetivo — y el riesgo saldría al revés sin que nadie avise. */
+const stopAlReves = (p) => {
+  const stop = numOrNaN(p.stop), base = n(effBep(p));
+  if (!isFinite(stop) || stop <= 0 || !isFinite(base) || !base) return false;
+  return esAccCorta(p) ? stop < base : stop > base;
+};
 /* BEP automático por prima: cualquier posición de Tipo "Crédito" (short put, covered call, hybrid collar) cobra prima → BEP = Strike − Prima.
    Se basa en "nat" (Tipo), no en el texto de Estrategia, para que funcione siempre que el Tipo sea Crédito, se haya elegido la estrategia como se haya elegido.
    "Long Call" es la única estrategia de débito con esta fórmula simple (Strike + Prima); el resto de nat=Débito son multi-pata y llevan BEP manual.
@@ -647,6 +678,9 @@ const riesgoTotalOf = (p) => {
   if (isPMCC(p)) return pmccRisk(p); // PMCC: débito neto × qty (mín 0)
   if (isLongCallPos(p)) return longCallCost(p) || n(p.riesgo); // Long Call: prima pagada
   if (nat === "COLLAR" || nat === "DEF") return n(p.riesgo) || (nat === "DEF" ? Math.abs(effBep(p) * n(p.qty)) : 0);
+  /* v4.91: una acción CON STOP ya no arriesga todo el capital, sino la distancia hasta el stop. Sin
+     stop, `riesgoStop` es NaN y esto cae al comportamiento de siempre. */
+  if (nat === "ACC") { const rs = riesgoStop(p); if (isFinite(rs)) return rs; }
   return capDesplegado(p);
 };
 /* riesgo plausible — numerador de sizing (/ NLV) */
@@ -661,6 +695,11 @@ const plausibleOf = (p) => {
      al rebajar el BEP vía el ajuste wheel, reduce mecánicamente el riesgo plausible. Si no hay BEP
      (posición incompleta), cae al valor de mercado como antes. */
   if (nat === "ACC") {
+    /* v4.91: con stop, el plausible ES el riesgo definido y no lleva factor — igual que un spread de
+       B3. El factor existe para estimar "cuánto puede caer esto de verdad" cuando no hay un suelo
+       puesto; con stop, el suelo está puesto. */
+    const rs = riesgoStop(p);
+    if (isFinite(rs)) return rs;
     /* plausBep: BEP alternativo fijado por un collar sobre esta acción. "0" = collar sin riesgo →
        plausible 0 (sigue contando en tamaño/sizing vía capDesplegado). Un valor > 0 sustituye al BEP
        como base del plausible. Vacío = sin collar, comportamiento normal. */
@@ -917,7 +956,8 @@ const griegasDeCartera = (posiciones) => {
     if (natOf(p) === "ACC") {
       /* las acciones son su propio delta: 1 por acción */
       const px = n(p.last);
-      if (isFinite(px) && px > 0) deltaUsd += n(p.qty) * px;
+      /* v4.91: la corta va con delta −1 por acción, así que RESTA de la delta de la cartera */
+      if (isFinite(px) && px > 0) deltaUsd += signoAcc(p) * n(p.qty) * px;
       return;
     }
     if (!isOptionNat(p)) return; /* liquidez y demás no tienen griegas */
@@ -986,7 +1026,9 @@ const effPnl = (p) => {
     const perShare = p.right === "C" ? Math.min(prima, strike + prima - spot) : Math.min(prima, spot - effBep(p));
     return perShare * n(p.qty);
   }
-  return (n(p.last) - effBep(p)) * n(p.qty);
+  /* v4.91: `signoAcc` invierte el resultado de una acción corta — gana cuando el precio baja. Para
+     todo lo demás vale 1 y esta línea es la de siempre. */
+  return (n(p.last) - effBep(p)) * n(p.qty) * signoAcc(p);
 };
 /* v4.57: "14 ago, 21:58" — para decir de cuándo es un dato sin soltar una fecha ISO en la cara */
 const fechaCorta = (ms) => {
@@ -4050,7 +4092,9 @@ function MacroCalCard() {
     </div>
   );
 }
-function VencimientosCard({ rows, onOpen }) {
+function VencimientosCard({ rows, onOpen, onPos }) {
+  /* v4.91: cuando una fila funde varias posiciones, se despliega la lista para elegir cuál abrir */
+  const [eligiendo, setEligiendo] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
   const toggleRow = (exp) => setExpanded((s) => { const next = new Set(s); if (next.has(exp)) next.delete(exp); else next.add(exp); return next; });
   return (
@@ -4132,7 +4176,12 @@ function VencimientosCard({ rows, onOpen }) {
                              asignación), verde suave = a salvo, sin fondo = sin precio. El texto queda neutro
                              (solo la etiqueta de bloque conserva su color) — un único canal visual, sin ruido. */
                           return (
-                        <div key={i} style={{ padding: "6px 9px", borderRadius: 9, background: dgr == null ? T.tile : danger ? T.tileRed : T.tileGreen, boxShadow: T.raiseSm /* v4.34: las filas sin semáforo iban transparentes y en oscuro flotaban sueltas junto a las tintadas; ahora todas son una sub-tarjeta elevada y el color sigue siendo el único canal del semáforo */ }}>
+                        <div key={i}
+                          /* v4.91: la fila se pulsa y abre la MISMA hoja del bloque (editar · cerrar ·
+                             rolar). Antes desde Vencimientos había que ir a Portfolio, buscar el bloque y
+                             encontrar la posición para hacer cualquier cosa con ella. */
+                          onClick={onPos && d.ids && d.ids.length ? () => { if (d.ids.length === 1) onPos(d.ids[0]); else setEligiendo(eligiendo === row.expiry + "|" + i ? null : row.expiry + "|" + i); } : undefined}
+                          style={{ padding: "6px 9px", borderRadius: 9, background: dgr == null ? T.tile : danger ? T.tileRed : T.tileGreen, boxShadow: T.raiseSm, cursor: onPos && d.ids && d.ids.length ? "pointer" : undefined /* v4.34: las filas sin semáforo iban transparentes y en oscuro flotaban sueltas junto a las tintadas; ahora todas son una sub-tarjeta elevada y el color sigue siendo el único canal del semáforo */ }}>
                           {/* v5.10: el texto largo ahora ENVUELVE dentro del cuadro (antes nowrap y se salía o se
                              cortaba). Los credit spreads muestran sus dos alas (put spread · call spread) y los
                              DC/DD sus strikes P/C, en vez de un strike vacío.
@@ -4160,6 +4209,19 @@ function VencimientosCard({ rows, onOpen }) {
                             <div style={{ fontSize: 11, color: T.sub, fontWeight: 700, lineHeight: 1.35, marginTop: 1, display: "flex", flexWrap: "wrap", gap: "0 6px" }}>
                               {hasLast && <span style={{ whiteSpace: "nowrap" }}>{"Últ $" + money2(lastN)}</span>}
                               {isFinite(d.bep) && n(d.bep) !== 0 ? <span style={{ whiteSpace: "nowrap" }}>{"BEP $" + money2(d.bep)}</span> : null}
+                            </div>
+                          )}
+                          {/* varias posiciones fundidas en esta fila: se eligen una a una en vez de abrir
+                              la primera a ciegas */}
+                          {eligiendo === row.expiry + "|" + i && d.ids && d.ids.length > 1 && (
+                            <div style={{ marginTop: 7, display: "grid", gap: 5 }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub }}>Esta fila son {d.ids.length} posiciones. ¿Cuál abres?</span>
+                              {d.ids.map((pid, k) => (
+                                <button key={pid} onClick={(e) => { e.stopPropagation(); setEligiendo(null); onPos(pid); }}
+                                  style={{ textAlign: "left", background: T.card, border: "none", borderRadius: 9, padding: "8px 10px", fontSize: 11.5, fontWeight: 800, color: T.ink, cursor: "pointer", boxShadow: T.raiseSm }}>
+                                  {d.tkr} · {k + 1} de {d.ids.length}
+                                </button>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -5854,6 +5916,29 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <EditField label="BEP" prefix="$" value={p.bep} onChange={onChange("bep")} />
           ))}
           {!cash && hasLots(p) && <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginTop: -4 }}>Cantidad y BEP se calculan desde los lotes. Edítalos en Lotes, más abajo.</div>}
+          {/* v4.91: STOP de una acción. Es lo que la convierte en riesgo definido y lo que permite que
+              viva en B3. Va justo debajo del BEP porque el riesgo sale de la distancia entre los dos. */}
+          {!cash && natOf(p) === "ACC" && (<>
+            <EditField label={esAccCorta(p) ? "Stop loss (por encima)" : "Stop loss (por debajo)"} prefix="$" value={p.stop} onChange={onChange("stop")} />
+            <div style={{ background: stopAlReves(p) ? T.tileAmber : T.tile, borderRadius: 12, padding: "9px 11px" }}>
+              <div style={{ fontSize: 10, color: stopAlReves(p) ? T.gold : T.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>Riesgo si salta</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: stopAlReves(p) ? T.gold : T.ink, fontVariantNumeric: "tabular-nums" }}>
+                {isFinite(riesgoStop(p)) ? "$" + money(riesgoStop(p)) : "—"}
+              </div>
+            </div>
+            {/* que no se quede callado ninguno de los dos casos que importan */}
+            {stopAlReves(p) ? (
+              <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.gold, fontWeight: 700, lineHeight: 1.45, marginTop: -4 }}>
+                Ese stop está del lado equivocado: en una {esAccCorta(p) ? "corta va POR ENCIMA" : "larga va POR DEBAJO"} del BEP (${money2(effBep(p))}).
+                Tal y como está, no te protege de nada.
+              </div>
+            ) : !isFinite(riesgoStop(p)) ? (
+              <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.45, marginTop: -4 }}>
+                Sin stop, el riesgo de esta posición es {esAccCorta(p) ? "ilimitado (una corta no tiene techo por arriba)" : "todo el capital"} y la app lo cuenta así.
+                Ponlo y pasa a ser riesgo definido: BEP menos stop, por las acciones.
+              </div>
+            ) : null}
+          </>)}
           {!cash && isCreditSpread(p) && (
             (p.tipo === "Iron Condor" || p.tipo === "Earnings") ? (
               <>
@@ -13295,6 +13380,10 @@ function App() {
       bep: (effNat === "CASH" || isLongCall || isPMCCw || CREDIT_SPREAD_STRATS.has(wizStrat)) ? "" : (f.bep || ""), prima: isLongCall ? (isFinite(lcPrimaPS) ? String(lcPrimaPS) : "") : isPMCCw ? (isFinite(pmShortPS) ? String(pmShortPS) : "") : isDCDDw ? (dcNet ? String(dcNet) : "") : (isSpreadTipo(wizStrat) && (f.sP || "") !== "" ? String(n(f.sP) - n(f.lP)) : (f.prima || "")), comision: isDCDDw ? String((absPf(f.comision)) + dcFees) : (f.comision || ""), ivr: f.ivr || "",
       last: "", mktValue: effNat === "CASH" ? (f.mktValue || "") : "", riesgo: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (nat === "DEF" ? (f.margen || "") : ""),
       factor, margen: isLongCall ? lcCost : isPMCCw ? pmRisk : isGenericDebit ? gdCost : (f.margen || ""),
+      /* v4.91: stop de la acción (opcional) y marca de CORTA. `corto` solo se escribe cuando lo es —
+         un campo nuevo que falta se comporta como antes, que es la regla de la casa. */
+      stop: effNat === "ACC" ? (f.stop || "") : "",
+      ...(wizStrat === "Short Stock" ? { corto: true } : {}),
       margenPct: effNat === "ACC" || effNat === "CASH" ? (f.margenPct || "") : "100",
       margenModo: effNat === "ACC" || effNat === "CASH" ? "PCT" : "VALOR",
       mktModo: "AUTO", pnlModo: isPMCCw ? "MANUAL" : (nat === "ACC" || nat === "CRED" ? "AUTO" : "MANUAL"), pnl: "0",
@@ -13777,7 +13866,12 @@ function App() {
         const spreads = cs ? [p.putSpread, p.callSpread].filter(Boolean).join(" · ") : "";
         const dcStk = dc ? [dcStrikePut(dcddOf(p)) ? "P " + dcStrikePut(dcddOf(p)) : "", dcStrikeCall(dcddOf(p)) ? "C " + dcStrikeCall(dcddOf(p)) : ""].filter(Boolean).join(" · ") : "";
         const key = p.tkr + "|" + p.block + "|" + (p.right || "") + "|" + (p.strike || "") + "|" + (p.tipo || "") + "|" + spreads + "|" + dcStk;
-        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: p.strike, tipo: p.tipo, spreads, dcStk, qty: 0, bepW: 0, riesgo: 0, last: "", covered: false };
+        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: p.strike, tipo: p.tipo, spreads, dcStk, qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
+        /* v4.91 (Victor: "en vencimientos, pulsando la posición que se pueda editar, cerrar o rolar").
+           La fila puede fundir varias posiciones idénticas (mismo ticker, bloque, strike y tipo), así que
+           se llevan TODAS. Si es una, se abre directa; si son varias, se elige — abrir la primera "porque
+           sí" sería editar una posición distinta de la que has tocado, sin decirlo. */
+        groups[key].ids.push(p.id);
         groups[key].qty += n(p.qty);
         groups[key].bepW += effBep(p) * n(p.qty);
         groups[key].riesgo += capDesplegado(p);
@@ -13791,7 +13885,7 @@ function App() {
           tipo: g.tipo, spreads: g.spreads, dcStk: g.dcStk,
           qtyNum: Number.isInteger(contratos) ? contratos : g.qty,
           bep: g.qty ? g.bepW / g.qty : NaN,
-          riesgo: g.riesgo, last: g.last, covered: g.covered,
+          riesgo: g.riesgo, last: g.last, covered: g.covered, ids: g.ids,
         };
       }).sort((a, b) => b.riesgo - a.riesgo);
       const dte = Math.round((new Date(r.expiry + "T00:00:00") - today) / 86400000);
@@ -14295,7 +14389,7 @@ function App() {
               </div>
             );
           })()}
-          <MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} /></>)}
+          <MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} onPos={setSheetPosId} /></>)}
 
         {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} onRebuy={rebuyStock} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
@@ -14941,9 +15035,48 @@ function App() {
                     ) : (
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                         <WizInput label="Cantidad (acciones)" value={wizForm.qty} onChange={wizF("qty")} inputMode="numeric" />
-                        <WizInput label="BEP (coste medio)" value={wizForm.bep} onChange={wizF("bep")} inputMode="decimal" />
+                        <WizInput label={wizStrat === "Short Stock" ? "Precio de entrada" : "BEP (coste medio)"} value={wizForm.bep} onChange={wizF("bep")} inputMode="decimal" />
                       </div>
                     )}
+                    {/* v4.91 (Victor: "en cortas que se ponga el precio de entrada y el stoploss y que de
+                        eso calcule el riesgo con el número de posiciones"). El stop se ofrece en las dos
+                        direcciones: una larga con stop también tiene riesgo definido y encaja igual en B3. */}
+                    {wizNat === "ACC" && (() => {
+                      const corta = wizStrat === "Short Stock";
+                      const num = (v) => { const x = parseFloat(String(v || "").replace(",", ".")); return isFinite(x) ? x : NaN; };
+                      const q = num(wizForm.qty), e = num(wizForm.bep), st = num(wizForm.stop);
+                      const hay = q > 0 && e > 0 && st > 0;
+                      const alReves = hay && (corta ? st < e : st > e);
+                      const riesgo = hay && !alReves ? Math.abs(e - st) * q : null;
+                      const porAccion = hay ? Math.abs(e - st) : null;
+                      return (
+                        <>
+                          <WizInput label={corta ? "Stop loss (por encima de la entrada)" : "Stop loss (por debajo de la entrada)"}
+                            value={wizForm.stop} onChange={wizF("stop")} inputMode="decimal" />
+                          <div style={{ background: alReves ? T.tileAmber : riesgo != null ? T.tileGreen : T.tile, borderRadius: 12, padding: "10px 12px" }}>
+                            {alReves ? (
+                              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.gold, lineHeight: 1.45 }}>
+                                Ese stop está del lado equivocado: en una {corta ? "corta va POR ENCIMA" : "larga va POR DEBAJO"} de la entrada.
+                                Tal y como está no te protege de nada, así que no cuenta como riesgo definido.
+                              </div>
+                            ) : riesgo != null ? (
+                              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.green, lineHeight: 1.5 }}>
+                                Riesgo si salta el stop: <b style={{ fontSize: 14 }}>${money(riesgo)}</b>
+                                <span style={{ color: T.sub, fontWeight: 600 }}> — ${money2(porAccion)} por acción × {money(q)} acciones.</span>
+                                {" "}Es el riesgo definido que usará la app en el bloque y en el sizing.
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, lineHeight: 1.5 }}>
+                                {corta
+                                  ? "Sin stop, una acción corta tiene riesgo ILIMITADO: no hay techo por arriba. La app tendría que contarla así."
+                                  : "Sin stop, el riesgo es todo el capital de la posición."}
+                                {" "}Ponlo y pasa a ser riesgo definido: entrada menos stop, por las acciones.
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
                     {(wizNat === "ACC" || wizBlock !== 0) && (
                       <div style={{ display: "grid", gridTemplateColumns: wizNat === "ACC" && wizBlock !== 0 ? "1fr 1fr" : "1fr", gap: 10 }}>
                         {wizNat === "ACC" && <WizInput label="Margen Requerido %" value={wizForm.margenPct} onChange={wizF("margenPct")} inputMode="decimal" />}

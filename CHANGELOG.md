@@ -1,5 +1,66 @@
 # CHANGELOG — Bloques
 
+Bloques v4.91 — Acciones en B3 (largas y cortas), riesgo por stop, y editar desde Vencimientos
+
+## 1. Vuelven las acciones a B3, y ahora también en corto
+La v5.00 las había sacado de B3 con un motivo: el bloque es de **riesgo definido** y una acción a pelo
+no lo tiene — su pérdida máxima es todo el capital, y en una corta no tiene techo. Vuelven con la
+pieza que faltaba: **el stop**.
+
+Con stop, una acción SÍ tiene riesgo definido —la distancia del precio de entrada al stop, por el
+número de acciones— y encaja en B3 igual que un spread. Sin stop se comporta como siempre y se dice
+en pantalla que ahí no hay nada definido.
+
+**La corta se guarda con la cantidad EN POSITIVO** y una marca (`corto`). Se descartó guardarla con
+cantidad negativa: ese número se usa en lotes, BEP medio, márgenes y una docena de sitios más que dan
+por hecho que es positivo, y un signo suelto ahí habría salido por donde no se mira. El signo lo pone
+`signoAcc`, igual que en las opciones lo pone `signo`.
+
+Lo que cambia de signo, y está comprobado:
+- **El P&L**: una corta gana cuando el precio BAJA.
+- **La delta en dólares** de la cartera: una corta RESTA.
+
+## 2. El riesgo sale del stop
+Como pidió Victor: precio de entrada, stop, número de acciones → **riesgo = |entrada − stop| × acciones**.
+Se ve en vivo mientras se teclea en el asistente, y también en el editor de la posición.
+
+Ese riesgo sustituye al de siempre en el riesgo total del bloque y en el sizing. Sin factor de
+plausible: el factor existe para estimar cuánto puede caer algo cuando no hay suelo puesto; con stop,
+el suelo está puesto.
+
+**Y se avisa del stop puesto al revés.** En una larga va por debajo de la entrada; en una corta, por
+encima. Al contrario no es un stop, es un objetivo — y el riesgo saldría mal sin que nadie dijera nada.
+Cuando pasa, se dice en ámbar y esa posición no cuenta como riesgo definido.
+
+## 3. Vencimientos: pulsar la posición abre editar · cerrar · rolar
+Antes, desde Vencimientos había que ir a Portfolio, buscar el bloque y encontrar la posición para
+hacer cualquier cosa con ella. Ahora se pulsa la fila y se abre **la misma hoja del bloque**.
+
+Con un detalle: una fila de Vencimientos puede **fundir varias posiciones** iguales (mismo ticker,
+bloque, strike y tipo). En ese caso **pregunta cuál abrir** en vez de abrir la primera — abrir una a
+ciegas sería editar una posición distinta de la que has tocado, sin decirlo.
+
+## Cómo se comprobó
+`b3-acciones.mjs`, con los números calculados a mano aparte y contrastados contra la app:
+
+| | a mano | la app |
+|---|---|---|
+| TSLA corta, entra 200, stop 215, 100 acc | riesgo $1.500 | ✓ |
+| AMD larga, entra 50, stop 44, 200 acc | riesgo $1.200 | ✓ |
+| SOFI larga **sin stop**, 300 acc a $12 | riesgo $3.600 (todo el capital, como siempre) | ✓ |
+| P&L del bloque | **+$2.600** | ✓ |
+| Riesgo plausible del bloque | **$5.700** | ✓ |
+
+El P&L del bloque es la prueba del signo: si la corta se contara como larga saldría +$600 en vez de
++$2.600. Y el plausible demuestra las dos vías a la vez — las dos con stop entran por su stop, la de
+sin stop por el camino de siempre.
+
+Además: la fila de Vencimientos abre la hoja con Editar, Cerrar y Rolar; y la fila que funde dos
+posiciones pregunta cuál. Cero errores de JavaScript.
+
+`npm run prueba`: **OK**, las 18 cifras idénticas — los campos nuevos son opcionales y una cartera sin
+ellos se comporta exactamente igual que antes.
+
 Bloques v4.90 — Los cuadros, ahora sí (la v4.89 arregló la medición, no el dibujo)
 
 ## Qué pasó
