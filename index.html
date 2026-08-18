@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.91"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.92"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -12348,6 +12348,22 @@ function App() {
      ReferenceError al pintar Ajustes; y como KEY_VIEW recuerda la última pestaña, la app arrancaba en
      Ajustes y reventaba AL ABRIR. Los datos nunca corrieron peligro: viven en localStorage/IndexedDB. */
   const [notifPerm, setNotifPerm] = useState(() => (typeof Notification !== "undefined" ? Notification.permission : "unsupported"));
+  /* v4.92 (Victor: "no puedo desbloquear las alertas de ajustes"). El permiso se leía UNA vez, al
+     montar. Si lo activabas en los Ajustes de iOS y volvías a la app, esta seguía diciendo
+     "Bloqueado" hasta cerrarla y reabrirla del todo — parecía que no se podía desbloquear cuando ya
+     estaba hecho. Ahora se vuelve a leer cada vez que la app recupera el foco. */
+  useEffect(() => {
+    const releer = () => { try { if (typeof Notification !== "undefined") setNotifPerm(Notification.permission); } catch (e) {} };
+    window.addEventListener("focus", releer);
+    document.addEventListener("visibilitychange", releer);
+    return () => { window.removeEventListener("focus", releer); document.removeEventListener("visibilitychange", releer); };
+  }, []);
+  /* iOS solo permite notificaciones web a las apps GUARDADAS EN LA PANTALLA DE INICIO. Abierta desde
+     Safari no hay permiso que valga, y sin decirlo el usuario se pelea con unos ajustes que nunca
+     van a funcionar. */
+  const enPantallaInicio = (() => {
+    try { return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; } catch (e) { return false; }
+  })();
   const askNotifPerm = () => {
     if (typeof Notification === "undefined") return;
     if (Notification.permission === "granted") { try { new Notification("Bloques", { body: "Las notificaciones de alertas funcionan ✓" }); } catch (e) {} setNotifPerm("granted"); return; }
@@ -14412,13 +14428,49 @@ function App() {
                     desbloquea en los ajustes del sistema (iOS: Ajustes → [Safari o la app instalada] →
                     Notificaciones). La fila no puede abrir eso, pero te dice dónde está.
                   · granted → toca y manda una notificación de PRUEBA para verificar que llegan. */}
-              {typeof Notification !== "undefined" && (
+              {typeof Notification !== "undefined" && (<>
                 <SettingsRow icon="bell" tint={notifPerm === "granted" ? T.tileGreen : T.tileAmber} iconColor={notifPerm === "granted" ? T.green : T.gold}
                   title="Notificaciones de alertas"
-                  sub={notifPerm === "granted" ? "Activadas · toca para enviar una prueba" : notifPerm === "denied" ? "Bloqueadas — actívalas en Ajustes de iOS" : "Sin activar · toca para pedir permiso"}
+                  sub={notifPerm === "granted" ? "Activadas · toca para enviar una prueba" : notifPerm === "denied" ? "Bloqueadas por el teléfono — mira abajo cómo se desbloquean" : "Sin activar · toca para pedir permiso"}
                   right={notifPerm === "granted" ? "Probar" : notifPerm === "denied" ? "Bloqueado" : "Activar"}
                   onClick={askNotifPerm} />
-              )}
+                {/* v4.92: los pasos, escritos. Una vez que dices que NO, el navegador NO vuelve a
+                    preguntar nunca — es una regla del sistema, no un fallo de la app: por eso el botón
+                    "Activar" deja de hacer nada y parece que no hay forma de desbloquearlo. La única
+                    salida son los ajustes del teléfono, y hasta ahora la app decía "actívalas en
+                    Ajustes de iOS" sin decir dónde. */}
+                {notifPerm === "denied" && (
+                  <div style={{ background: T.tileAmber, borderRadius: 14, padding: "12px 13px", margin: "0 0 8px", lineHeight: 1.55 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.gold, marginBottom: 6 }}>Cómo desbloquearlas</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.ink }}>
+                      Cuando le dices que NO una vez, el teléfono <b>ya no vuelve a preguntar</b>: el botón de arriba
+                      deja de hacer nada y no es cosa de la app. Se arregla desde el teléfono:
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.ink, marginTop: 7 }}>
+                      1. Sal de aquí y abre <b>Ajustes</b> del iPhone.<br />
+                      2. Entra en <b>Notificaciones</b>.<br />
+                      3. Busca <b>Portfolio</b> en la lista de apps y ábrelo.<br />
+                      4. Enciende <b>Permitir notificaciones</b>.<br />
+                      5. Vuelve aquí: esta fila se pondrá verde sola.
+                    </div>
+                    {!enPantallaInicio && (
+                      <div style={{ fontSize: 12, fontWeight: 700, color: T.gold, marginTop: 9, paddingTop: 9, borderTop: "1px solid " + hexToRgba(T.gold, 0.3) }}>
+                        Ojo, primero esto: tienes la app abierta <b>desde el navegador</b>, y ahí el iPhone no
+                        permite notificaciones a ninguna web. Tienes que <b>guardarla en la pantalla de inicio</b>
+                        (botón Compartir → «Añadir a pantalla de inicio») y abrirla desde ese icono. Si no, no
+                        aparecerá en la lista de Notificaciones por mucho que la busques.
+                      </div>
+                    )}
+                  </div>
+                )}
+                {notifPerm !== "denied" && notifPerm !== "granted" && !enPantallaInicio && (
+                  <div style={{ background: T.tileAmber, borderRadius: 14, padding: "11px 13px", margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: T.ink, lineHeight: 1.55 }}>
+                    Tienes la app abierta <b>desde el navegador</b>. El iPhone solo deja mandar notificaciones a las
+                    apps guardadas en la <b>pantalla de inicio</b>: guárdala (Compartir → «Añadir a pantalla de
+                    inicio»), ábrela desde ese icono y entonces sí podrás activarlas.
+                  </div>
+                )}
+              </>)}
               <SettingsRow icon="bank" tint={T.tilePurple} iconColor={T.purple} title="Brokers" sub={brokers.join(" · ")} onClick={() => { setBrokerModalOpen(true); setNewBrokerName(""); setRemoveTarget({}); }} last />
             </div>
 
