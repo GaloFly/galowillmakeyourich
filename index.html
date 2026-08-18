@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.96"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.97"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1813,10 +1813,20 @@ async function puenteFetch(cfg, ruta, params) {
     });
     if (reloj) clearTimeout(reloj);
     if (r.status === 401) return { ok: false, error: "La clave no es correcta — revísala en el servidor con: sudo grep TOKEN /etc/bloques/entorno" };
-    if (r.status === 404) return { ok: false, error: "El servidor responde pero no reconoce esa consulta. ¿Está actualizado el puente?" };
     let j = null;
     try { j = await r.json(); } catch (e) { j = null; }
-    if (j && j.ok === false) return { ok: false, error: j.error || "El servidor devolvió un error sin explicar." };
+    /* v4.97: un 404 puede ser dos cosas MUY distintas. Si el puente contesta JSON con su motivo
+       —"hoy no se pudo generar la ficha de X"—, ese motivo es el mensaje bueno; si contesta el 404
+       de siempre, en HTML, es que la ruta no existe y hay que actualizar el puente. Antes se
+       tapaban las dos con la segunda, y eso mandaba a actualizar un puente que ya estaba al día. */
+    if (r.status === 404) return { ok: false, _http: 404,
+      error: (j && j.error) || "El servidor responde pero no reconoce esa consulta. ¿Está actualizado el puente?" };
+    /* 202 no es un error: es "en ello". Se devuelve el cuerpo ENTERO —con su `estado` y su
+       `reintenta_en_s`— porque quien llama necesita saber que hay que volver, no que ha fallado. */
+    if (r.status === 202 && j) return { ...j, _http: 202 };
+    /* el resto de errores conservan también el cuerpo: `ok:false` manda, pero los campos que
+       traiga el puente para explicarse no se tiran por el camino */
+    if (j && j.ok === false) return { ...j, ok: false, _http: r.status, error: j.error || "El servidor devolvió un error sin explicar." };
     if (!r.ok) return { ok: false, error: "El servidor contestó con un error (HTTP " + r.status + ")." };
     if (!j) return { ok: false, error: "El servidor contestó algo que no se entiende. ¿La dirección apunta al puente?" };
     return j;
@@ -8473,12 +8483,16 @@ const fotoYDeltaOi = (tkr, vto, contratos) => {
   const desde = previas.length ? previas[previas.length - 1] : null;
   const antes = desde ? libro[serie][desde] : null;
 
-  /* la foto de hoy: interés abierto por código, y el strike y el lado para poder pintarlo luego */
+  /* v4.97 — la foto guarda {fecha, ticker, vencimiento, strike, tipo, oi}, que es la MISMA forma
+     del histórico de semanas que tiene el servidor. Así, el día que ese histórico llegue, se injerta
+     sin rehacer nada. Antes se guardaba indexado por código de contrato: la misma información, pero
+     con otra forma — y cambiarla dentro de un mes habría costado tirar el histórico ya acumulado. */
   const foto = {};
   contratos.forEach((c) => {
     const oi = numOrNaN(c.interes_abierto), k = n(c.strike);
     if (!isFinite(oi) || !isFinite(k) || !k) return;
-    foto[c.codigo] = { k, c: String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0 ? 1 : 0, oi };
+    foto[c.codigo] = { ticker: tkr, vencimiento: vto, strike: k,
+                       tipo: String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0 ? "CALL" : "PUT", oi };
   });
   if (Object.keys(foto).length) {
     const s = libro[serie] || (libro[serie] = {});
@@ -8500,7 +8514,7 @@ const fotoYDeltaOi = (tkr, vto, contratos) => {
     if (!d) return;
     /* solo lo que se mueve de verdad: 500 contratos, o un cuarto de lo que había */
     if (Math.abs(d) < OI_MIN_CONTRATOS && !(n(a.oi) > 0 && Math.abs(d) / n(a.oi) >= OI_MIN_PCT)) return;
-    filas.push({ k: foto[cod].k, esCall: foto[cod].c === 1, oi: foto[cod].oi, antes: n(a.oi), delta: d });
+    filas.push({ k: n(foto[cod].strike), esCall: foto[cod].tipo === "CALL", oi: foto[cod].oi, antes: n(a.oi), delta: d });
   });
   filas.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return { desde, filas: filas.slice(0, 8) };
@@ -9582,16 +9596,130 @@ function StrikeTile({ side, k, pct, em, onNudge, raw, onType }) {
        otros precios con Black-Scholes; es lo mismo que hace el bot ("flip por perfil BS").
      · El SIGNO (calls +, puts −)          → SUPUESTO del sector. Nadie publica el inventario real
        de los creadores de mercado. Si no se cumple, el signo se da la vuelta entero. */
+/* ---------- v4.97: SEMANAL a partir del diario ----------
+   `/velas` siempre manda velas diarias, así que el semanal de tres años se agrega aquí: apertura
+   del primer día de la semana, máximo y mínimo de la semana, cierre del último día. Se agrupa por
+   LUNES de cada semana (no por número de semana ISO, que cambia de año y complica sin dar nada). */
+const semanalDeVelas = (velas) => {
+  const out = [];
+  (velas || []).forEach((v) => {
+    const d = new Date(v.f + "T00:00:00Z");
+    if (isNaN(d)) return;
+    /* getUTCDay: 0 domingo. Se retrocede al lunes de esa semana */
+    const lunes = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
+    const u = out[out.length - 1];
+    if (u && u.f === lunes) {
+      u.h = Math.max(n(u.h), n(v.h != null ? v.h : v.c));
+      u.l = Math.min(n(u.l), n(v.l != null ? v.l : v.c));
+      u.c = n(v.c);
+      u.v = n(u.v) + n(v.v);
+    } else {
+      out.push({ f: lunes, o: n(v.o != null ? v.o : v.c), h: n(v.h != null ? v.h : v.c),
+                 l: n(v.l != null ? v.l : v.c), c: n(v.c), v: n(v.v) });
+    }
+  });
+  return out;
+};
+
+/* ---------- v4.97: FLUJO por horizonte ----------
+   Cuatro señales, cada una vota +1, 0 o −1, y la suma decide. Está montado así —y no como un
+   número continuo— porque es lo que pidió Victor y porque un voto se puede explicar: cuando el
+   semáforo dice ALCISTA se puede señalar CUÁL de las cuatro lo dijo.
+
+   El aviso que no puede faltar en pantalla: nada de esto dice quién fue el AGRESOR de cada cruce
+   —si el contrato se compró o se vendió—, que es la mitad que convertiría esto en una dirección.
+   Es un rastro. Y el volumen es de la sesión de hoy mientras que el interés abierto es del cierre
+   de ayer: mezclarlos sin decirlo fabrica "aperturas" que no lo son. */
+const APERTURA_VOL = 200, APERTURA_VOI = 1.5;
+const flujoDeContratos = (lista) => {
+  let callVol = 0, putVol = 0, primaC = 0, primaP = 0, aperturasC = 0, aperturasP = 0;
+  const tops = [];
+  (lista || []).forEach((c) => {
+    const esCall = String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0;
+    const vl = numOrNaN(c.volumen), oi = numOrNaN(c.interes_abierto);
+    const px = numOrNaN(c.medio != null ? c.medio : c.ultimo);
+    if (!isFinite(vl) || vl <= 0) return;
+    const prima = isFinite(px) ? vl * px * 100 : 0;
+    const vOI = isFinite(oi) && oi > 0 ? vl / oi : NaN;
+    const apertura = vl > APERTURA_VOL && isFinite(vOI) && vOI > APERTURA_VOI;
+    if (esCall) { callVol += vl; primaC += prima; if (apertura) aperturasC++; }
+    else { putVol += vl; primaP += prima; if (apertura) aperturasP++; }
+    tops.push({ esCall, k: n(c.strike), vol: vl, vOI, prima, apertura, vto: String(c.vencimiento || "").slice(0, 10) });
+  });
+  if (!callVol && !putVol) return null;
+  const pc = callVol > 0 ? putVol / callVol : NaN;
+
+  const votos = [];
+  votos.push({ nombre: "P/C de volumen", valor: isFinite(pc) ? pc.toFixed(2) : "—",
+               voto: !isFinite(pc) ? 0 : pc < 0.7 ? 1 : pc > 1.3 ? -1 : 0 });
+  /* el umbral del segundo voto es RELATIVO al total: 10.000 contratos de diferencia son mucho en
+     un valor pequeño y ruido en NVDA. Un umbral fijo diría siempre lo mismo en los dos extremos. */
+  const umbral = Math.max(50, (callVol + putVol) * 0.1);
+  const dif = callVol - putVol;
+  votos.push({ nombre: "calls − puts", valor: (dif >= 0 ? "+" : "−") + money(Math.abs(dif)),
+               voto: dif > umbral ? 1 : dif < -umbral ? -1 : 0 });
+  votos.push({ nombre: "prima por lado", valor: "$" + money(primaC / 1000) + "k / $" + money(primaP / 1000) + "k",
+               voto: primaC > primaP * 1.5 ? 1 : primaP > primaC * 1.5 ? -1 : 0 });
+  votos.push({ nombre: "aperturas", valor: aperturasC + " / " + aperturasP,
+               voto: aperturasC > aperturasP ? 1 : aperturasP > aperturasC ? -1 : 0 });
+  const score = votos.reduce((s, v) => s + v.voto, 0);
+
+  return { pc, callVol, putVol, primaC, primaP, votos, score,
+           veredicto: score >= 2 ? "ALCISTA" : score <= -2 ? "BAJISTA" : "NEUTRAL",
+           tops: tops.sort((a, b) => b.vol - a.vol).slice(0, 4) };
+};
+
+/* ---------- v4.97: el put del ROI ----------
+   Se elige por DELTA, no por strike: delta es la medida de riesgo que él usa, y el mismo strike
+   significa cosas distintas en dos valores. Fuera de [−0,36, −0,18] no se elige NADA y se dice —
+   inventarse el más cercano sería dar por bueno un contrato que no cumple su criterio. */
+const DELTA_OBJ = -0.30, DELTA_MIN = -0.36, DELTA_MAX = -0.18;
+const putDelRoi = (lista, spot, dte) => {
+  const cands = (lista || [])
+    .filter((c) => String(c.tipo || "").toUpperCase().indexOf("PUT") >= 0)
+    .map((c) => ({ ...c, k: n(c.strike), d: numOrNaN(c.delta) }))
+    .filter((c) => c.k > 0 && isFinite(c.d));
+  if (!cands.length) return { elegido: null, motivo: "el servidor no mandó delta de ningún put de ese vencimiento" };
+  const dentro = cands.filter((c) => c.d >= DELTA_MIN && c.d <= DELTA_MAX);
+  if (!dentro.length) {
+    const cerca = cands.slice().sort((a, b) => Math.abs(a.d - DELTA_OBJ) - Math.abs(b.d - DELTA_OBJ))[0];
+    return { elegido: null, motivo: "ninguna put de ese vencimiento cae entre delta −0,36 y −0,18. "
+             + "La más cercana es la de $" + money2(cerca.k) + " con delta " + cerca.d.toFixed(2) };
+  }
+  const c = dentro.slice().sort((a, b) => Math.abs(a.d - DELTA_OBJ) - Math.abs(b.d - DELTA_OBJ))[0];
+  const K = c.k, bid = numOrNaN(c.bid), ask = numOrNaN(c.ask);
+  const medio = numOrNaN(c.medio != null ? c.medio : c.ultimo);
+  const iv = numOrNaN(c.iv);
+  const roi = (prima) => (isFinite(prima) && K - prima > 0 ? (prima / (K - prima)) * 100 : NaN);
+  const roiBid = roi(bid), roiMedio = roi(medio);
+  const em = isFinite(iv) && iv > 0 && dte > 0 ? spot * (iv / 100) * Math.sqrt(dte / 365) : NaN;
+  return {
+    elegido: c, K, bid, ask, medio, iv, delta: c.d,
+    roiBid, roiMedio,
+    roiAnualBid: isFinite(roiBid) && dte > 0 ? roiBid * 365 / dte : NaN,
+    roiAnualMedio: isFinite(roiMedio) && dte > 0 ? roiMedio * 365 / dte : NaN,
+    bep: isFinite(bid) ? K - bid : NaN,
+    spreadPct: isFinite(ask) && isFinite(bid) && isFinite(medio) && medio > 0 ? ((ask - bid) / medio) * 100 : NaN,
+    em, kEnEm: isFinite(em) && em > 0 ? (spot - K) / em : NaN,
+    motivo: "",
+  };
+};
+
 /* v4.94 — el precio con sus niveles encima. Sin esto hay que leer siete números y colocarlos
    mentalmente alrededor del precio, que es justo el trabajo que un gráfico hace gratis. */
-function GraficoNiveles({ niveles, spot }) {
-  const vs = niveles.velas.slice(-120);
+function GraficoNiveles({ niveles, spot, serie, sesiones, muros }) {
+  const base = serie && serie.length > 30 ? serie : niveles.velas;
+  const vs = base.slice(-(sesiones || 120));
   if (vs.length < 10) return null;
-  const cierres = niveles.velas.map((v) => n(v.c));
+  const cierres = base.map((v) => n(v.c));
   const e21 = emaSerie(cierres, 21).slice(-vs.length);
   const e50 = emaSerie(cierres, 50).slice(-vs.length);
+  const e200 = emaSerie(cierres, 200).slice(-vs.length);
   const lineas = [...niveles.soportes.slice(0, 2).map((z) => ({ ...z, sop: true })),
-                  ...niveles.resistencias.slice(0, 2).map((z) => ({ ...z, sop: false }))];
+                  ...niveles.resistencias.slice(0, 2).map((z) => ({ ...z, sop: false })),
+                  /* v4.97: los muros de gamma, sobre las velas. Ahí es donde significan algo:
+                     un muro es un precio, y un precio se lee contra el gráfico, no en una lista. */
+                  ...(muros || []).map((m) => ({ px: m.px, sop: !m.call, muro: true }))];
   const W = 320, H = 150, ML = 4, MR = 42, MT = 8, MB = 16;
   const lo = Math.min(spot, ...vs.map((v) => n(v.l) || n(v.c)), ...lineas.map((l) => l.px));
   const hi = Math.max(spot, ...vs.map((v) => n(v.h) || n(v.c)), ...lineas.map((l) => l.px));
@@ -9602,15 +9730,18 @@ function GraficoNiveles({ niveles, spot }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Precio con sus niveles">
-        {lineas.map((l) => (
-          <g key={l.px}>
+        {lineas.map((l, i) => (
+          <g key={i}>
+            {/* los muros van a trazo continuo y más gruesos: no son lo mismo que un soporte de
+                pivotes, y si se pintaran igual parecerían la misma clase de dato */}
             <line x1={ML} y1={py(l.px)} x2={W - MR} y2={py(l.px)} stroke={l.sop ? T.green : T.red}
-              strokeWidth="1.4" strokeDasharray="4 3" opacity="0.85" />
+              strokeWidth={l.muro ? 2.2 : 1.4} strokeDasharray={l.muro ? "" : "4 3"} opacity={l.muro ? 0.55 : 0.85} />
             <text x={W - MR + 3} y={py(l.px) + 3.5} fill={l.sop ? T.green : T.red} fontSize="9" fontWeight="800">
-              {money2(l.px)}
+              {(l.muro ? "▌" : "") + money2(l.px)}
             </text>
           </g>
         ))}
+        <polyline points={linea(e200)} fill="none" stroke={T.sub} strokeWidth="1.6" opacity="0.75" />
         <polyline points={linea(e50)} fill="none" stroke={T.gold} strokeWidth="1.6" opacity="0.9" />
         <polyline points={linea(e21)} fill="none" stroke={T.purple} strokeWidth="1.6" opacity="0.9" />
         <polyline points={vs.map((v, i) => px(i) + "," + py(n(v.c))).join(" ")} fill="none"
@@ -9619,9 +9750,10 @@ function GraficoNiveles({ niveles, spot }) {
         <text x={ML} y={H - 4} fill={T.sub} fontSize="9" fontWeight="700" textAnchor="start">{diaMesCorto(vs[0].f)}</text>
         <text x={W - MR} y={H - 4} fill={T.sub} fontSize="9" fontWeight="700" textAnchor="end">{diaMesCorto(vs[vs.length - 1].f)}</text>
       </svg>
-      <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>
-        {vs.length} sesiones · <span style={{ color: T.purple }}>EMA 21</span> · <span style={{ color: T.gold }}>EMA 50</span>
+      <div style={{ fontSize: 10, fontWeight: 700, color: T.sub, lineHeight: 1.5 }}>
+        {vs.length} velas · <span style={{ color: T.purple }}>EMA 21</span> · <span style={{ color: T.gold }}>EMA 50</span> · <span>EMA 200</span>
         {" · "}<span style={{ color: T.green }}>soportes</span> y <span style={{ color: T.red }}>resistencias</span> a rayas
+        {(muros || []).length ? " · muros de gamma a trazo continuo" : ""}
       </div>
     </div>
   );
@@ -9632,6 +9764,33 @@ function AnalisisContent({ puente }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [datos, setDatos] = useState(null);
+  /* v4.97: la ficha profunda va por su cuenta, porque la primera vez del día tarda 20-40 s en
+     generarse en el servidor. Su estado es propio: el resto de la pantalla no la espera. */
+  const [ficha, setFicha] = useState(null);
+  const fichaRef = useRef(0);
+  const [vista, setVista] = useState("diario");   /* del gráfico: diario o semanal */
+
+  const pedirFicha = async (t, cod) => {
+    const mio = ++fichaRef.current;          /* si pide otro ticker, esta tanda se abandona */
+    setFicha({ estado: "pidiendo", tkr: t });
+    for (let intento = 1; intento <= 4; intento++) {
+      let r = null;
+      try { r = await puenteFetch(puente, "/fundamentales", { codigo: cod }); }
+      catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
+      if (fichaRef.current !== mio) return;
+      if (r && r.ok && r.ficha) { setFicha({ estado: "ok", tkr: t, ...r }); return; }
+      if (r && r.estado === "generando") {
+        setFicha({ estado: "generando", tkr: t, intento });
+        const espera = Math.max(10, n(r.reintenta_en_s) || 45) * 1000;
+        await new Promise((res) => setTimeout(res, espera));
+        if (fichaRef.current !== mio) return;
+        continue;
+      }
+      setFicha({ estado: "error", tkr: t, error: (r && r.error) || "el servidor no contestó" });
+      return;
+    }
+    if (fichaRef.current === mio) setFicha({ estado: "tarda", tkr: t });
+  };
 
   const analizar = async (ticker, vtoPedido) => {
     const t = String(ticker || "").trim().toUpperCase();
@@ -9639,60 +9798,124 @@ function AnalisisContent({ puente }) {
     setBusy(true); setMsg("");
     try {
       const cod = "US." + t;
-      const q = await puenteFetch(puente, "/cotiza", { codigos: cod });
+      const hoy = new Date();
+      const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
+
+      /* v4.97 — la ficha profunda se pide LA PRIMERA y NO se espera. La primera vez de cada día el
+         servidor tiene que generarla y son 20-40 s; mientras, el resto de la pantalla se pinta y
+         para cuando él baja a mirar la valoración, casi siempre ya está. */
+      pedirFicha(t, cod);
+
+      const fallos = [];
+      /* cada fuente en su propio intento: si una falla, esa ficha no sale y el resto de la pantalla
+         funciona igual. Nunca "falta un dato → falla todo". */
+      const suave = async (ruta, params, nombre) => {
+        try {
+          const r = await puenteFetch(puente, ruta, params);
+          if (r && r.ok) return r;
+          if (r && r.error) fallos.push(nombre + ": " + r.error);
+        } catch (e) { fallos.push(nombre + ": " + (e && e.message ? e.message : e)); }
+        return null;
+      };
+
+      /* las cinco baratas, a la vez. Ninguna depende de otra, así que esperarlas en fila era
+         regalar segundos: son cinco viajes al servidor, no cinco cálculos. */
+      const [q, sv, rval, rvel, rdin] = await Promise.all([
+        puenteFetch(puente, "/cotiza", { codigos: cod }),
+        suave("/subyacente", { codigo: cod }, "volatilidad"),
+        suave("/valoracion", { codigo: cod }, "valoración"),
+        /* 5y de una vez: trae el semanal de tres años, el diario de nueve meses y el fondo del
+           gamma. Pedirlos por separado serían tres llamadas para los mismos datos. */
+        suave("/velas", { codigo: cod, rango: "5y" }, "velas"),
+        suave("/dinero", { codigo: cod }, "dinero"),
+      ]);
       if (!q || !q.ok) throw new Error((q && q.error) || "el servidor no contestó al pedir el precio");
       const spot = q.cotizaciones && q.cotizaciones[cod] ? n(q.cotizaciones[cod].ultimo) : NaN;
       if (!isFinite(spot) || spot <= 0) throw new Error("el servidor no da precio de " + t + ". ¿Está bien escrito?");
+      const vol = sv ? sv.subyacente : null;
+      const val = rval ? rval.valoracion : null;
+      const velas = rvel ? rvel.velas : null;
+      /* v4.96: la fuente se lee de la respuesta, no se da por supuesta */
+      const velasFuente = rvel ? String(rvel.fuente || "").replace(/\s*\(.*/, "") : "";
+      const dinero = rdin ? rdin.dinero : null;
+      const columnasDinero = rdin ? (rdin.columnas || null) : null;
+      /* la edad del dato MÁS VIEJO de la tanda, y si alguna vino de la caché de una ventana de
+         root. Un número sin su hora es un número mentiroso. */
+      const respuestas = [q, sv, rval, rvel, rdin].filter(Boolean);
+      const edadMax = Math.max(0, ...respuestas.map((r) => n(r.edad_s)).filter((x) => isFinite(x)));
+      const avisoVentana = (respuestas.map((r) => r.aviso).filter(Boolean)
+        .find((a) => /ventana|franja|ocupado/i.test(a))) || "";
 
-      /* volatilidad del subyacente (v4.87). Si el puente es viejo y no conoce la ruta, se sigue sin ella */
-      let vol = null;
-      try { const sv = await puenteFetch(puente, "/subyacente", { codigo: cod }); if (sv && sv.ok) vol = sv.subyacente; } catch (e) {}
-
-      /* v4.94 — valoración, velas y reparto de capital. Cada una en su propio intento: si el puente
-         del servidor todavía es el de antes y no conoce la ruta, esa ficha no sale y el resto de la
-         pantalla funciona igual. Nunca "falta un dato → falla todo". */
-      let val = null, velas = null, velasFuente = "", dinero = null, columnasDinero = null, fallos = [];
-      try {
-        const r = await puenteFetch(puente, "/valoracion", { codigo: cod });
-        if (r && r.ok) val = r.valoracion; else if (r && r.error) fallos.push("valoración: " + r.error);
-      } catch (e) { fallos.push("valoración: " + (e && e.message ? e.message : e)); }
-      try {
-        const r = await puenteFetch(puente, "/velas", { codigo: cod, rango: "1y" });
-        /* v4.96: la fuente se lee de la respuesta, no se da por supuesta. Si Yahoo limita al
-           servidor —pasó el 18-ago— las velas llegan de otro sitio, y eso se dice en pantalla. */
-        if (r && r.ok) { velas = r.velas; velasFuente = String(r.fuente || "").replace(/\s*\(.*/, ""); }
-        else if (r && r.error) fallos.push("velas: " + r.error);
-      } catch (e) { fallos.push("velas: " + (e && e.message ? e.message : e)); }
-      try {
-        const r = await puenteFetch(puente, "/dinero", { codigo: cod });
-        if (r && r.ok) { dinero = r.dinero; columnasDinero = r.columnas || null; }
-        else if (r && r.error) fallos.push("dinero grande: " + r.error);
-      } catch (e) { fallos.push("dinero grande: " + (e && e.message ? e.message : e)); }
-
-      const hoy = new Date();
+      /* UNA sola cadena, de mañana a 120 días. Sirve para ROI, flujo y gamma: pedirla tres veces
+         sería gastar tres de las diez llamadas por media hora que tiene TODA la cuenta. */
       const cad = await puenteFetch(puente, "/cadena", {
-        codigo: cod, desde: iso(new Date(hoy.getTime() + 3 * 86400000)), hasta: iso(new Date(hoy.getTime() + 70 * 86400000)) });
+        codigo: cod, desde: iso(new Date(hoy.getTime() + 86400000)), hasta: iso(new Date(hoy.getTime() + 120 * 86400000)) });
       if (!cad || !cad.ok) throw new Error((cad && cad.error) || "el servidor no contestó al pedir la cadena");
       const vtos = (cad.vencimientos || []).slice().sort();
-      if (!vtos.length) throw new Error("no hay vencimientos de " + t + " en las próximas diez semanas");
-      const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
-      /* por defecto, el más cercano a 30 días: es donde vive el interés abierto que mueve el precio */
+      if (!vtos.length) throw new Error("no hay vencimientos de " + t + " en los próximos cuatro meses");
+
+      /* gamma e interés abierto: el más cercano a 30 días, que es donde vive el OI que mueve el precio */
       const vto = vtoPedido && vtos.includes(vtoPedido) ? vtoPedido
         : vtos.slice().sort((a, b) => Math.abs(dias(a) - 30) - Math.abs(dias(b) - 30))[0];
+      /* ROI: DTE entre 30 y 45, y dentro de ese rango el más cercano a 30 — su estándar es 31 con
+         45 de reserva. Si NINGUNO cae dentro se coge el más cercano al borde y SE DICE, porque
+         entonces el número que sale no responde exactamente a su criterio. */
+      const enRango = vtos.filter((v) => dias(v) >= 30 && dias(v) <= 45);
+      const vtoRoi = vtoPedido && vtos.includes(vtoPedido) ? vtoPedido
+        : enRango.length
+          ? enRango.slice().sort((a, b) => Math.abs(dias(a) - 30) - Math.abs(dias(b) - 30))[0]
+          : vtos.slice().sort((a, b) => Math.min(Math.abs(dias(a) - 30), Math.abs(dias(a) - 45))
+                                       - Math.min(Math.abs(dias(b) - 30), Math.abs(dias(b) - 45)))[0];
+      const roiFuera = !enRango.length && !vtoPedido;
+      /* flujo: tres horizontes, 2 + 3 + 2 vencimientos */
+      const horizontes = [
+        { id: "corto", etiqueta: "Corto", detalle: "hasta 14 días", vtos: vtos.filter((v) => dias(v) <= 14).slice(0, 2) },
+        { id: "medio", etiqueta: "Medio", detalle: "15 a 60 días", vtos: vtos.filter((v) => dias(v) >= 15 && dias(v) <= 60).slice(0, 3) },
+        { id: "largo", etiqueta: "Largo", detalle: "más de 60 días", vtos: vtos.filter((v) => dias(v) > 60).slice(0, 2) },
+      ].filter((h) => h.vtos.length);
 
-      /* solo los strikes con sentido: alrededor del dinero y con tope de códigos. Una cadena entera
-         de un subyacente líquido son cientos de contratos y el cupo no es solo nuestro. */
-      const delVto = (cad.contratos || []).filter((c) => String(c.vencimiento || "").slice(0, 10) === vto);
-      const cerca = delVto
-        .filter((c) => { const k = n(c.strike); return k > 0 && k >= spot * 0.7 && k <= spot * 1.35; })
+      /* ---- la UNIÓN de contratos que necesitan los tres bloques, deduplicada ----
+         El tope de strikes por vencimiento es una decisión, no un descuido: sin él, un nombre
+         líquido con 80 strikes por vencimiento se va a 1.100 contratos y SEIS lotes. Las cuatro
+         señales del flujo son agregados de volumen y no cambian de veredicto por incluir alas que
+         no negocia nadie. */
+      const porVto = {};
+      (cad.contratos || []).forEach((c) => {
+        const v = String(c.vencimiento || "").slice(0, 10);
+        (porVto[v] || (porVto[v] = [])).push(c);
+      });
+      const cercaDe = (v, banda, tope) => (porVto[v] || [])
+        .filter((c) => { const k = n(c.strike); return k > 0 && Math.abs(k - spot) <= spot * banda; })
         .sort((a, b) => Math.abs(n(a.strike) - spot) - Math.abs(n(b.strike) - spot))
-        .slice(0, 180);
-      if (!cerca.length) throw new Error("no hay strikes de " + t + " cerca del precio en " + vto);
-      const op = await puenteFetch(puente, "/opciones", { codigos: cerca.map((c) => c.codigo).join(",") });
-      if (!op || !op.ok) throw new Error((op && op.error) || "el servidor no contestó al pedir los contratos");
-      const marcas = op.opciones || {};
-      const contratos = cerca.filter((c) => marcas[c.codigo]).map((c) => ({ ...c, ...marcas[c.codigo] }));
+        .slice(0, tope);
+      const pedidos = new Map();
+      const meter = (lista) => lista.forEach((c) => { if (c && c.codigo) pedidos.set(c.codigo, c); });
+      horizontes.forEach((h) => h.vtos.forEach((v) => meter(cercaDe(v, 0.40, 60))));  /* ±40%, 30 strikes por lado */
+      meter(cercaDe(vto, 0.45, 80));                                                  /* gamma, banda más ancha */
+      meter((porVto[vtoRoi] || [])                                                    /* los puts del ROI */
+        .filter((c) => String(c.tipo || "").toUpperCase().indexOf("PUT") >= 0)
+        .filter((c) => { const k = n(c.strike); return k >= spot * 0.6 && k <= spot; })
+        .sort((a, b) => Math.abs(n(a.strike) - spot) - Math.abs(n(b.strike) - spot)).slice(0, 40));
+
+      const codigos = Array.from(pedidos.keys());
+      if (!codigos.length) throw new Error("no hay strikes de " + t + " cerca del precio");
+      const marcas = {};
+      for (let i = 0; i < codigos.length; i += 200) {
+        const op = await puenteFetch(puente, "/opciones", { codigos: codigos.slice(i, i + 200).join(",") });
+        if (!op || !op.ok) throw new Error((op && op.error) || "el servidor no contestó al pedir los contratos");
+        Object.assign(marcas, op.opciones || {});
+      }
+      const todos = codigos.filter((c) => marcas[c]).map((c) => ({ ...pedidos.get(c), ...marcas[c] }));
+      const delVencimiento = (v) => todos.filter((c) => String(c.vencimiento || "").slice(0, 10) === v);
+      const contratos = delVencimiento(vto);
       if (!contratos.length) throw new Error("el servidor no devolvió datos de ningún contrato de " + vto);
+
+      /* ---- ROI y flujo, con lo ya descargado: ni una llamada más ---- */
+      const roi = putDelRoi(delVencimiento(vtoRoi), spot, dias(vtoRoi));
+      const flujo = horizontes.map((h) => ({
+        ...h, dtes: h.vtos.map(dias),
+        r: flujoDeContratos(h.vtos.flatMap((v) => delVencimiento(v))),
+      })).filter((h) => h.r);
 
       /* ---- todo junto POR STRIKE: la put y la call del mismo strike son una fila ---- */
       const porK = {};
@@ -9765,6 +9988,8 @@ function AnalisisContent({ puente }) {
       setDatos({ tkr: t, spot, vol, vtos, vto, dte: dias(vto), filas, muroCall, muroPut, gexTotal,
                  flip, sinGamma, conGamma, primaCall: primaDe(true), primaPut: primaDe(false), tops,
                  val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), velasFuente, fallos, oi,
+                 velas, semanal: semanalDeVelas(velas), roi, roiVto: vtoRoi, roiDte: dias(vtoRoi), roiFuera,
+                 flujo, edadMax, avisoVentana,
                  cuando: Date.now() });
     } catch (e) {
       setDatos(null);
@@ -9794,6 +10019,11 @@ function AnalisisContent({ puente }) {
   /* capitalizaciones: en B y T, que es como las lee él en moomoo y en IBKR todos los días */
   const gordo = (x) => (Math.abs(x) >= 1e12 ? money2(x / 1e12) + "T"
     : Math.abs(x) >= 1e9 ? money2(x / 1e9) + "B" : millones(x));
+  /* los precios de una opción se leen con sus DOS decimales: "$4" en vez de "$4.00" en una prima
+     parece un redondeo, y aquí la diferencia entre 3,90 y 4,00 es el 2,5% del ROI */
+  const precio = (x) => "$" + n(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  /* y el menos tipográfico, el mismo que usa el resto de la app: un guion suelto canta */
+  const conMenos = (x) => String(x).replace(/^-/, "−");
   const Tile = ({ l, x, col }) => (
     <div style={{ background: T.tile, borderRadius: 12, padding: "10px 8px", boxShadow: T.inset, textAlign: "center" }}>
       <div style={{ fontSize: 15.5, fontWeight: 800, color: col || T.ink, fontVariantNumeric: "tabular-nums" }}>{x}</div>
@@ -9823,9 +10053,12 @@ function AnalisisContent({ puente }) {
       {datos && (() => {
         const v = datos.vol || {};
         const maxOi = Math.max(1, ...datos.filas.map((f) => Math.max(f.callOi, f.putOi)));
-        const callVol = datos.filas.reduce((s, f) => s + f.callVol, 0);
-        const putVol = datos.filas.reduce((s, f) => s + f.putVol, 0);
-        const pc = callVol > 0 ? putVol / callVol : NaN;
+        /* los DOS muros de cada lado (v4.97), para la ficha y para dibujarlos sobre las velas */
+        const murosCall = datos.filas.filter((f) => f.gex > 0).sort((a, b) => b.gex - a.gex).slice(0, 2);
+        const murosPut = datos.filas.filter((f) => f.gex < 0).sort((a, b) => a.gex - b.gex).slice(0, 2);
+        const muros = [...murosCall.map((f) => ({ px: f.k, call: true })), ...murosPut.map((f) => ({ px: f.k, call: false }))];
+        /* el P/C de un solo vencimiento se fue con la ficha de flujo vieja: ahora hay uno por
+           horizonte, calculado en flujoDeContratos, y tener los dos invitaba a compararlos */
         const ivhv = isFinite(n(v.iv)) && isFinite(n(v.hv_30d)) && n(v.hv_30d) > 0 ? n(v.iv) / n(v.hv_30d) : NaN;
         return (<>
           {/* ---------- cabecera ---------- */}
@@ -9836,7 +10069,23 @@ function AnalisisContent({ puente }) {
             </div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>
               {v.nombre ? v.nombre + " · " : ""}vencimiento {ibkrDate(datos.vto)} · {datos.dte} días · {fechaCorta(datos.cuando)}
+              {/* v4.97: la EDAD del dato, no solo la hora en que se miró. Un número sin su hora es
+                  un número mentiroso, y con caché de por medio los dos no son lo mismo. */}
+              {isFinite(datos.edadMax) && datos.edadMax > 60
+                ? <span style={{ color: datos.edadMax > 900 ? T.gold : T.sub }}>
+                    {" · dato de hace " + (datos.edadMax >= 3600
+                      ? Math.round(datos.edadMax / 3600) + " h"
+                      : Math.round(datos.edadMax / 60) + " min")}
+                  </span>
+                : ""}
             </div>
+            {/* las franjas en las que root captura: el puente sirve caché y lo dice. Se enseña tal
+                cual y NO se reintenta en bucle — el bucle solo molestaría a la otra tarea. */}
+            {datos.avisoVentana && (
+              <div style={{ background: T.tileAmber, borderRadius: 12, padding: "9px 11px", fontSize: 11, fontWeight: 700, color: T.gold, lineHeight: 1.5 }}>
+                {datos.avisoVentana}
+              </div>
+            )}
             {datos.vtos.length > 1 && (
               <div className="no-scrollbar" style={{ display: "flex", gap: 6, overflowX: "auto", padding: 4, margin: -4 }}>
                 {datos.vtos.map((x) => (
@@ -9858,6 +10107,75 @@ function AnalisisContent({ puente }) {
             )}
           </div>
 
+          {/* ---------- ROI (v4.97) ---------- */}
+          {datos.roi && (() => {
+            const R = datos.roi;
+            const ivhvR = isFinite(n(v.iv)) && isFinite(n(v.hv_30d)) && n(v.hv_30d) > 0 ? n(v.iv) / n(v.hv_30d) : NaN;
+            return (
+              <Ficha titulo="El put que venderías"
+                nota={"Vencimiento a " + datos.roiDte + " días y la put con delta más cerca de −0,30, "
+                  + "aceptando solo entre −0,36 y −0,18. El ROI va sobre el capital que de verdad "
+                  + "bloqueas —el strike menos la prima—, no sobre el margen."}>
+                {!R.elegido ? (
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: T.gold, lineHeight: 1.55 }}>
+                    <b>No se elige ninguna.</b> {R.motivo}. Antes de proponerte un contrato que no
+                    cumple tu criterio, no se propone nada.
+                  </div>
+                ) : (<>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>{"P" + money2(R.K)}</span>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                      {ibkrDate(datos.roiVto) + " · " + datos.roiDte + "d · delta " + conMenos(R.delta.toFixed(2))}
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
+                    <Tile l="ROI al bid" x={isFinite(R.roiBid) ? money2(R.roiBid) + "%" : "—"} col={T.green} />
+                    <Tile l="ROI anualizado" x={isFinite(R.roiAnualBid) ? money(R.roiAnualBid) + "%" : "—"} col={T.green} />
+                    <Tile l="Punto de equilibrio" x={isFinite(R.bep) ? precio(R.bep) : "—"} />
+                  </div>
+                  <div style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.inset, fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.6 }}>
+                    {"bid "}<span style={{ color: T.ink }}>{isFinite(R.bid) ? precio(R.bid) : "—"}</span>
+                    {" · medio "}<span style={{ color: T.ink }}>{isFinite(R.medio) ? precio(R.medio) : "—"}</span>
+                    {isFinite(R.roiMedio) ? " (ROI " + money2(R.roiMedio) + "%)" : ""}
+                    {isFinite(R.spreadPct) ? <>{" · horquilla "}<span style={{ color: R.spreadPct > 10 ? T.gold : T.ink }}>{money2(R.spreadPct) + "%"}</span></> : null}
+                  </div>
+                  {/* el movimiento esperado: a cuántos "movimientos normales" está el strike */}
+                  <div style={{ background: isFinite(R.kEnEm) && R.kEnEm >= 1 ? T.tileGreen : T.tileAmber, borderRadius: 12, padding: "10px 11px" }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.55, fontVariantNumeric: "tabular-nums" }}>
+                      {isFinite(R.kEnEm) ? (<>
+                        {"El strike está a "}
+                        <span style={{ color: R.kEnEm >= 1 ? T.green : T.gold, fontWeight: 800 }}>{R.kEnEm.toFixed(2)} movimientos esperados</span>
+                        {" por debajo del precio"}
+                        {R.kEnEm >= 1 ? ". Cómodo: haría falta más de un movimiento normal para llegar."
+                                      : ". Justo: un movimiento normal se planta ahí."}
+                        <br />
+                        <span style={{ fontSize: 10.5, fontWeight: 600 }}>
+                          {"movimiento esperado ±" + precio(R.em) + " (precio × IV × raíz del plazo)"}
+                        </span>
+                      </>) : "No se puede calcular el movimiento esperado: falta la volatilidad del contrato."}
+                    </div>
+                  </div>
+                  {isFinite(ivhvR) && (
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5 }}>
+                      {"IV/HV "}<span style={{ fontWeight: 800, color: ivhvR < 0.85 ? T.red : T.ink }}>{ivhvR.toFixed(2)}</span>
+                      {ivhvR >= 0.90 && ivhvR <= 1.15
+                        ? " — zona NEUTRAL: ni cara ni barata, no penaliza."
+                        : ivhvR < 0.85 ? " — por debajo de 0,85: la prima está barata de verdad."
+                        : " — por encima de lo normal: la prima está cara, que a ti te favorece."}
+                      {isFinite(n(v.iv_rank)) ? " Con el IV rank en " + n(v.iv_rank).toFixed(0) + ", que es con lo que hay que leerlo: nunca solo." : ""}
+                      {" Y ojo, una histórica alta puede venir de subidas, que no son el riesgo del que vende puts."}
+                    </div>
+                  )}
+                  {datos.roiFuera && (
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: T.gold, lineHeight: 1.5 }}>
+                      Ningún vencimiento cae entre 30 y 45 días. Este es el más cercano al borde, a {datos.roiDte} días.
+                    </div>
+                  )}
+                </>)}
+              </Ficha>
+            );
+          })()}
+
           {/* ---------- valoración (v4.94) ---------- */}
           {datos.val && (() => {
             const V = datos.val;
@@ -9870,8 +10188,9 @@ function AnalisisContent({ puente }) {
                 nota="Fundamentales tal y como los manda moomoo, sin retocar. Son de la empresa, no del mercado de hoy: cambian cuando publica resultados, no cada tarde.">
                 {!V.fundamentales_validos ? (
                   <div style={{ fontSize: 11.5, fontWeight: 700, color: T.gold, lineHeight: 1.5 }}>
-                    Tu servidor marca estos fundamentales como no válidos para {datos.tkr}. Suele pasar con
-                    ETFs y fondos, que no tienen beneficios ni valor contable — no es una avería.
+                    Tu servidor marca estos fundamentales como no válidos para {datos.tkr}. Pasa con ETFs
+                    y fondos, que no tienen beneficios ni valor contable, y también con empresas que
+                    acaban de cerrar año fiscal, que devuelven la fila entera a cero. No es una avería.
                   </div>
                 ) : (<>
                   <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
@@ -9899,11 +10218,164 @@ function AnalisisContent({ puente }) {
                     {isFinite(n(V.valor_contable_accion)) ? <>{"valor contable "}<span style={{ color: T.ink }}>{"$" + money2(n(V.valor_contable_accion))}</span>{" por acción · "}</> : null}
                     {isFinite(n(V.rotacion)) ? <>{"rotación "}<span style={{ color: T.ink }}>{money2(n(V.rotacion)) + "%"}</span></> : null}
                   </div>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-                    Lo que tu bot llama <b>valoración</b> lleva además el precio objetivo de los analistas.
-                    Eso no lo da OpenD: no es dato de mercado sino opinión publicada, y hace falta otra fuente.
-                  </div>
                 </>)}
+
+                {/* ---------- la ficha profunda (v4.97) ----------
+                    Va DENTRO del mismo bloque, encima de los múltiplos del snapshot: son dos capas
+                    de lo mismo, no dos temas. Y tarda: la primera vez del día el servidor tiene que
+                    generarla, así que aquí se dice en qué punto está en vez de dejar un hueco. */}
+                {ficha && ficha.estado !== "ok" && (
+                  <div style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.inset,
+                    fontSize: 11, fontWeight: 700, lineHeight: 1.5,
+                    color: ficha.estado === "error" ? T.gold : T.sub }}>
+                    {ficha.estado === "generando"
+                      ? "Generando la ficha profunda en el servidor (intento " + ficha.intento + "). Tarda entre 20 y 40 segundos la primera vez de cada día; el resto de la pantalla ya está."
+                      : ficha.estado === "pidiendo" ? "Pidiendo la ficha profunda…"
+                      : ficha.estado === "tarda" ? "La ficha profunda está tardando más de lo normal. Vuelve a analizar el ticker en un minuto."
+                      : "Sin ficha profunda: " + (ficha.error || "el servidor no contestó")}
+                  </div>
+                )}
+                {ficha && ficha.estado === "ok" && (() => {
+                  const F = ficha.ficha || {};
+                  const fin = F.financiero || {}, bal = F.balance || {}, mul = F.multiplos || {};
+                  const vlr = F.valoracion || {}, own = F.ownership || {};
+                  const per = (fin.periodos || []).slice(0, 6);
+                  const dias = isFinite(n(ficha.edad_s)) ? n(ficha.edad_s) / 86400 : NaN;
+                  /* un múltiplo contra su propio histórico: es lo ÚNICO que lo convierte en lectura.
+                     Un EV/EBITDA de 14 no dice nada; un 14 cuando su mediana es 9, sí. */
+                  const Historico = ({ etiqueta, h, sufijo, alRevés }) => {
+                    if (!h || !isFinite(n(h.actual)) || !isFinite(n(h.min)) || !isFinite(n(h.max)) || n(h.max) <= n(h.min)) return null;
+                    const pos = Math.max(0, Math.min(1, (n(h.actual) - n(h.min)) / (n(h.max) - n(h.min))));
+                    const med = Math.max(0, Math.min(1, (n(h.mediana) - n(h.min)) / (n(h.max) - n(h.min))));
+                    const caro = alRevés ? pos < med : pos > med;
+                    return (
+                      <div style={{ display: "grid", gap: 4 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                          <span>{etiqueta}</span>
+                          <span style={{ color: caro ? T.gold : T.green, fontWeight: 800 }}>
+                            {money2(n(h.actual)) + (sufijo || "")}
+                            <span style={{ color: T.sub, fontWeight: 600 }}>{" · mediana " + money2(n(h.mediana)) + (sufijo || "")}</span>
+                          </span>
+                        </div>
+                        <div style={{ position: "relative", height: 8, borderRadius: 4, background: T.tile, boxShadow: T.inset }}>
+                          <div style={{ position: "absolute", left: (med * 100).toFixed(1) + "%", top: -1, width: 2, height: 10, background: T.sub, opacity: 0.7 }} />
+                          <div style={{ position: "absolute", left: "calc(" + (pos * 100).toFixed(1) + "% - 3px)", top: -2,
+                            width: 6, height: 12, borderRadius: 3, background: caro ? T.gold : T.green }} />
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, fontWeight: 600, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                          <span>{money2(n(h.min)) + (sufijo || "")}</span>
+                          <span>{isFinite(n(h.n)) ? n(h.n) + " observaciones" : ""}</span>
+                          <span>{money2(n(h.max)) + (sufijo || "")}</span>
+                        </div>
+                      </div>
+                    );
+                  };
+                  return (<>
+                    <div style={{ height: 1, background: T.line, opacity: 0.6, margin: "2px 0" }} />
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>Ficha profunda</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: isFinite(dias) && dias > 7 ? T.gold : T.sub }}>
+                        {isFinite(dias)
+                          ? (dias < 1 ? "generada hoy" : "generada hace " + Math.round(dias) + (Math.round(dias) === 1 ? " día" : " días"))
+                          : ""}
+                      </span>
+                    </div>
+
+                    {per.length > 0 && isFinite(n((fin.revenue || [])[0])) && (
+                      <div style={{ display: "grid", gap: 5 }}>
+                        <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                          {/* "4 son 1 años" quedaba mal escrito y es de las cosas que le hacen
+                              dudar de todo lo demás de la pantalla */}
+                          Por trimestres — {per.length} son {(() => {
+                            const a = per.length / 4;
+                            return a === 1 ? "un año" : (Math.round(a * 10) / 10).toString().replace(".", ",") + " años";
+                          })()}
+                        </span>
+                        {[["Ingresos", fin.revenue], ["Beneficio", fin.net_income], ["Caja libre", fin.fcf]].map(([et, serieF]) => (
+                          (serieF || []).length ? (
+                            <div key={et} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, color: T.sub }}>
+                              <span style={{ flex: "none", width: 62 }}>{et}</span>
+                              <span style={{ flex: 1, minWidth: 0, color: T.ink, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {per.map((_, i) => (isFinite(n(serieF[i])) ? "$" + gordo(n(serieF[i])) : "—")).join(" · ")}
+                              </span>
+                            </div>
+                          ) : null
+                        ))}
+                        <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                          {per.join(" · ")}
+                          {isFinite(n(fin.margen_neto_pct)) ? " · margen neto " + money2(n(fin.margen_neto_pct)) + "%" : ""}
+                          {isFinite(n(fin.margen_fcf_pct)) ? " · margen de caja " + money2(n(fin.margen_fcf_pct)) + "%" : ""}
+                        </div>
+                      </div>
+                    )}
+
+                    {(isFinite(n(bal.deuda_neta)) || isFinite(n(mul.net_debt_ebitda))) && (
+                      <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset, fontSize: 11, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.55 }}>
+                        {isFinite(n(bal.deuda_neta)) ? <>{"Deuda neta "}<span style={{ color: n(bal.deuda_neta) > 0 ? T.ink : T.green }}>{"$" + gordo(n(bal.deuda_neta))}</span></> : null}
+                        {isFinite(n(bal.ebitda_ttm)) ? <>{" · EBITDA "}<span style={{ color: T.ink }}>{"$" + gordo(n(bal.ebitda_ttm))}</span></> : null}
+                        {isFinite(n(mul.net_debt_ebitda)) ? <>{" · deuda/EBITDA "}
+                          <span style={{ color: n(mul.net_debt_ebitda) > 3 ? T.gold : T.green, fontWeight: 800 }}>{money2(n(mul.net_debt_ebitda))}</span></> : null}
+                      </div>
+                    )}
+
+                    <Historico etiqueta="EV / EBITDA" h={mul.hist_ev_ebitda} />
+                    <Historico etiqueta="Rentabilidad de la caja libre" h={mul.hist_fcf_yield} sufijo="%" alRevés />
+
+                    {(isFinite(n(vlr.morningstar_fair_value)) || vlr.moat) && (
+                      <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset }}>
+                        <div style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Según Morningstar</div>
+                        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.55 }}>
+                          {isFinite(n(vlr.morningstar_fair_value)) ? <>{"valor razonable "}<span style={{ color: T.ink, fontWeight: 800 }}>{"$" + money2(n(vlr.morningstar_fair_value))}</span></> : null}
+                          {vlr.moat ? " · foso " + vlr.moat : ""}
+                          {vlr.incertidumbre ? " · incertidumbre " + vlr.incertidumbre : ""}
+                        </div>
+                      </div>
+                    )}
+
+                    {vlr.consenso_analistas && isFinite(n(vlr.consenso_analistas.medio)) && (() => {
+                      const C = vlr.consenso_analistas;
+                      return (
+                        <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset }}>
+                          <div style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                            Consenso de analistas{isFinite(n(C.n)) ? " · " + n(C.n) : ""}
+                          </div>
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.55 }}>
+                            {"objetivo medio "}<span style={{ color: T.ink, fontWeight: 800 }}>{"$" + money2(n(C.medio))}</span>
+                            {isFinite(n(C.bajo)) && isFinite(n(C.alto)) ? " · de $" + money2(n(C.bajo)) + " a $" + money2(n(C.alto)) : ""}
+                            {isFinite(n(C.buy_pct)) ? <br /> : null}
+                            {isFinite(n(C.buy_pct)) ? (
+                              <span>
+                                <span style={{ color: T.green, fontWeight: 800 }}>{money(n(C.buy_pct)) + "% comprar"}</span>
+                                {isFinite(n(C.hold_pct)) ? " · " + money(n(C.hold_pct)) + "% mantener" : ""}
+                                {isFinite(n(C.sell_pct)) ? <span style={{ color: T.red }}>{" · " + money(n(C.sell_pct)) + "% vender"}</span> : null}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {(isFinite(n(own.instit_pct)) || isFinite(n(own.smart_money_m))) && (
+                      <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.5 }}>
+                        {isFinite(n(own.instit_pct)) ? <>{"Institucional "}<span style={{ color: T.ink }}>{money2(n(own.instit_pct)) + "%"}</span></> : null}
+                        {isFinite(n(own.instit_chg)) ? <span style={{ color: n(own.instit_chg) >= 0 ? T.green : T.red }}>{" (" + (n(own.instit_chg) >= 0 ? "+" : "−") + money2(Math.abs(n(own.instit_chg))) + ")"}</span> : null}
+                        {isFinite(n(own.instituciones)) ? " · " + money(n(own.instituciones)) + " instituciones" : ""}
+                        {isFinite(n(own.smart_money_m)) ? " · smart money $" + money2(n(own.smart_money_m)) + "M" : ""}
+                      </div>
+                    )}
+
+                    {/* El DCF de la ficha NO se pinta, y no es un olvido: sin ajustar por retribución
+                        en acciones el número engaña, y un número con etiqueta de "valor razonable"
+                        que engaña es peor que ninguno. El valor razonable se decide fuera de la app.
+                        Si algún día llega un campo ajustado, vendrá con OTRO nombre a propósito. */}
+                    {isFinite(n(vlr.dcf_base)) && (
+                      <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                        La ficha trae también un DCF. No se enseña a propósito: sin ajustar por la
+                        retribución en acciones, engaña. El valor razonable lo decides tú fuera de aquí.
+                      </div>
+                    )}
+                  </>);
+                })()}
               </Ficha>
             );
           })()}
@@ -9915,7 +10387,19 @@ function AnalisisContent({ puente }) {
             return (
               <Ficha titulo="Niveles: soportes, resistencias y medias"
                 nota={"Sobre velas diarias de " + (datos.velasFuente || "fuera de moomoo") + ", que NO gastan cupo de tu servidor. Los soportes y resistencias son sitios donde el precio ya se dio la vuelta (máximos o mínimos que superan a los " + N.ventanaPivote + " días de cada lado), agrupados por cercanía; el número dice cuántas veces se tocaron. Es una definición, no una ley: con otra ventana salen otros niveles."}>
-                <GraficoNiveles niveles={N} spot={datos.spot} />
+                {/* v4.97: diario y semanal. El semanal se agrega en la app desde las MISMAS velas
+                    diarias, así que cambiar de pestaña no cuesta ni una llamada. */}
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[["diario", "Diario · 9 meses"], ["semanal", "Semanal · 3 años"]].map(([id, et]) => (
+                    <button key={id} type="button" onClick={() => setVista(id)}
+                      style={{ border: "none", borderRadius: 999, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer",
+                        background: vista === id ? T.dark : T.tile, color: vista === id ? "#fff" : T.sub,
+                        boxShadow: vista === id ? "none" : T.raiseSm }}>{et}</button>
+                  ))}
+                </div>
+                <GraficoNiveles niveles={N} spot={datos.spot} muros={muros}
+                  serie={vista === "semanal" ? datos.semanal : datos.velas}
+                  sesiones={vista === "semanal" ? 156 : 190} />
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
                   <div style={{ background: T.tileRed, borderRadius: 14, padding: "10px 11px" }}>
                     <div style={{ fontSize: 10, fontWeight: 800, color: T.red, textTransform: "uppercase", letterSpacing: 0.5 }}>Resistencias</div>
@@ -9972,14 +10456,24 @@ function AnalisisContent({ puente }) {
             nota="Los muros son DATO: gamma e interés abierto los manda tu servidor. El punto de giro es un MODELO — hay que revaluar la gamma a otros precios y eso es Black-Scholes. Y todo ello sobre un SUPUESTO del sector: creadores de mercado largos de calls y cortos de puts. Nadie publica su inventario real; si el supuesto no se cumple, el signo se da la vuelta.">
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
               <div style={{ background: T.tileGreen, borderRadius: 14, padding: "11px 12px" }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: T.green, textTransform: "uppercase", letterSpacing: 0.5 }}>Muro call</div>
-                <div style={{ fontSize: 19, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>{datos.muroCall ? "$" + money2(datos.muroCall.k) : "—"}</div>
-                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.35 }}>{datos.muroCall ? "techo que cuesta pasar · OI " + money(datos.muroCall.callOi) : "sin gamma suficiente"}</div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: T.green, textTransform: "uppercase", letterSpacing: 0.5 }}>Muros call</div>
+                {murosCall.length ? murosCall.map((f, i) => (
+                  <div key={f.k} style={{ marginTop: i ? 4 : 0 }}>
+                    <span style={{ fontSize: i ? 14 : 19, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>{"$" + money2(f.k)}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: T.sub }}>{" OI " + money(f.callOi)}</span>
+                  </div>
+                )) : <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>sin gamma suficiente</div>}
+                <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.35, marginTop: 3 }}>techo que cuesta pasar</div>
               </div>
               <div style={{ background: T.tileRed, borderRadius: 14, padding: "11px 12px" }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: T.red, textTransform: "uppercase", letterSpacing: 0.5 }}>Muro put</div>
-                <div style={{ fontSize: 19, fontWeight: 800, color: T.red, fontVariantNumeric: "tabular-nums" }}>{datos.muroPut ? "$" + money2(datos.muroPut.k) : "—"}</div>
-                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.35 }}>{datos.muroPut ? "suelo donde suele frenar · OI " + money(datos.muroPut.putOi) : "sin gamma suficiente"}</div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: T.red, textTransform: "uppercase", letterSpacing: 0.5 }}>Muros put</div>
+                {murosPut.length ? murosPut.map((f, i) => (
+                  <div key={f.k} style={{ marginTop: i ? 4 : 0 }}>
+                    <span style={{ fontSize: i ? 14 : 19, fontWeight: 800, color: T.red, fontVariantNumeric: "tabular-nums" }}>{"$" + money2(f.k)}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: T.sub }}>{" OI " + money(f.putOi)}</span>
+                  </div>
+                )) : <div style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>sin gamma suficiente</div>}
+                <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.35, marginTop: 3 }}>suelo donde suele frenar</div>
               </div>
             </div>
             <div style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.inset, fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.6, fontVariantNumeric: "tabular-nums" }}>
@@ -10062,37 +10556,67 @@ function AnalisisContent({ puente }) {
             </Ficha>
           )}
 
-          {/* ---------- flujo ---------- */}
-          <Ficha titulo="Flujo de opciones de hoy"
-            nota="Volumen de la sesión y dinero movido. OJO: esto NO distingue comprado de vendido — no se sabe quién fue el agresor. Es una pista, no una dirección.">
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 9 }}>
-              {[["P/C por volumen", isFinite(pc) ? pc.toFixed(2) : "—", isFinite(pc) ? (pc < 0.7 ? T.green : pc > 1.1 ? T.red : T.ink) : T.sub],
-                ["Prima en calls", "$" + millones(datos.primaCall), T.green],
-                ["Prima en puts", "$" + millones(datos.primaPut), T.red]].map(([l, x, col]) => (
-                <div key={l} style={{ background: T.tile, borderRadius: 12, padding: "10px 8px", boxShadow: T.inset, textAlign: "center" }}>
-                  <div style={{ fontSize: 15.5, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums" }}>{x}</div>
-                  <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 3, lineHeight: 1.25, minHeight: "2.5em", display: "flex", alignItems: "center", justifyContent: "center" }}>{l}</div>
-                </div>
-              ))}
-            </div>
-            {datos.tops.length > 0 && (
-              <div style={{ display: "grid", gap: 5 }}>
-                <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Lo más negociado</span>
-                {datos.tops.map((x, i) => (
-                  <div key={i} style={{ background: T.tile, borderRadius: 10, padding: "7px 9px", boxShadow: T.inset,
-                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 800, color: x.esCall ? T.green : T.red, minWidth: 0 }}>
-                      {(x.esCall ? "C" : "P") + money2(n(x.c.strike))}
-                      <span style={{ color: T.sub, fontWeight: 600 }}>
-                        {" · vol " + money(x.vol) + (isFinite(x.vOI) ? " · v/OI " + x.vOI.toFixed(1) : "")}
+          {/* ---------- flujo por horizontes (v4.97) ---------- */}
+          {datos.flujo && datos.flujo.length > 0 && (
+            <Ficha titulo="Flujo de opciones de hoy"
+              nota="Hacia dónde se mueve el dinero, separado por plazo. OJO, y es lo primero que hay que saber: esto NO distingue comprado de vendido — no se sabe quién fue el agresor de cada cruce. Es un rastro, no una dirección. Y el volumen es de la sesión de HOY mientras que el interés abierto es del cierre de AYER: por eso una 'apertura' es una sospecha fundada, no un hecho.">
+              {datos.flujo.map((h) => {
+                const R = h.r;
+                const col = R.veredicto === "ALCISTA" ? T.green : R.veredicto === "BAJISTA" ? T.red : T.sub;
+                const fondo = R.veredicto === "ALCISTA" ? T.tileGreen : R.veredicto === "BAJISTA" ? T.tileRed : T.tile;
+                return (
+                  <div key={h.id} style={{ background: fondo, borderRadius: 14, padding: "11px 12px", display: "grid", gap: 8,
+                    boxShadow: R.veredicto === "NEUTRAL" ? T.inset : "none" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>
+                        {h.etiqueta}
+                        <span style={{ fontSize: 10, fontWeight: 600, color: T.sub }}>{" · " + h.detalle + " · " + h.vtos.length + (h.vtos.length === 1 ? " vencimiento" : " vencimientos")}</span>
                       </span>
-                    </span>
-                    <span style={{ flex: "none", fontSize: 11.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${millones(x.prima)}</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums" }}>
+                        {R.veredicto + "  " + (R.score >= 0 ? "+" : "−") + Math.abs(R.score)}
+                      </span>
+                    </div>
+                    {/* los CUATRO votos, uno a uno. Un semáforo que no dice quién votó qué no se
+                        puede discutir, y este va a decidir dinero. */}
+                    <div style={{ display: "grid", gap: 3 }}>
+                      {R.votos.map((x) => (
+                        <div key={x.nombre} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 600, color: T.sub }}>
+                          <span style={{ flex: "none", width: 15, textAlign: "center", fontWeight: 800,
+                            color: x.voto > 0 ? T.green : x.voto < 0 ? T.red : T.sub }}>
+                            {x.voto > 0 ? "+1" : x.voto < 0 ? "−1" : "0"}
+                          </span>
+                          <span style={{ flex: 1, minWidth: 0 }}>{x.nombre}</span>
+                          <span style={{ flex: "none", color: T.ink, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{x.valor}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {R.tops.length > 0 && (
+                      <div style={{ display: "grid", gap: 3 }}>
+                        {R.tops.map((x, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, fontSize: 10.5, fontWeight: 700 }}>
+                            <span style={{ color: x.esCall ? T.green : T.red, minWidth: 0 }}>
+                              {(x.esCall ? "C" : "P") + money2(x.k)}
+                              <span style={{ color: T.sub, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                                {/* con un decimal, un 0,02 sale como "0.0" y parece que no hay dato */}
+                                {" · vol " + money(x.vol) + (isFinite(x.vOI) ? " · v/OI " + (x.vOI < 1 ? x.vOI.toFixed(2) : x.vOI.toFixed(1)) : "")}
+                              </span>
+                            </span>
+                            {x.apertura && (
+                              <span style={{ flex: "none", fontSize: 9, fontWeight: 800, color: T.purple, background: T.tilePurple, borderRadius: 5, padding: "2px 5px" }}>APERTURA</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                );
+              })}
+              <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                <b>APERTURA</b> = más de 200 contratos negociados y más de vez y media el interés abierto
+                que había: casi seguro posición nueva, no cierre de otra.
               </div>
-            )}
-          </Ficha>
+            </Ficha>
+          )}
 
           {/* ---------- dinero grande (v4.94) ---------- */}
           {datos.dinero && (() => {
@@ -10153,10 +10677,10 @@ function AnalisisContent({ puente }) {
             </div>
           )}
           <div style={{ background: T.tile, borderRadius: 14, padding: "11px 13px", boxShadow: T.inset, fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.55 }}>
-            Siete llamadas por análisis y ninguna por strike. Las velas van por Yahoo a propósito: el
-            cupo de histórico de moomoo es de 100 símbolos cada siete días <b>para toda la cuenta</b>, y
-            se comparte con el barrido de sectores. Lo único que sigue sin estar es el <b>precio objetivo
-            de los analistas</b>: no es dato de mercado, es opinión publicada, y hace falta otra fuente.
+            Once llamadas por análisis y ninguna por strike: una sola cadena para el ROI, el flujo y la
+            gamma, una sola petición de velas que sirve para el diario y el semanal, y los contratos en
+            lotes. Las velas no van por moomoo a propósito: su cupo de histórico es de 100 símbolos cada
+            siete días <b>para toda la cuenta</b>, compartido con el barrido de sectores del servidor.
           </div>
         </>);
       })()}
