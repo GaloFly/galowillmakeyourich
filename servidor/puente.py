@@ -689,6 +689,10 @@ def subyacente():
             "iv_rank": num("iv_rank"),
             "iv_percentil": num("iv_percentile"),
             "iv_previa": num("pre_iv"),
+            # v4.93: volumen y OI agregados de calls y puts. Vienen en la MISMA llamada que ya se
+            # hacía para la volatilidad, así que el P/C del subyacente sale a coste cero.
+            "call_volumen": num("call_volume"), "put_volumen": num("put_volume"),
+            "call_oi": num("call_open_interest"), "put_oi": num("put_open_interest"),
             "hv_30d": num("hv_30d"), "hv_30d_percentil": num("hv_30d_percentile"),
             "hv_60d": num("hv_60d"), "hv_90d": num("hv_90d"),
             "hv_365d": num("hv_365d"),
