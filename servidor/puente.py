@@ -44,10 +44,14 @@ Y lo de siempre:
     pueda avisarlo en pantalla en vez de aparentar que va en vivo.
 """
 
+import json
 import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.error import HTTPError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 try:
     from zoneinfo import ZoneInfo
@@ -83,6 +87,10 @@ TTL_SALUD = 30
 # v4.87: la volatilidad del subyacente. La histórica es un dato diario (no se mueve en toda la
 # sesión) y la implícita agregada se mueve poco; 10 min evita gastar cupo compartido en cada búsqueda.
 TTL_SUBYACENTE = int(os.environ.get("BLOQUES_TTL_SUBYACENTE", "600"))
+# v4.94: el reparto de capital por tamaño de orden es un acumulado del día, no un tick.
+TTL_DINERO = int(os.environ.get("BLOQUES_TTL_DINERO", "300"))
+# v4.94: velas diarias de Yahoo. La de hoy cambia durante la sesión; las anteriores ya no.
+TTL_VELAS = int(os.environ.get("BLOQUES_TTL_VELAS", "900"))
 
 # Presupuesto de suscripciones de ESTE puente. El cupo real es de la cuenta y se comparte;
 # aquí nos limitamos a un trozo pequeño y devolvemos lo que no se usa.
@@ -702,6 +710,224 @@ def subyacente():
     # como para gastar el cupo compartido en cada búsqueda.
     payload, http = con_cache("subyacente:" + codigo, TTL_SUBYACENTE, "quote", traer)
     return jsonify(payload), http
+
+
+@app.route("/valoracion")
+def valoracion():
+    """
+    Fundamentales del subyacente: capitalización, PER, P/VC, BPA, dividendo y rango de 52 semanas.
+    /valoracion?codigo=US.MRVL
+
+    Salen del MISMO `get_market_snapshot` que ya se usa para las opciones, sin ninguna llamada de
+    otro tipo. La razón por la que no se veían: pedido sobre un CONTRATO, ese bloque llega con
+    `equity_valid False` y los dieciséis campos a nan — así salió en el volcado de las 142 columnas
+    del 17-ago-2026. Pedido sobre el código de la ACCIÓN, el bloque es válido y trae el dato.
+
+    El snapshot no gasta suscripción (su límite es 60 llamadas / 30 s, y aquí se pide una).
+    """
+    codigo = request.args.get("codigo", "").strip().upper()
+    if not codigo:
+        return error("Falta el parámetro 'codigo'. Ejemplo: /valoracion?codigo=US.MRVL")
+
+    def traer():
+        ret, data = contexto().get_market_snapshot([codigo])
+        if ret != RET_OK:
+            return {"ok": False, "error": f"OpenD devolvió un error al pedir los fundamentales: {data}"}, 502
+        filas = data.to_dict("records")
+        if not filas:
+            return {"ok": False, "error": f"OpenD no devolvió nada para {codigo}."}, 404
+        f = filas[0]
+
+        def num(k):
+            v = f.get(k)
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return None if v != v else v  # nan
+
+        valido = bool(f.get("equity_valid"))
+        salida = {
+            "codigo": f.get("code") or codigo,
+            "nombre": f.get("name"),
+            # `equity_valid` se devuelve tal cual: si es False, la app lo dice en vez de pintar
+            # una ficha vacía. Un hueco explicado no se confunde con una avería.
+            "fundamentales_validos": valido,
+            "ultimo": num("last_price"), "cierre_anterior": num("prev_close_price"),
+            "capitalizacion": num("total_market_val"), "capitalizacion_flotante": num("circular_market_val"),
+            "acciones_emitidas": num("issued_shares"), "acciones_en_circulacion": num("outstanding_shares"),
+            "per": num("pe_ratio"), "per_ttm": num("pe_ttm_ratio"), "p_vc": num("pb_ratio"),
+            "rentabilidad_beneficio": num("ey_ratio"),
+            "bpa": num("earning_per_share"), "valor_contable_accion": num("net_asset_per_share"),
+            "patrimonio": num("net_asset"), "beneficio": num("net_profit"),
+            "dividendo_ttm": num("dividend_ttm"), "dividendo_ttm_pct": num("dividend_ratio_ttm"),
+            "dividendo_ultimo_ejercicio": num("dividend_lfy"), "dividendo_ultimo_ejercicio_pct": num("dividend_lfy_ratio"),
+            "max_52s": num("highest52weeks_price"), "min_52s": num("lowest52weeks_price"),
+            "max_historico": num("highest_history_price"), "min_historico": num("lowest_history_price"),
+            "rotacion": num("turnover_rate"), "ratio_volumen": num("volume_ratio"), "amplitud": num("amplitude"),
+            "fecha_dato": f.get("update_time"),
+        }
+        return {"ok": True, "valoracion": salida}, 200
+
+    payload, http = con_cache("valoracion:" + codigo, TTL_SUBYACENTE, "quote", traer)
+    return jsonify(payload), http
+
+
+@app.route("/dinero")
+def dinero():
+    """
+    De dónde viene el dinero, repartido por TAMAÑO de orden — lo que el bot de Telegram llama
+    "flujo por tamaño".  /dinero?codigo=US.MRVL
+
+    Es `get_capital_distribution`, del mismo OpenD. Mide dinero que ENTRA y que SALE en la sesión
+    separado por el tamaño de la orden que lo movió: las órdenes grandes son el rastro de quien
+    mueve tamaño, las pequeñas el del minorista. Ojo con lo que NO es: sigue sin decir quién fue el
+    agresor de cada cruce, así que es una pista, no una dirección.
+
+    Se devuelven además los nombres de columna que mandó OpenD (`columnas`). Si algún día su
+    librería los renombra, la app enseña la lista en vez de una ficha vacía y se arregla en un
+    minuto en lugar de a ciegas.
+    """
+    codigo = request.args.get("codigo", "").strip().upper()
+    if not codigo:
+        return error("Falta el parámetro 'codigo'. Ejemplo: /dinero?codigo=US.MRVL")
+
+    def traer():
+        ctx = contexto()
+        if not hasattr(ctx, "get_capital_distribution"):
+            return {"ok": False, "error": "Esta versión de la librería de moomoo no tiene "
+                                          "get_capital_distribution. Actualiza con: pip install -U futu-api"}, 501
+        ret, data = ctx.get_capital_distribution(codigo)
+        if ret != RET_OK:
+            return {"ok": False, "error": f"OpenD devolvió un error al pedir el reparto de capital: {data}"}, 502
+        filas = data.to_dict("records")
+        if not filas:
+            return {"ok": False, "error": f"OpenD no devolvió reparto de capital para {codigo}."}, 404
+        f = filas[0]
+
+        def num(*claves):
+            """Acepta varios nombres para el mismo concepto: la librería los ha cambiado alguna vez."""
+            for k in claves:
+                if k in f:
+                    try:
+                        v = float(f.get(k))
+                    except (TypeError, ValueError):
+                        continue
+                    if v == v:  # descarta nan
+                        return v
+            return None
+
+        entra = {
+            "muy_grande": num("capital_in_super", "capital_in_very_big"),
+            "grande": num("capital_in_big"),
+            "media": num("capital_in_mid", "capital_in_middle"),
+            "pequena": num("capital_in_small", "capital_in_sml"),
+        }
+        sale = {
+            "muy_grande": num("capital_out_super", "capital_out_very_big"),
+            "grande": num("capital_out_big"),
+            "media": num("capital_out_mid", "capital_out_middle"),
+            "pequena": num("capital_out_small", "capital_out_sml"),
+        }
+        return {"ok": True, "dinero": {
+            "codigo": f.get("code") or codigo,
+            "entra": entra, "sale": sale,
+            "fecha_dato": f.get("update_time"),
+        }, "columnas": sorted(f.keys())}, 200
+
+    # 5 min: es un acumulado del día, no un tick. Refrescarlo más a menudo no añade nada y sí gasta.
+    payload, http = con_cache("dinero:" + codigo, TTL_DINERO, "quote", traer)
+    return jsonify(payload), http
+
+
+def velas_de_yahoo(crudo):
+    """
+    Convierte la respuesta del gráfico de Yahoo en una lista de velas.
+    Devuelve None si el símbolo no existe (Yahoo contesta con `result: null` y un `error`),
+    y una lista —que puede quedar vacía— si contesta pero sin velas utilizables.
+
+    Va aparte de la ruta para poder probarla sin salir a internet (pruebas/velas-yahoo.py):
+    Yahoo manda HUECOS —días con `null` en todos los campos, y a veces un cierre suelto sin
+    máximo ni mínimo—, y esa es justo la parte que se puede escribir mal sin que se note.
+    """
+    res = ((crudo.get("chart") or {}).get("result") or [None])[0]
+    if not res:
+        return None
+    tiempos = res.get("timestamp") or []
+    q = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+    salida = []
+    for i, ts in enumerate(tiempos):
+        def campo(nombre):
+            lista = q.get(nombre) or []
+            v = lista[i] if i < len(lista) else None
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return None if v != v else v  # nan
+        cierre = campo("close")
+        if cierre is None:
+            continue  # una vela sin cierre no es una vela
+        salida.append({"f": datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d"),
+                       "o": campo("open"), "h": campo("high"), "l": campo("low"),
+                       "c": cierre, "v": campo("volume")})
+    return salida
+
+
+@app.route("/velas")
+def velas():
+    """
+    Velas diarias para los NIVELES (soportes, resistencias, medias).  /velas?codigo=US.MRVL&rango=1y
+
+    Esta ruta NO toca OpenD: ni suscripción, ni ritmo, ni ventana de root. Y es a propósito.
+
+    El cupo de histórico de Futu (`request_history_kline`) es de **100 símbolos distintos cada 7
+    días para toda la cuenta**, y root ya gasta 12 con el barrido nocturno de sectores (comprobado
+    el 18-ago-2026: 12 consumidos, 88 libres). Un ticker mirado hoy queda apuntado una semana
+    entera, así que una tarde de análisis se comería el cupo de los tres sistemas de la máquina.
+    Yahoo da la misma vela diaria de cierre y no gasta nada de Futu.
+
+    Lo que se devuelve son velas y ya: las medias, los pivotes y los retrocesos los calcula la app.
+    Aquí solo viaja el DATO.
+    """
+    codigo = request.args.get("codigo", "").strip().upper()
+    if not codigo:
+        return error("Falta el parámetro 'codigo'. Ejemplo: /velas?codigo=US.MRVL")
+    # "US.MRVL" -> "MRVL": Yahoo no usa el prefijo de mercado de Futu
+    simbolo = codigo.split(".")[-1]
+    rango = request.args.get("rango", "1y").strip().lower()
+    if rango not in ("1mo", "3mo", "6mo", "1y", "2y", "5y"):
+        return error("Rango no válido. Usa uno de: 1mo, 3mo, 6mo, 1y, 2y, 5y.")
+
+    clave = f"velas:{simbolo}:{rango}"
+    valor, edad = cache_get(clave, TTL_VELAS)
+    if valor is not None:
+        return jsonify({**valor, "cacheado": True, "edad_s": round(edad, 1)})
+
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(simbolo)}"
+           f"?range={rango}&interval=1d")
+    # Sin User-Agent de navegador, Yahoo responde 429 a un cliente de Python.
+    pet = Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+                                "Accept": "application/json"})
+    try:
+        with urlopen(pet, timeout=12) as r:
+            crudo = json.loads(r.read().decode("utf-8"))
+    except HTTPError as e:
+        return error(f"Yahoo respondió {e.code} al pedir las velas de {simbolo}.", 502)
+    except Exception as e:
+        return error(f"No se pudieron pedir las velas de {simbolo} a Yahoo: {e}", 502)
+
+    salida = velas_de_yahoo(crudo)
+    if salida is None:
+        err = ((crudo.get("chart") or {}).get("error") or {}).get("description")
+        return error(f"Yahoo no conoce el símbolo {simbolo}." + (f" ({err})" if err else ""), 404)
+    if not salida:
+        return error(f"Yahoo no devolvió ninguna vela de {simbolo}.", 404)
+    payload = {"ok": True, "simbolo": simbolo, "velas": salida, "total": len(salida),
+               "fuente": "Yahoo Finance (no gasta cupo de OpenD)"}
+    cache_set(clave, payload)
+    return jsonify({**payload, "cacheado": False, "edad_s": 0})
 
 
 if __name__ == "__main__":

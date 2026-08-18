@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   PRUEBA DE LA PESTAÑA ANÁLISIS (v4.93)
+   PRUEBA DE LA PESTAÑA ANÁLISIS (v4.93 · ampliada en la v4.94)
 
    El puente va simulado con una cadena de opciones inventada A PROPÓSITO: gamma plana y precios
    redondos, para poder calcular a mano —aquí arriba, fuera de la app— lo que TIENE que salir, y
@@ -8,7 +8,7 @@
 
    Comprueba además las dos fronteras que no se pueden cruzar:
      · SIN servidor propio la pestaña NO EXISTE (los amigos de Victor ven las de siempre)
-     · CUATRO llamadas al puente por análisis, ni una por strike (el cupo de OpenD es compartido)
+     · SIETE llamadas al puente por análisis, ni una por strike (el cupo de OpenD es compartido)
 
      node pruebas/analisis.mjs
 
@@ -102,6 +102,40 @@ console.log("  GEX total:", (gexTotal / 1e6).toFixed(2) + "M por cada 1%");
 console.log("  P/C:", pc.toFixed(2), "· prima calls: $" + (primaCall / 1e3) + "k · prima puts: $" + (primaPut / 1e3) + "k");
 console.log("  top print esperado: C220 (600 contratos × $5 × 100 = $300k)\n");
 
+/* ---- v4.94: velas, valoración y reparto de capital ----
+   Las velas se fabrican con una forma CONOCIDA para poder comprobar los niveles a mano: una onda
+   de periodo 60 sesiones que va justo de 150 a 230. Así el precio TOCA de verdad los mismos dos
+   niveles una y otra vez, que es exactamente lo que la herramienta tiene que reconocer:
+     máximos en 230 -> i = 15, 75, 135, 195, 255  -> resistencia $230 con 5 toques
+     mínimos en 150 -> i = 45, 105, 165, 225, 285 -> soporte     $150 con 5 toques
+   El primer extremo del periodo es el máximo (i=15) y el mínimo llega después (i=45), así que el
+   tramo grande va de 230 a 150: A LA BAJA. Sus retrocesos son 150 + 80×f, o sea 50% = $190.
+
+   (El primer intento de estos datos era una recta con picos plantados encima, y estaba mal: un
+   "valle" en 150 sobre un precio que ahí valía 130 no es un valle. La prueba cazó el dato, no el
+   código — pero solo porque los toques se contaban uno a uno.) */
+const VELAS = [];
+{
+  const inicio = Date.parse("2025-09-01T00:00:00Z");
+  for (let i = 0; i < 300; i++) {
+    const c = 190 + 40 * Math.sin((2 * Math.PI * i) / 60);
+    VELAS.push({ f: new Date(inicio + i * 86400000).toISOString().slice(0, 10),
+                 o: c, h: c, l: c, c, v: 1000000 });
+  }
+}
+const VALORACION = { codigo: "US.TEST", nombre: "Test Inc", fundamentales_validos: true,
+  capitalizacion: 72400000000, per: 31.5, per_ttm: 28.4, p_vc: 6.2, bpa: 7.04,
+  valor_contable_accion: 32.3, dividendo_ttm_pct: 1.25, rotacion: 0.82,
+  max_52s: 230, min_52s: 95 };
+/* dinero: grandes +3M (5−2), muy grandes +1M (2−1), medianas −0,5M (1−1,5), pequeñas −2M (1−3)
+   -> neto grandes (muy grande + grande) = +4M · neto pequeñas = −2M · neto total = +1,5M */
+const DINERO = { codigo: "US.TEST",
+  entra: { muy_grande: 2e6, grande: 5e6, media: 1e6, pequena: 1e6 },
+  sale: { muy_grande: 1e6, grande: 2e6, media: 1.5e6, pequena: 3e6 } };
+console.log("=== niveles y dinero, a mano ===");
+console.log("  resistencia esperada: $230 con 5 toques · soporte esperado: $150 con 5 toques");
+console.log("  neto grandes: +$4M · neto pequeñas: −$2M · neto total: +$1.5M\n");
+
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 const ctx = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "block" });
 await ctx.route(/finnhub\.io/, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: SPOT, dp: 0, pc: SPOT, h: SPOT }) }));
@@ -114,6 +148,9 @@ await ctx.route(/puente\.alphavext\.com/, (route) => {
   if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.TEST", nombre: "Test Inc", iv: 44.0, hv_30d: 40.0, iv_rank: 62.0 } });
   if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: [VTO, VTO2] });
   if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: contratos.length, de_cache: 0, sin_datos: [] });
+  if (u.pathname === "/velas") return J({ ok: true, simbolo: "TEST", velas: VELAS, total: VELAS.length, fuente: "Yahoo Finance" });
+  if (u.pathname === "/valoracion") return J({ ok: true, valoracion: VALORACION });
+  if (u.pathname === "/dinero") return J({ ok: true, dinero: DINERO, columnas: ["capital_in_big"] });
   return J({ ok: true });
 });
 const page = await ctx.newPage();
@@ -168,7 +205,7 @@ const caja = (q) => page.evaluate((s) => {
   const b = c.getBoundingClientRect();
   return { x: Math.max(0, b.x - 6), y: Math.max(0, b.y - 6), width: b.width + 12, height: Math.min(b.height + 12, 700) };
 }, q);
-for (const [nombre, txt] of [["gamma", "Muros de gamma"], ["oi", "Interés abierto por strike"], ["flujo", "Flujo de opciones de hoy"]]) {
+for (const [nombre, txt] of [["valoracion", "Valoración"], ["niveles", "Niveles: soportes"], ["gamma", "Muros de gamma"], ["oi", "Interés abierto por strike"], ["flujo", "Flujo de opciones de hoy"], ["dinero", "De dónde viene el dinero"]]) {
   const c1 = await caja(txt);
   if (!c1 || c1.height <= 20) continue;
   await page.evaluate((s) => {
@@ -183,7 +220,8 @@ for (const [nombre, txt] of [["gamma", "Muros de gamma"], ["oi", "Interés abier
 
 console.log("\n=== lo que pinta la app ===");
 console.log("  llamadas al puente:", llamadas.join(" · "));
-ok(llamadas.length === 4, "cuatro llamadas por análisis, ni una por strike (" + llamadas.length + ")");
+ok(llamadas.length === 7, "siete llamadas por análisis, ni una por strike (" + llamadas.length + ")");
+ok(new Set(llamadas).size === llamadas.length, "y ninguna repetida");
 ok(new RegExp("\\$" + muroCall).test(t), "muro call $" + muroCall + " (el strike con más gamma de calls)");
 ok(new RegExp("\\$" + muroPut).test(t), "muro put $" + muroPut);
 /* la app usa k por debajo del millón, que es más preciso que "0,58M" */
@@ -199,7 +237,44 @@ console.log("  punto de giro (MODELO):", flip || "no lo encuentra");
 ok(/Punto de giro/.test(t), "sale el punto de giro");
 ok(/MODELO/.test(t) && /SUPUESTO/.test(t) && /DATO/.test(t), "y se dice qué es dato, qué modelo y qué supuesto");
 ok(/C220/.test(t), "el más negociado es C220, que es el de más prima");
-ok(/no vive en OpenD/.test(t), "y se dice lo que NO está y por qué, en vez de fingirlo");
+ok(/precio objetivo de los analistas/.test(t), "y se dice lo único que NO está y por qué, en vez de fingirlo");
+ok(!/Faltan fichas/.test(t), "no falta ninguna ficha con un puente al día");
+
+console.log("\n=== v4.94: valoración ===");
+ok(/\$72\.4B/.test(t), "capitalización en B, como la lee en moomoo ($72.4B)");
+ok(/28\.4/.test(t), "PER: se usa el TTM (28,4) cuando lo hay, no el anual");
+ok(/1\.25%/.test(t), "dividendo TTM 1,25%");
+/* el precio de prueba (200) sobre el rango 95-230: (200−95)/(230−95) = 77,8% -> 78% */
+const rango = (t.match(/ahora, al (\d+)% del rango/) || [])[1];
+console.log("  posición en el rango de 52 semanas:", rango + "% · a mano: 78%");
+ok(rango === "78", "y la posición en el rango de 52 semanas sale al 78%");
+
+console.log("\n=== v4.94: niveles ===");
+const resis = (t.match(/RESISTENCIAS\s*\n[^\n]*\n[^\n]*/i) || [])[0];
+const sopor = (t.match(/SOPORTES\s*\n[^\n]*\n[^\n]*/i) || [])[0];
+console.log("  primera resistencia:", (resis || "—").replace(/\n/g, " "));
+console.log("  primer soporte:     ", (sopor || "—").replace(/\n/g, " "));
+ok(/RESISTENCIAS\s*\n\$230\s*\n\+15\.0% · 5 toques/i.test(t), "resistencia $230 con SUS 5 toques (las cinco veces que la onda llega arriba)");
+ok(/SOPORTES\s*\n\$150\s*\n-25\.0% · 5 toques/i.test(t), "soporte $150 con sus 5 toques");
+ok(/EMA 20/.test(t) && /EMA 50/.test(t) && /EMA 200/.test(t), "las tres medias exponenciales");
+ok(/52 semanas: \$/.test(t), "y el rango de 52 semanas");
+ok(/RETROCESOS DEL TRAMO A LA BAJA \(\$230 → \$150\)/i.test(t), "los retrocesos, sobre el tramo grande: de $230 a $150");
+ok(/50% · \$190/.test(t), "y el 50% cae en $190 = 150 + 80×0,5, calculado a mano");
+const grafico = await page.evaluate(() => {
+  const s = Array.from(document.querySelectorAll("svg")).find((x) => (x.getAttribute("aria-label") || "") === "Precio con sus niveles");
+  if (!s) return null;
+  return { lineas: s.querySelectorAll("polyline").length, niveles: s.querySelectorAll("line").length };
+});
+console.log("  gráfico:", grafico);
+ok(!!grafico && grafico.lineas === 3 && grafico.niveles >= 2, "el gráfico dibuja precio + dos medias, y los niveles a rayas");
+
+console.log("\n=== v4.94: de dónde viene el dinero ===");
+ok(/\+\$4M/.test(t), "neto de órdenes grandes +$4M (2+5 entran, 1+2 salen)");
+ok(/−\$2M/.test(t), "neto de órdenes pequeñas −$2M");
+ok(/Neto de la sesión: \+\$1\.5M/.test(t), "neto de la sesión +$1.5M");
+ok(/las órdenes grandes compran mientras las pequeñas venden/.test(t), "y se lee la divergencia en una frase");
+ok(/no dice quién fue el agresor|no se sabe quién fue el agresor|sin decir quién fue el agresor/.test(t),
+  "con el aviso de siempre: no dice quién fue el agresor");
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
 
 /* sin servidor NO debe existir la pestaña */

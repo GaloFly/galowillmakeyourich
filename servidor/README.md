@@ -126,6 +126,32 @@ Después de tocar `/etc/bloques/entorno`, hay que reiniciar el puente para que l
 sudo systemctl restart bloques-puente
 ```
 
+### Las rutas nuevas de la v4.94 (la pestaña Análisis)
+
+```bash
+# fundamentales: capitalización, PER, P/VC, BPA, dividendo, rango de 52 semanas
+curl "http://127.0.0.1:8777/valoracion?codigo=US.MRVL&token=TUCLAVE"
+
+# de dónde viene el dinero: entradas y salidas por TAMAÑO de orden
+curl "http://127.0.0.1:8777/dinero?codigo=US.MRVL&token=TUCLAVE"
+
+# velas diarias (van por Yahoo, NO gastan cupo de OpenD)
+curl "http://127.0.0.1:8777/velas?codigo=US.MRVL&rango=1y&token=TUCLAVE"
+```
+
+Tres cosas que conviene saber de ellas:
+
+- **`/valoracion` no es una llamada nueva a OpenD**, es el mismo `get_market_snapshot` de siempre
+  pedido sobre el código de la ACCIÓN. Sobre un contrato ese bloque llega con `equity_valid False`
+  y todo a nan, que es justo lo que despistó al principio.
+- **`/dinero` devuelve también `columnas`**, la lista de nombres que mandó OpenD. Si algún día su
+  librería los renombra, la app enseña esa lista en pantalla en vez de una ficha vacía.
+- **`/velas` sale a internet, no a OpenD.** Es la única ruta del puente que lo hace. Si el VPS
+  no tiene salida a `query1.finance.yahoo.com`, esa ficha —y solo esa— se queda sin datos y la app
+  lo dice. El motivo de no usar `request_history_kline` está en el comentario de la ruta: su cupo
+  es de **100 símbolos distintos cada 7 días para toda la cuenta**, compartido con el barrido de
+  sectores de root.
+
 ---
 
 ## El dominio propio de la app (pendiente de aplicar)
