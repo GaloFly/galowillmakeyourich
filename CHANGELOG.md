@@ -1,5 +1,44 @@
 # CHANGELOG — Bloques
 
+Bloques v4.92 — Las alertas se pueden desbloquear (y la app dice cómo)
+
+## El síntoma
+Victor: *"no puedo desbloquear las alertas de ajustes"*. La fila de Notificaciones ponía `Bloqueado`
+y al tocarla no pasaba nada.
+
+## Las dos causas, que son distintas
+
+**1. No era un fallo de la app.** Cuando le dices que NO una vez al permiso de notificaciones, el
+teléfono **no vuelve a preguntar nunca**. La app puede pedirlo mil veces y el sistema contesta
+"denegado" sin enseñar nada. Por eso el botón parecía muerto. La única salida son los ajustes del
+teléfono, y la app decía *"actívalas en Ajustes de iOS"* — verdad, pero sin decir dónde, que para el
+caso es como no decir nada.
+
+**2. Y además había un fallo real de la app**: el permiso se leía **una sola vez, al montar**. Si lo
+activabas en los Ajustes del iPhone y volvías, la app seguía diciendo `Bloqueado` hasta cerrarla del
+todo y reabrirla. O sea que podías haberlo desbloqueado ya y la app te decía que no.
+
+## Lo que se ha hecho
+
+- **El permiso se vuelve a leer cada vez que la app recupera el foco.** Vuelves de los Ajustes del
+  iPhone y la fila se pone verde sola.
+- **Los pasos, escritos**, cuando está bloqueado: Ajustes → Notificaciones → Portfolio → Permitir.
+  Y se dice de entrada que el botón no responde por una regla del teléfono, no porque esté roto.
+- **El caso que lo haría imposible, avisado antes**: iOS solo permite notificaciones a las apps
+  **guardadas en la pantalla de inicio**. Abierta desde el navegador no hay ajuste que valga, y la app
+  ni siquiera aparece en la lista de Notificaciones. Si detecta que no está instalada, lo dice primero
+  — antes de mandar a nadie a buscar algo que no va a encontrar.
+
+## Cómo se comprobó
+`alertas.mjs`, simulando los cuatro estados posibles del permiso y de la instalación:
+
+- bloqueado + en la pantalla de inicio → chapa `Bloqueado` y los pasos del iPhone;
+- bloqueado + desde el navegador → además, el aviso de que así no funciona;
+- sin decidir → chapa `Activar`, sin marear con pasos que ahí no hacen falta;
+- concedido → chapa `Probar`, sin avisos.
+
+Cero errores de JavaScript. `npm run prueba`: **OK**, las 18 cifras idénticas.
+
 Bloques v4.91 — Acciones en B3 (largas y cortas), riesgo por stop, y editar desde Vencimientos
 
 ## 1. Vuelven las acciones a B3, y ahora también en corto
