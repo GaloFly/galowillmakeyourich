@@ -122,6 +122,13 @@ MemoryMax=512M
 # crea y da permisos a /var/lib/bloques, y HOME apunta ahí para que escriba dentro.
 StateDirectory=bloques
 Environment=HOME=/var/lib/bloques
+# La ÚNICA carpeta fuera de la suya donde el puente escribe: el buzón de recados de fichas.
+# Sin esta línea, /fundamentales devolvería "generando" ETERNAMENTE y sin un solo error que lo
+# explicara — ProtectSystem=strict deja el disco entero en solo lectura, y ahí los permisos de la
+# carpeta dan igual. El guion de delante hace que systemd TOLERE que la carpeta no exista todavía:
+# sin él, si el servicio arranca antes de que root la cree, el arranque falla, y con Restart=always
+# eso es un bucle. Leer las fichas no necesita nada: strict solo prohíbe escribir.
+ReadWritePaths=-/var/lib/fichas-bloques/pedidos
 
 [Install]
 WantedBy=multi-user.target

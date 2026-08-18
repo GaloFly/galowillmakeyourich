@@ -1,5 +1,78 @@
 # CHANGELOG — Bloques
 
+Servidor (19-ago-2026) — El 429 era el User-Agent, y la ruta de la ficha profunda
+
+**La app no cambia en esta entrega, así que `APP_VERSION` se queda en 4.96**: todo esto es del
+puente. Subirla obligaría a Victor a aceptar una actualización que no le cambia nada en pantalla.
+
+## El 429 de las velas: yo tenía escrito lo contrario de la verdad
+
+El Claude del servidor lo probó como hay que probarlo — tres rondas seguidas, mismo minuto, misma
+IP, cambiando una sola cosa:
+
+| User-Agent | R1 | R2 | R3 |
+|---|---|---|---|
+| `Mozilla/5.0` (corto) | **200** | **200** | **200** |
+| UA de Chrome completo — el que usaba el puente | 429 | 429 | 429 |
+| ninguno | 429 | 429 | 429 |
+
+**Yahoo penaliza el User-Agent de navegador completo desde IPs de centro de datos.** Es lo
+contrario de lo que uno supondría, y el comentario que yo había dejado en el código decía
+literalmente *"sin User-Agent de navegador la respuesta es 429"*. Era falso, y por creerlo añadí una
+cookie de sesión y un segundo host: dos remedios para una enfermedad que no era.
+
+La pista llevaba meses delante: el `grafico.py` del bot pide velas desde esa misma máquina con
+`Mozilla/5.0` y no ha fallado nunca.
+
+Arreglo: la constante. Ahora la prueba de las tres rondas está **escrita al lado del código**, para
+que a nadie —yo el primero— se le ocurra "mejorarlo" poniendo un UA más realista.
+
+De paso: **Stooq no era la solución**. Contestaba 200, sí, pero con una página de verificación por
+JavaScript, no con un CSV. Se queda como último recurso porque no cuesta nada, pero con el aviso de
+que hoy no sirve velas. La red de seguridad de verdad es el UA corto.
+
+## `/fundamentales`: la ficha profunda, sin que el puente ejecute nada
+
+Ruta nueva. No llama a OpenD y no lanza procesos: lee la ficha que publica el vigilante del usuario
+`agente` en un directorio neutro y, si no está, **deja un recado** —un fichero vacío— y contesta
+**202 «generando, vuelve en 45 s»**. El vigilante lo ve en un segundo, genera y publica.
+
+Ese recado es **lo único que este puente escribe en toda su vida**, y por eso el nombre se valida
+antes de tocar el disco: acaba siendo parte de una ruta de fichero.
+
+Los cuatro estados, cada uno con su código: ficha → 200 · error de hoy → 404 con su motivo · nada →
+202 · y un 503 aparte si la ficha existe pero no se puede leer, que es exactamente lo que pasará si
+se actualiza el puente y no se corren los comandos de root.
+
+### La trampa que habría costado horas
+El servicio corre con `ProtectSystem=strict`, que deja **el disco entero en solo lectura** salvo su
+propia carpeta. Los permisos del buzón dan igual: sin `ReadWritePaths` el puente no puede crear el
+recado, `/fundamentales` diría «generando» **para siempre** y no habría ni un error que lo
+explicara. Ya está en `instalar.sh`, con un guion delante de la ruta para que systemd tolere que la
+carpeta aún no exista — sin él, un arranque temprano falla, y con `Restart=always` eso es un bucle.
+
+Y por si aun así algo va mal: si se acumulan 20 recados sin atender, la ruta contesta **503 diciendo
+que probablemente el vigilante no esté corriendo**. El síntoma contrario —«generando…» eterno— es el
+más difícil de diagnosticar de toda la ruta, así que se le pone nombre.
+
+### Una hora mal leída convierte una ficha de esta madrugada en una de ayer
+El campo se llama `generado` (no `generada`), viene sin zona horaria y en **hora de Madrid**.
+Leerlo como UTC lo desplaza dos horas en verano. Se lee como Madrid, y la prueba lo comprueba
+midiendo la edad de una ficha sellada hace exactamente dos horas.
+
+## Verificación
+`pruebas/fundamentales.py` (nueva) — **24 de 24**, y se puede ejecutar sin servidor ni OpenD porque
+la ruta no los usa. Cubre los cuatro estados, la ficha vieja, la corrupta, la que no trae fecha, el
+error de ayer (que **no** se hereda: se vuelve a intentar), el buzón desbordado, y lo que más
+importa porque aquí se escribe un fichero con un nombre que viene de fuera: que `US.../../etc/passwd`
+y compañía se rechacen **sin crear nada**, y que `us.iren` en minúsculas sí se acepte, porque
+escribir con prisa no es un ataque.
+
+Dos de las tres rojas del primer intento eran de la prueba, no del código: `del_dia` con una ficha
+de hace dos horas es **False** de madrugada, y con razón.
+
+---
+
 Bloques v4.96 — Las velas, con galleta y con plan B
 
 ## El síntoma
