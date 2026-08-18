@@ -1,5 +1,98 @@
 # CHANGELOG — Bloques
 
+Bloques v4.97 — La ficha de ticker completa: ROI, flujo por horizontes y Valora profunda
+
+**Pendiente de que Victor vea el diff antes de publicarse**, como pide el encargo.
+
+## De dónde sale esto
+El encargo del servidor del 18-ago: *"escribo un ticker y la app saca de golpe Valora, Flujo,
+Gamma, Gráfico, OI y ROI"*. La pestaña Análisis ya tenía cuatro de los seis desde la v4.93; esto
+cierra los otros dos y sube el nivel de dos que se habían quedado cortos.
+
+## El put que venderías (ROI)
+Vencimiento entre 30 y 45 días —el más cercano a 30, que es su estándar— y dentro, la put con
+delta más cerca de −0,30 aceptando solo entre −0,36 y −0,18.
+
+**Si ninguna cae dentro, no se elige NINGUNA y se dice por qué**, con el delta de la más cercana.
+Proponer la que más se acerque sería dar por bueno un contrato que no cumple su criterio, y el
+número saldría igual de convincente.
+
+ROI sobre el capital que de verdad se bloquea (strike menos prima, no margen), anualizado, punto de
+equilibrio, horquilla, y el **movimiento esperado** con el strike medido en movimientos: verde por
+encima de 1, ámbar por debajo. El IV/HV se lee con su regla —**0,90 a 1,15 es NEUTRAL y no
+penaliza**— y siempre con el IV rank al lado, nunca solo.
+
+## Flujo en tres horizontes
+Corto (≤14 días), medio (15-60) y largo (>60), con los 2+3+2 vencimientos de cada uno. Cuatro
+señales votan +1, 0 o −1: P/C de volumen, calls menos puts, prima por lado y aperturas.
+
+**Los cuatro votos se enseñan uno a uno, con su valor.** Un semáforo que no dice quién votó qué no
+se puede discutir, y este va a decidir dinero.
+
+El umbral del voto de "calls menos puts" es **relativo al total**, no fijo: 10.000 contratos de
+diferencia son mucho en un valor pequeño y ruido en NVDA. Con un umbral fijo, ese voto diría siempre
+lo mismo en los dos extremos.
+
+Se marcan **APERTURA** los contratos con más de 200 de volumen y más de vez y media el interés
+abierto. Y se avisa de lo que hace dudosa esa etiqueta: el volumen es de HOY y el interés abierto es
+del cierre de AYER.
+
+## Gráfico: semanal de tres años, EMA 200 y los muros dibujados
+Dos pestañas, diario de nueve meses y semanal de tres años. El semanal **se agrega en la app** desde
+las mismas velas diarias, así que cambiar de pestaña no cuesta ni una llamada. Se añade la EMA 200,
+que faltaba, y los **muros de gamma se pintan sobre el precio** a trazo continuo —distintos de los
+soportes por pivotes, que van a rayas—: un muro es un precio, y un precio se lee contra el gráfico.
+
+Dos muros por lado en vez de uno.
+
+## Valora profunda
+Encima de los múltiplos del snapshot, la ficha de `/fundamentales`: ingresos, beneficio y caja libre
+**por trimestres** (diciendo cuánto tiempo son de verdad), deuda neta y deuda/EBITDA, **EV/EBITDA y
+rentabilidad de la caja libre contra su propio histórico** con la mediana marcada —lo único que
+convierte un múltiplo en una lectura: un EV/EBITDA de 14 no dice nada, un 14 con la mediana en 9
+sí—, Morningstar con su nombre encima, consenso con su reparto, y accionariado.
+
+**El DCF no se pinta**: ni `dcf_base`, ni los supuestos, ni la tabla de sensibilidad. Y se dice en
+pantalla que no se enseña a propósito, para que el hueco no parezca una avería. Sin ajustar por
+retribución en acciones el número engaña, y un número con etiqueta de "valor razonable" que engaña
+es peor que ninguno.
+
+Mientras la ficha se genera —20-40 s la primera vez de cada día— la tarjeta dice en qué punto está.
+Se pide **la primera de todas** y no se espera: el resto de la pantalla se pinta mientras tanto.
+
+## Y lo que se arregla de camino
+- **La foto del ΔOI cambia de forma** a `{fecha, ticker, vencimiento, strike, tipo, oi}`, que es la
+  del histórico de semanas del servidor. Así se podrá injertar sin rehacer nada. Hoy cuesta cero
+  porque solo hay fotos de un día; dentro de un mes habría costado tirar el histórico.
+- **La edad del dato en la cabecera**, no solo la hora en que se miró: con caché de por medio no son
+  lo mismo.
+- **Las ventanas de root se avisan en pantalla** y no se reintenta en bucle: el bucle solo molestaría
+  a la tarea que las ocupa.
+- `puenteFetch` ya no convierte el **202** en un error —es "en ello", no un fallo— ni tapa el motivo
+  de un **404** que trae explicación. Antes, un "hoy no se pudo generar la ficha" salía como
+  "¿está actualizado el puente?", que manda a arreglar lo que no está roto.
+- Un cero en una barra ya no pinta la rayita mínima del color contrario.
+- El aviso de `fundamentales_validos` nombra los **dos** motivos (ETFs y año fiscal recién cerrado).
+
+## Verificación
+`pruebas/analisis.mjs` — **61 de 61**, con los números calculados a mano fuera de la app:
+- ROI: P190 por delta −0,30 · 2,1% al bid · 25% anualizado · equilibrio $186,10 · horquilla 5% ·
+  strike a 0,44 movimientos esperados. Lo que depende del plazo se compara contra la **misma
+  fórmula escrita aparte**, no contra un número congelado, porque el plazo lo redondea la app.
+- Flujo: corto +3 ALCISTA, medio 0 NEUTRAL, largo −4 BAJISTA, con los cuatro valores cuadrando
+  (P/C 0,20 · 1,17 · 30,00) y las aperturas donde tocan.
+- Que el **DCF no aparece** aunque la ficha de prueba lo lleva dentro.
+- Y lo que protege el cupo compartido: **una sola cadena y un solo lote de contratos** para siete
+  vencimientos y 98 contratos, más una sola petición de velas para el diario y el semanal.
+
+Dos fallos que cazó la prueba, los dos del código: ponía **"4 son 1 años"**, y el delta salía con un
+guion en vez del signo menos que usa el resto de la app. Los precios de opción llevan ahora sus dos
+decimales: "$4" en una prima parece un redondeo, y entre 3,90 y 4,00 va el 2,5% del ROI.
+
+`npm run prueba` — OK, 18 retratos idénticos para quien no tiene servidor.
+
+---
+
 Servidor (19-ago-2026) — El 429 era el User-Agent, y la ruta de la ficha profunda
 
 **La app no cambia en esta entrega, así que `APP_VERSION` se queda en 4.96**: todo esto es del

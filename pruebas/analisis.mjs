@@ -56,10 +56,20 @@ await new Promise((r) => servidor.listen(PUERTO, r));
 const URL_APP = "http://localhost:" + PUERTO + "/index.html";
 
 const SPOT = 200;
-const VTO = (() => { const d = new Date(Date.now() + 30 * 86400000); return d.toISOString().slice(0, 10); })();
-const VTO2 = (() => { const d = new Date(Date.now() + 58 * 86400000); return d.toISOString().slice(0, 10); })();
+const dentroDe = (d) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
 
-/* cadena a mano: strikes de 170 a 230 de 10 en 10, puts y calls.
+/* ---- siete vencimientos, para que los tres horizontes del flujo tengan de dónde salir ----
+     CORTO (≤14d):  7 y 12 días     MEDIO (15-60d): 30, 44 y 58     LARGO (>60d): 90 y 110
+   El de 30 días es el que usan la gamma, el interés abierto y el ROI (su regla: DTE entre 30 y 45,
+   y dentro del rango el más cercano a 30). */
+/* 31 y no 30: `dias()` redondea, y un vencimiento sembrado "a 30 días" sale a 29 según la hora
+   del día — y 29 se cae del rango [30,45] por un pelo. Con 31, el bucket es el mismo siempre. */
+const VTOS = { a: dentroDe(7), b: dentroDe(12), c: dentroDe(31), d: dentroDe(44),
+               e: dentroDe(58), f: dentroDe(90), g: dentroDe(110) };
+const VTO = VTOS.c;          /* el del gamma y el ROI */
+const VTO2 = VTOS.e;
+
+/* cadena a mano: strikes de 170 a 230 de 10 en 10, puts y calls, en los siete vencimientos.
    Se pone MUCHO OI de calls en 220 y MUCHO de puts en 180 -> esos deben salir como los muros. */
 const STRIKES = [170, 180, 190, 200, 210, 220, 230];
 const OI = { call: { 170: 200, 180: 300, 190: 500, 200: 900, 210: 1200, 220: 9000, 230: 800 },
@@ -70,19 +80,85 @@ const GAMMA = 0.01;            /* gamma plana, para poder hacer la cuenta a mano
 const PX = { call: 5, put: 4 };
 const IV = 40;                 /* en %, como lo manda OpenD */
 
-const cod = (k, lado) => "US.TEST" + VTO.slice(2).replace(/-/g, "") + lado + k * 1000;
+/* deltas de las PUTS del vencimiento del ROI. Su criterio: la más cercana a −0,30 aceptando solo
+   entre −0,36 y −0,18. Dentro caen la de 180 (−0,18) y la de 190 (−0,30) -> tiene que elegir P190. */
+const DELTA_PUT = { 170: -0.10, 180: -0.18, 190: -0.30, 200: -0.50, 210: -0.70, 220: -0.85, 230: -0.95 };
+
+/* volumen por vencimiento fuera del de 30 días, para que cada horizonte tenga un veredicto claro:
+   corto muy comprador, medio empatado, largo muy vendedor y con aperturas. */
+const OTROS = {
+  [VTOS.a]: { call: 100, put: 20, oi: 5000 },   [VTOS.b]: { call: 100, put: 20, oi: 5000 },
+  [VTOS.d]: { call: 50, put: 100, oi: 5000 },   [VTOS.e]: { call: 50, put: 100, oi: 5000 },
+  [VTOS.f]: { call: 10, put: 300, oi: 100 },    [VTOS.g]: { call: 10, put: 300, oi: 100 },
+};
+
+const cod = (k, lado, v) => "US.TEST" + v.slice(2).replace(/-/g, "") + lado + k * 1000;
 const contratos = [];
-STRIKES.forEach((k) => {
-  contratos.push({ codigo: cod(k, "C"), tipo: "CALL", strike: k, vencimiento: VTO });
-  contratos.push({ codigo: cod(k, "P"), tipo: "PUT", strike: k, vencimiento: VTO });
-});
+Object.values(VTOS).forEach((v) => STRIKES.forEach((k) => {
+  contratos.push({ codigo: cod(k, "C", v), tipo: "CALL", strike: k, vencimiento: v });
+  contratos.push({ codigo: cod(k, "P", v), tipo: "PUT", strike: k, vencimiento: v });
+}));
 const opciones = {};
 contratos.forEach((c) => {
   const lado = c.tipo === "CALL" ? "call" : "put";
+  const otro = OTROS[c.vencimiento];
+  const vol = otro ? otro[lado] : VOL[lado][c.strike];
+  const oi = otro ? otro.oi : OI[lado][c.strike];
+  const delta = c.vencimiento === VTO && lado === "put" ? DELTA_PUT[c.strike] : (lado === "call" ? 0.4 : -0.4);
   opciones[c.codigo] = { codigo: c.codigo, ultimo: PX[lado], medio: PX[lado], bid: PX[lado] - 0.1, ask: PX[lado] + 0.1,
-    volumen: VOL[lado][c.strike], interes_abierto: OI[lado][c.strike], iv: IV, delta: lado === "call" ? 0.4 : -0.4,
+    volumen: vol, interes_abierto: oi, iv: IV, delta,
     gamma: GAMMA, theta: -0.02, vega: 0.1, fecha_dato: "2026-08-18 15:00:00" };
 });
+
+/* ---- el ROI, a mano ---- (P190: bid 3,90 · medio 4,00 · ask 4,10 · 30 días · IV 40%)
+     ROI al bid      = 3,90 / (190 − 3,90) = 2,10%
+     ROI anualizado  = 2,0956 × 365/30     = 25%
+     equilibrio      = 190 − 3,90          = $186,10
+     horquilla       = (4,10 − 3,90) / 4   = 5%
+     movimiento esp. = 200 × 0,40 × √(30/365) = $22,94
+     strike en EM    = (200 − 190) / 22,94 = 0,44  -> por debajo de 1: ÁMBAR, "justo" */
+const ROI_BID = 3.9 / (190 - 3.9) * 100;
+/* el plazo exacto lo pone la app (redondea igual que el mercado), así que las cifras que dependen
+   de él se comparan contra la MISMA fórmula escrita aquí, no contra un número congelado */
+const roiAnualDe = (dte) => Math.round(ROI_BID * 365 / dte);
+const emDe = (dte) => 200 * 0.40 * Math.sqrt(dte / 365);
+console.log("=== el ROI, a mano ===");
+console.log("  elige P190 (delta −0,30) · ROI " + ROI_BID.toFixed(2) + "% · equilibrio $186.1 · horquilla 5%");
+console.log("  y con el plazo que diga la app: anual = 2,0956 × 365/dte · EM = 200 × 0,40 × √(dte/365)\n");
+
+/* ---- el flujo, a mano ----
+   CORTO  (7 y 12 días): calls 2×7×100 = 1.400 · puts 2×7×20 = 280
+      P/C 0,20 -> +1 · calls−puts +1.120 sobre umbral 168 -> +1
+      prima calls $700k contra puts $112k -> +1 · aperturas 0/0 -> 0        SCORE +3 ALCISTA
+   MEDIO  (30, 44 y 58): calls 1.250+700 = 1.950 · puts 885+1.400 = 2.285
+      P/C 1,17 -> 0 · diferencia −335 bajo umbral 423 -> 0
+      prima $975k contra $914k, ninguna gana por 1,5× -> 0 · aperturas 0/0 -> 0   SCORE 0 NEUTRAL
+   LARGO  (90 y 110): calls 140 · puts 4.200
+      P/C 30 -> −1 · −4.060 -> −1 · prima $70k contra $1,68M -> −1
+      aperturas: las puts mueven 300 sobre 100 de OI = 3× -> −1              SCORE −4 BAJISTA */
+/* la ficha profunda, con los nombres REALES del servidor: periodos son TRIMESTRES, los márgenes
+   son escalares y no listas, el consenso se llama consenso_analistas, y el DCF viene dentro —
+   para comprobar que la app NO lo pinta aunque lo tenga delante. */
+const FICHA = {
+  ticker: "TEST", generado: "2026-08-19T02:00", precio: 146.99,
+  financiero: { periodos: ["2026/Q3", "2026/Q2", "2026/Q1", "2025/Q4"],
+                revenue: [4.2e9, 3.9e9, 3.6e9, 3.4e9], net_income: [4.6e8, 4.1e8, 3.8e8, 3.5e8],
+                fcf: [7.2e8, 6.6e8, 6.1e8, 5.8e8], margen_neto_pct: 10.9, margen_fcf_pct: 17.2 },
+  balance: { caja: 5.1e9, deuda_total: 9.3e9, deuda_neta: 4.2e9, equity: 1.2e10, ebitda_ttm: 2.1e9 },
+  multiplos: { market_cap: 7.24e10, ev: 7.66e10, ev_ebitda: 14.0, pe: 31.5, ps: 4.8,
+               net_debt_ebitda: 2.0,
+               hist_ev_ebitda: { actual: 14.0, min: 5.0, max: 22.0, mediana: 9.0, n: 20 },
+               hist_fcf_yield: { actual: 3.1, min: 1.2, max: 8.4, mediana: 4.5, n: 20 } },
+  valoracion: { morningstar_fair_value: 120.0, moat: "Narrow", incertidumbre: "High",
+                consenso_analistas: { medio: 165.0, alto: 210.0, bajo: 110.0, n: 34,
+                                      buy_pct: 62, hold_pct: 30, sell_pct: 8 },
+                dcf_base: 383.17, dcf_supuestos: { wacc: 0.09 },
+                dcf_sensibilidad: { "wacc8%_g1%": 383.17, "wacc10%_g1%": 275.55 } },
+  ownership: { instit_pct: 61.2, instit_chg: 1.4, instituciones: 2450, smart_money_m: 12.4 },
+};
+
+console.log("=== el flujo, a mano ===");
+console.log("  corto +3 ALCISTA · medio 0 NEUTRAL · largo −4 BAJISTA (y las puts largas, APERTURA)\n");
 
 /* ---- lo que TIENE que salir, calculado aquí a mano ---- */
 const gexDe = (oi) => GAMMA * oi * 100 * SPOT * SPOT * 0.01;          /* = oi × 400 */
@@ -91,7 +167,7 @@ STRIKES.forEach((k) => { gexPorStrike[k] = gexDe(OI.call[k]) - gexDe(OI.put[k]);
 const gexTotal = STRIKES.reduce((s, k) => s + gexPorStrike[k], 0);
 const muroCall = STRIKES.slice().sort((a, b) => gexPorStrike[b] - gexPorStrike[a])[0];
 const muroPut = STRIKES.slice().sort((a, b) => gexPorStrike[a] - gexPorStrike[b])[0];
-const callVol = STRIKES.reduce((s, k) => s + VOL.call[k], 0);
+const callVol = STRIKES.reduce((s, k) => s + VOL.call[k], 0);   /* solo el vto. de 30 días */
 const putVol = STRIKES.reduce((s, k) => s + VOL.put[k], 0);
 const pc = putVol / callVol;
 const primaCall = STRIKES.reduce((s, k) => s + VOL.call[k] * PX.call * 100, 0);
@@ -151,13 +227,15 @@ const montaPuente = async (c, registrar) => {
     const J = (o) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(o) });
     if (u.pathname === "/cotiza") return J({ ok: true, cotizaciones: { "US.TEST": { ultimo: SPOT, cierre_anterior: SPOT } } });
     if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.TEST", nombre: "Test Inc", iv: 44.0, hv_30d: 40.0, iv_rank: 62.0 } });
-    if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: [VTO, VTO2] });
+    if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: Object.values(VTOS) });
     if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: contratos.length, de_cache: 0, sin_datos: [] });
     /* la fuente llega como la manda el puente, con su coletilla entre paréntesis: la app tiene
        que quedarse con el nombre y no escupir el paréntesis en medio de la frase */
     if (u.pathname === "/velas") return J({ ok: true, simbolo: "TEST", velas: VELAS, total: VELAS.length, fuente: FUENTE_VELAS + " (no gasta cupo de OpenD)" });
     if (u.pathname === "/valoracion") return J({ ok: true, valoracion: VALORACION });
     if (u.pathname === "/dinero") return J({ ok: true, dinero: DINERO, columnas: ["capital_in_big"] });
+    if (u.pathname === "/fundamentales") return J({ ok: true, codigo: "US.TEST", ticker: "TEST",
+      generada: new Date(Date.now() - 3600000).toISOString(), edad_s: 3600, del_dia: true, ficha: FICHA });
     return J({ ok: true });
   });
 };
@@ -215,7 +293,7 @@ const caja = (q) => page.evaluate((s) => {
   const b = c.getBoundingClientRect();
   return { x: Math.max(0, b.x - 6), y: Math.max(0, b.y - 6), width: b.width + 12, height: Math.min(b.height + 12, 700) };
 }, q);
-for (const [nombre, txt] of [["valoracion", "Valoración"], ["niveles", "Niveles: soportes"], ["gamma", "Muros de gamma"], ["oi", "Interés abierto por strike"], ["flujo", "Flujo de opciones de hoy"], ["dinero", "De dónde viene el dinero"]]) {
+for (const [nombre, txt] of [["roi", "El put que venderías"], ["valoracion", "Valoración"], ["niveles", "Niveles: soportes"], ["gamma", "Muros de gamma"], ["oi", "Interés abierto por strike"], ["flujo", "Flujo de opciones de hoy"], ["dinero", "De dónde viene el dinero"]]) {
   const c1 = await caja(txt);
   if (!c1 || c1.height <= 20) continue;
   await page.evaluate((s) => {
@@ -230,8 +308,16 @@ for (const [nombre, txt] of [["valoracion", "Valoración"], ["niveles", "Niveles
 
 console.log("\n=== lo que pinta la app ===");
 console.log("  llamadas al puente:", llamadas.join(" · "));
-ok(llamadas.length === 7, "siete llamadas por análisis, ni una por strike (" + llamadas.length + ")");
-ok(new Set(llamadas).size === llamadas.length, "y ninguna repetida");
+/* una llamada por RUTA, ninguna por strike ni por vencimiento: siete vencimientos y 98 contratos
+   se resuelven con UNA cadena y UN lote de contratos. Ahí es donde se protege el cupo compartido. */
+ok(llamadas.filter((x) => x === "/cadena").length === 1,
+  "UNA sola cadena para el ROI, el flujo y la gamma (" + llamadas.filter((x) => x === "/cadena").length + ")");
+ok(llamadas.filter((x) => x === "/opciones").length === 1,
+  "y UN solo lote de contratos para los 98 de los siete vencimientos");
+ok(llamadas.filter((x) => x === "/velas").length === 1,
+  "y UNA sola petición de velas, que sirve para el diario y para el semanal");
+ok(llamadas.includes("/fundamentales"), "la ficha profunda se pide también");
+ok(llamadas.length === 8, "ocho llamadas en total (" + llamadas.length + "): " + llamadas.join(" "));
 ok(new RegExp("\\$" + muroCall).test(t), "muro call $" + muroCall + " (el strike con más gamma de calls)");
 ok(new RegExp("\\$" + muroPut).test(t), "muro put $" + muroPut);
 /* la app usa k por debajo del millón, que es más preciso que "0,58M" */
@@ -241,13 +327,15 @@ const esperadoTxt = (gexTotal >= 0 ? "+" : "−") + "$" +
 console.log("  GEX que pinta:", gexApp, "· a mano:", esperadoTxt);
 ok(gexApp === esperadoTxt, "el GEX total cuadra al dígito con la cuenta hecha aparte");
 ok(/IV 44\.0/.test(t) && /HV 30d 40\.0/.test(t) && /IV\/HV 1\.10/.test(t), "la cabecera trae IV, HV e IV/HV (44/40 = 1,10)");
-ok(new RegExp(pc.toFixed(2)).test(t), "P/C = " + pc.toFixed(2) + " (volumen de puts entre el de calls)");
+/* el P/C global se fue con la ficha de flujo vieja: ahora hay uno por horizonte, y tener los dos
+   invitaba a compararlos cuando miden cosas distintas. Se comprueba abajo, horizonte a horizonte. */
 const flip = (t.match(/Punto de giro \$?([\d.,]+)/) || [])[1];
 console.log("  punto de giro (MODELO):", flip || "no lo encuentra");
 ok(/Punto de giro/.test(t), "sale el punto de giro");
 ok(/MODELO/.test(t) && /SUPUESTO/.test(t) && /DATO/.test(t), "y se dice qué es dato, qué modelo y qué supuesto");
 ok(/C220/.test(t), "el más negociado es C220, que es el de más prima");
-ok(/precio objetivo de los analistas/.test(t), "y se dice lo único que NO está y por qué, en vez de fingirlo");
+ok(/Once llamadas por análisis/.test(t) && /para toda la cuenta/.test(t),
+  "y el pie dice cuántas llamadas cuesta y por qué las velas no van por moomoo");
 ok(!/Faltan fichas/.test(t), "no falta ninguna ficha con un puente al día");
 
 console.log("\n=== v4.94: valoración ===");
@@ -282,7 +370,9 @@ const grafico = await page.evaluate(() => {
   return { lineas: s.querySelectorAll("polyline").length, niveles: s.querySelectorAll("line").length };
 });
 console.log("  gráfico:", grafico);
-ok(!!grafico && grafico.lineas === 3 && grafico.niveles >= 2, "el gráfico dibuja precio + dos medias, y los niveles a rayas");
+ok(!!grafico && grafico.lineas === 4, "el gráfico dibuja precio + TRES medias (21, 50 y 200)");
+ok(!!grafico && grafico.niveles >= 6, "y al menos seis líneas horizontales: soportes, resistencias y los cuatro muros ("
+  + (grafico ? grafico.niveles : 0) + ")");
 
 console.log("\n=== v4.94: de dónde viene el dinero ===");
 ok(/\+\$4M/.test(t), "neto de órdenes grandes +$4M (2+5 entran, 1+2 salen)");
@@ -291,6 +381,65 @@ ok(/Neto de la sesión: \+\$1\.5M/.test(t), "neto de la sesión +$1.5M");
 ok(/las órdenes grandes compran mientras las pequeñas venden/.test(t), "y se lee la divergencia en una frase");
 ok(/no dice quién fue el agresor|no se sabe quién fue el agresor|sin decir quién fue el agresor/.test(t),
   "con el aviso de siempre: no dice quién fue el agresor");
+console.log("\n=== v4.97: ROI ===");
+const fila = (re) => (t.match(re) || [""])[0];
+console.log("  " + fila(/P190[^\n]*/));
+const dteRoi = parseInt((t.match(/P190[\s\S]{0,60}?(\d+)d ·/) || [])[1] || "0", 10);
+console.log("  plazo que usa la app: " + dteRoi + " días");
+ok(/P190/.test(t) && /delta [-−]0\.30/.test(t),
+  "elige la P190: delta −0,30, la más cercana al objetivo dentro de [−0,36, −0,18]");
+ok(dteRoi >= 30 && dteRoi <= 45, "y un vencimiento DENTRO de su rango de 30 a 45 días");
+ok(!/Ningún vencimiento cae entre 30 y 45/.test(t), "así que no hace falta el aviso de que se salió del rango");
+ok(/2\.1%/.test(t), "ROI al bid 2,1% = 3,90 / (190 − 3,90), sobre el capital que bloqueas");
+ok(new RegExp("\\b" + roiAnualDe(dteRoi) + "%").test(t),
+  "ROI anualizado " + roiAnualDe(dteRoi) + "% = 2,0956 × 365/" + dteRoi);
+ok(/\$186\.1/.test(t), "punto de equilibrio $186,10 = strike menos la prima");
+ok(/horquilla[^\n]*5%/.test(t), "y la horquilla, 5%");
+const emEsperado = ((200 - 190) / emDe(dteRoi)).toFixed(2);
+const em = fila(/El strike está a [\d.]+ movimientos esperados/);
+console.log("  " + em + " · a mano: " + emEsperado);
+ok(new RegExp("El strike está a " + emEsperado + " movimientos esperados").test(t),
+  "el strike está a " + emEsperado + " movimientos esperados: por debajo de 1, o sea JUSTO");
+ok(/Justo: un movimiento normal se planta ahí/.test(t), "y se dice en palabras, no solo con un color");
+ok(/zona NEUTRAL/.test(t), "IV/HV 1,10 se lee como NEUTRAL, no como caro (su regla: 0,90-1,15 no penaliza)");
+ok(/nunca solo/.test(t), "y se recuerda leerlo con el IV rank al lado");
+
+console.log("\n=== v4.97: flujo por horizontes ===");
+/* la etiqueta de cada voto y su valor son dos trozos distintos de la fila, así que en el texto de
+   la pantalla van separados por un salto de línea. Se aplana para poder leerlos juntos. */
+const plano = t.replace(/\n+/g, " ");
+["Corto", "Medio", "Largo"].forEach((h) => ok(new RegExp(h + "\\s").test(t), "sale el horizonte " + h));
+ok(/ALCISTA\s+\+3/.test(t) && /P\/C de volumen 0\.20/.test(plano), "corto: ALCISTA +3 con P/C 0,20 — más calls, más prima, y sin aperturas (voto 0)");
+ok(/NEUTRAL\s+\+0/.test(t) && /P\/C de volumen 1\.17/.test(plano), "medio: NEUTRAL 0 con P/C 1,17 — ninguna de las cuatro señales se decanta");
+ok(/BAJISTA\s+−4/.test(t) && /P\/C de volumen 30\.00/.test(plano), "largo: BAJISTA −4 con P/C 30 — las cuatro señales a la vez");
+ok(/APERTURA/.test(t), "y se marcan las APERTURAS (volumen 300 sobre 100 de interés abierto = 3×)");
+ok(/no se sabe quién fue el agresor/.test(t), "con el aviso de que no se sabe quién fue el agresor");
+ok(/sesión de HOY[^\n]*cierre de AYER/.test(t), "y el de la mezcla temporal, que es lo que hace dudosa una apertura");
+
+console.log("\n=== v4.97: gráfico y muros ===");
+ok(/Diario · 9 meses/.test(t) && /Semanal · 3 años/.test(t), "las dos pestañas del gráfico");
+ok(/EMA 200/.test(t), "y la EMA 200, que faltaba");
+const mur = (t.match(/MUROS CALL[\s\S]{0,80}/i) || [""])[0];
+console.log("  " + mur.replace(/\n/g, " "));
+ok(/muros call/i.test(t) && /muros put/i.test(t), "las dos fichas de muros");
+ok((t.match(/▌/g) || []).length >= 4, "y CUATRO muros dibujados: dos por lado (" + (t.match(/▌/g) || []).length + ")");
+ok(/muros de gamma a trazo continuo/.test(t), "dibujados sobre las velas y distinguidos de los soportes");
+
+console.log("\n=== v4.97: Valora profunda ===");
+ok(/Ficha profunda/.test(t), "la ficha profunda se pinta");
+ok(/2026\/Q3/.test(t) && /son un año/i.test(t),
+  "por TRIMESTRES, y se dice cuánto tiempo son de verdad cuatro periodos: un año, bien escrito");
+ok(/deuda\/EBITDA/.test(t) && /2/.test(t), "deuda neta, EBITDA y su cociente");
+ok(/EV \/ EBITDA/.test(t) && /mediana 9/.test(t),
+  "EV/EBITDA contra su propio histórico: 14 con la mediana en 9 — sin eso, un múltiplo no dice nada");
+ok(/según morningstar/i.test(t) && /\$120/.test(t), "Morningstar con su nombre encima, como dato de terceros");
+ok(/consenso de analistas · 34/i.test(t) && /\$165/.test(t) && /62% comprar/.test(t), "el consenso con su reparto");
+ok(/Institucional/.test(t) && /61\.2%/.test(t) && /smart money/.test(t), "y el accionariado");
+ok(!/383/.test(t) && !/275/.test(t),
+  "el DCF NO se pinta aunque venga dentro de la ficha: ni el base ni la tabla de sensibilidad");
+ok(/No se enseña a propósito/.test(t) || /no se enseña a propósito/i.test(t),
+  "y se dice que no se enseña a propósito, en vez de callarlo");
+
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
 
 /* ---- v4.95: el ΔOI necesita DOS días, que es justo donde puede fallar ----
@@ -319,11 +468,11 @@ await p3.addInitScript(([ayer, vto, foto]) => {
   localStorage.setItem("bloques_puente_v1", JSON.stringify({ url: "https://puente.alphavext.com", token: "clave" }));
   localStorage.setItem("bloques_oi_v1", JSON.stringify({ ["TEST|" + vto]: { [ayer]: foto } }));
 }, [AYER, VTO, {
-  [cod(220, "C")]: { k: 220, c: 1, oi: 6000 },
-  [cod(180, "P")]: { k: 180, c: 0, oi: 9000 },
-  [cod(210, "C")]: { k: 210, c: 1, oi: 1150 },
-  [cod(170, "P")]: { k: 170, c: 0, oi: 600 },
-  [cod(170, "C")]: { k: 170, c: 1, oi: 150 },
+  [cod(220, "C", VTO)]: { k: 220, c: 1, oi: 6000 },
+  [cod(180, "P", VTO)]: { k: 180, c: 0, oi: 9000 },
+  [cod(210, "C", VTO)]: { k: 210, c: 1, oi: 1150 },
+  [cod(170, "P", VTO)]: { k: 170, c: 0, oi: 600 },
+  [cod(170, "C", VTO)]: { k: 170, c: 1, oi: 150 },
 }]);
 await p3.goto(URL_APP, { waitUntil: "load" });
 await p3.waitForTimeout(2400);
