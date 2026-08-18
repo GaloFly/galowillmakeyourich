@@ -49,9 +49,10 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from http.cookiejar import CookieJar
 from urllib.error import HTTPError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, build_opener
 
 try:
     from zoneinfo import ZoneInfo
@@ -840,6 +841,73 @@ def dinero():
     return jsonify(payload), http
 
 
+"""
+Bajar velas de fuera. Dos detalles que costaron un 429 y conviene no perder:
+
+  · **La galleta.** Yahoo mira la cookie de sesión antes de servir el gráfico. Se consigue pidiendo
+    cualquier cosa a fc.yahoo.com —que contesta un error, da igual— y guardándola. Sin ella, una IP
+    de centro de datos (la de un VPS lo es) se lleva un 429 a la primera.
+  · **El navegador.** Sin User-Agent de navegador la respuesta es la misma: 429.
+
+El opener se crea UNA vez y se reutiliza, que es lo que mantiene viva la cookie.
+"""
+_NAVEGADOR = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+_opener = None
+_opener_lock = threading.Lock()
+
+
+def _abridor():
+    global _opener
+    with _opener_lock:
+        if _opener is None:
+            tarro = CookieJar()
+            _opener = build_opener(HTTPCookieProcessor(tarro))
+            _opener.addheaders = [("User-Agent", _NAVEGADOR),
+                                  ("Accept", "*/*"), ("Accept-Language", "en-US,en;q=0.9")]
+            try:  # la galleta: contesta 404 y da igual, lo que importa es la cookie que deja
+                _opener.open("https://fc.yahoo.com/", timeout=8).read()
+            except Exception:
+                pass
+        return _opener
+
+
+def _pedir(url, timeout=12):
+    """Devuelve el cuerpo en bytes, o lanza. No interpreta nada: eso es de quien llama."""
+    with _abridor().open(url, timeout=timeout) as r:
+        return r.read()
+
+
+def velas_de_stooq(csv):
+    """
+    Convierte el CSV diario de Stooq en la misma lista de velas que Yahoo.
+    Cabecera: Date,Open,High,Low,Close,Volume · un símbolo desconocido contesta 'No data'.
+
+    Existe porque Yahoo limita por IP y la de un VPS es de centro de datos. Dos fuentes que se
+    parsean a la misma forma son dos fuentes; una sola es una dependencia.
+    """
+    filas = [l.strip() for l in (csv or "").splitlines() if l.strip()]
+    if len(filas) < 2 or not filas[0].lower().startswith("date"):
+        return []
+    salida = []
+    for l in filas[1:]:
+        p = l.split(",")
+        if len(p) < 5 or len(p[0]) != 10:
+            continue
+        def num(i):
+            try:
+                v = float(p[i])
+            except (TypeError, ValueError, IndexError):
+                return None
+            return None if v != v else v
+        cierre = num(4)
+        if cierre is None:
+            continue
+        salida.append({"f": p[0], "o": num(1), "h": num(2), "l": num(3), "c": cierre,
+                       "v": num(5) if len(p) > 5 else None})
+    return salida
+
+
 def velas_de_yahoo(crudo):
     """
     Convierte la respuesta del gráfico de Yahoo en una lista de velas.
@@ -904,28 +972,64 @@ def velas():
     if valor is not None:
         return jsonify({**valor, "cacheado": True, "edad_s": round(edad, 1)})
 
-    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(simbolo)}"
-           f"?range={rango}&interval=1d")
-    # Sin User-Agent de navegador, Yahoo responde 429 a un cliente de Python.
-    pet = Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                                              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
-                                "Accept": "application/json"})
-    try:
-        with urlopen(pet, timeout=12) as r:
-            crudo = json.loads(r.read().decode("utf-8"))
-    except HTTPError as e:
-        return error(f"Yahoo respondió {e.code} al pedir las velas de {simbolo}.", 502)
-    except Exception as e:
-        return error(f"No se pudieron pedir las velas de {simbolo} a Yahoo: {e}", 502)
+    intentos = []          # se guarda lo que dijo cada fuente, para que el error no sea opaco
+    salida, fuente = None, None
 
-    salida = velas_de_yahoo(crudo)
+    # --- 1) Yahoo, sus dos hosts. El segundo no es superstición: query1 y query2 van por
+    #        infraestructuras distintas y uno responde a veces cuando el otro limita.
+    for host in ("query1", "query2"):
+        try:
+            r = _pedir(f"https://{host}.finance.yahoo.com/v8/finance/chart/{quote(simbolo)}"
+                       f"?range={rango}&interval=1d")
+        except HTTPError as e:
+            intentos.append(f"{host}: HTTP {e.code}")
+            continue
+        except Exception as e:
+            intentos.append(f"{host}: {e}")
+            continue
+        try:
+            crudo = json.loads(r.decode("utf-8"))
+        except ValueError:
+            intentos.append(f"{host}: no contestó JSON")
+            continue
+        v = velas_de_yahoo(crudo)
+        if v is None:
+            err = ((crudo.get("chart") or {}).get("error") or {}).get("description")
+            return error(f"Yahoo no conoce el símbolo {simbolo}." + (f" ({err})" if err else ""), 404)
+        if v:
+            salida, fuente = v, "Yahoo Finance"
+            break
+        intentos.append(f"{host}: sin velas")
+
+    # --- 2) Stooq, que da la misma vela diaria en CSV y no pide credenciales.
+    #        Está aquí porque Yahoo limita por IP y la de un VPS de Hetzner es de centro de datos:
+    #        el 18-ago-2026 contestó 429 a la primera petición del servidor. Una fuente que depende
+    #        de que a Yahoo le caiga bien tu IP no es una fuente.
     if salida is None:
-        err = ((crudo.get("chart") or {}).get("error") or {}).get("description")
-        return error(f"Yahoo no conoce el símbolo {simbolo}." + (f" ({err})" if err else ""), 404)
-    if not salida:
-        return error(f"Yahoo no devolvió ninguna vela de {simbolo}.", 404)
+        dias = {"1mo": 40, "3mo": 100, "6mo": 190, "1y": 380, "2y": 750, "5y": 1850}[rango]
+        d1 = (datetime.now(timezone.utc) - timedelta(days=dias)).strftime("%Y%m%d")
+        d2 = datetime.now(timezone.utc).strftime("%Y%m%d")
+        try:
+            r = _pedir(f"https://stooq.com/q/d/l/?s={quote(simbolo.lower())}.us&i=d&d1={d1}&d2={d2}")
+            v = velas_de_stooq(r.decode("utf-8", "replace"))
+            if v:
+                salida, fuente = v, "Stooq"
+            else:
+                intentos.append("stooq: sin velas")
+        except HTTPError as e:
+            intentos.append(f"stooq: HTTP {e.code}")
+        except Exception as e:
+            intentos.append(f"stooq: {e}")
+
+    if salida is None:
+        return error(f"Ninguna fuente de velas contestó para {simbolo}. " + " · ".join(intentos), 502)
+
     payload = {"ok": True, "simbolo": simbolo, "velas": salida, "total": len(salida),
-               "fuente": "Yahoo Finance (no gasta cupo de OpenD)"}
+               "fuente": fuente + " (no gasta cupo de OpenD)"}
+    if intentos:
+        # si hubo que caer a la segunda fuente, se dice: un dato que viene de otro sitio del
+        # habitual es una diferencia que el usuario tiene derecho a ver en pantalla
+        payload["aviso"] = "Las velas vienen de " + fuente + ". " + " · ".join(intentos)
     cache_set(clave, payload)
     return jsonify({**payload, "cacheado": False, "edad_s": 0})
 

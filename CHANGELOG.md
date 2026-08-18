@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+Bloques v4.96 — Las velas, con galleta y con plan B
+
+## El síntoma
+Con el puente ya actualizado, dos de las tres rutas nuevas contestaron a la primera. La tercera:
+
+```
+{"error":"Yahoo respondió 429 al pedir las velas de MRVL.","ok":false}
+```
+
+## La causa
+**429 es "demasiadas peticiones", y era la primera.** No se trata de un límite gastado: Yahoo
+limita por IP, y la del VPS es de un centro de datos. Le basta con eso para decir que no.
+
+Dos cosas faltaban:
+
+1. **La galleta.** Yahoo mira la cookie de sesión antes de servir el gráfico. Se consigue pidiendo
+   cualquier cosa a `fc.yahoo.com` —que contesta un error, da igual— y guardándola para las
+   siguientes. Sin ella, una IP de centro de datos se lleva un 429 de entrada.
+2. **Un plan B.** Aunque la galleta funcione hoy, una fuente que depende de que a Yahoo le caiga
+   bien tu IP **no es una fuente**. Ahora hay dos: si Yahoo dice que no por sus dos puertas
+   (`query1` y `query2`, que van por infraestructuras distintas), las velas se piden a **Stooq**,
+   que da la misma vela diaria en CSV y no pide credenciales.
+
+Ninguna de las dos gasta cupo de moomoo, que era el motivo de no usar `request_history_kline`.
+
+## Y se dice de dónde vienen
+La ficha de niveles ponía "Sobre velas diarias de **Yahoo**" escrito a fuego. Ahora lee la fuente de
+la respuesta: si un día las velas llegan de Stooq, la pantalla lo dice. Un dato que viene de un
+sitio distinto del habitual es una diferencia que quien mira tiene derecho a ver.
+
+## Verificación
+- `pruebas/velas-yahoo.py` — **15 de 15**, ahora con las dos fuentes. Lo importante que comprueba:
+  que las velas de Stooq salen **con la misma forma exacta** que las de Yahoo, campo por campo. Si
+  se desviaran, la app tendría que saber de dónde viene cada vela, y ahí es donde se crían los
+  fallos silenciosos.
+  También: un volumen que falta se queda en "no hay" y no en 0, un símbolo desconocido da lista
+  vacía en vez de una vela inventada, y una línea rota se salta sin tumbar la respuesta.
+- `pruebas/analisis.mjs` — **39 de 39**. La prueba manda las velas **como si vinieran de Stooq**, a
+  propósito: así, si alguien vuelve a escribir "Yahoo" a fuego en el texto, la prueba lo caza.
+- `npm run prueba` — OK, 18 retratos idénticos.
+
+## Hay que volver a actualizar el puente
+Igual que antes, y se puede repetir sin miedo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GaloFly/galowillmakeyourich/main/servidor/instalar.sh | sudo bash
+```
+
+---
+
 Bloques v4.95 — Fuera el Fibonacci inventado, y la app empieza a guardar su propio ΔOI
 
 ## Lo que se quita, y por qué se quita

@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.95"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.96"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -9651,14 +9651,17 @@ function AnalisisContent({ puente }) {
       /* v4.94 — valoración, velas y reparto de capital. Cada una en su propio intento: si el puente
          del servidor todavía es el de antes y no conoce la ruta, esa ficha no sale y el resto de la
          pantalla funciona igual. Nunca "falta un dato → falla todo". */
-      let val = null, velas = null, dinero = null, columnasDinero = null, fallos = [];
+      let val = null, velas = null, velasFuente = "", dinero = null, columnasDinero = null, fallos = [];
       try {
         const r = await puenteFetch(puente, "/valoracion", { codigo: cod });
         if (r && r.ok) val = r.valoracion; else if (r && r.error) fallos.push("valoración: " + r.error);
       } catch (e) { fallos.push("valoración: " + (e && e.message ? e.message : e)); }
       try {
         const r = await puenteFetch(puente, "/velas", { codigo: cod, rango: "1y" });
-        if (r && r.ok) velas = r.velas; else if (r && r.error) fallos.push("velas: " + r.error);
+        /* v4.96: la fuente se lee de la respuesta, no se da por supuesta. Si Yahoo limita al
+           servidor —pasó el 18-ago— las velas llegan de otro sitio, y eso se dice en pantalla. */
+        if (r && r.ok) { velas = r.velas; velasFuente = String(r.fuente || "").replace(/\s*\(.*/, ""); }
+        else if (r && r.error) fallos.push("velas: " + r.error);
       } catch (e) { fallos.push("velas: " + (e && e.message ? e.message : e)); }
       try {
         const r = await puenteFetch(puente, "/dinero", { codigo: cod });
@@ -9761,7 +9764,7 @@ function AnalisisContent({ puente }) {
 
       setDatos({ tkr: t, spot, vol, vtos, vto, dte: dias(vto), filas, muroCall, muroPut, gexTotal,
                  flip, sinGamma, conGamma, primaCall: primaDe(true), primaPut: primaDe(false), tops,
-                 val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), fallos, oi,
+                 val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), velasFuente, fallos, oi,
                  cuando: Date.now() });
     } catch (e) {
       setDatos(null);
@@ -9911,7 +9914,7 @@ function AnalisisContent({ puente }) {
             const dist = (p) => ((p - datos.spot) / datos.spot) * 100;
             return (
               <Ficha titulo="Niveles: soportes, resistencias y medias"
-                nota={"Sobre velas diarias de Yahoo, que NO gastan cupo de tu servidor. Los soportes y resistencias son sitios donde el precio ya se dio la vuelta (máximos o mínimos que superan a los " + N.ventanaPivote + " días de cada lado), agrupados por cercanía; el número dice cuántas veces se tocaron. Es una definición, no una ley: con otra ventana salen otros niveles."}>
+                nota={"Sobre velas diarias de " + (datos.velasFuente || "fuera de moomoo") + ", que NO gastan cupo de tu servidor. Los soportes y resistencias son sitios donde el precio ya se dio la vuelta (máximos o mínimos que superan a los " + N.ventanaPivote + " días de cada lado), agrupados por cercanía; el número dice cuántas veces se tocaron. Es una definición, no una ley: con otra ventana salen otros niveles."}>
                 <GraficoNiveles niveles={N} spot={datos.spot} />
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
                   <div style={{ background: T.tileRed, borderRadius: 14, padding: "10px 11px" }}>
