@@ -46,6 +46,7 @@ Y lo de siempre:
 
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -92,6 +93,11 @@ TTL_SUBYACENTE = int(os.environ.get("BLOQUES_TTL_SUBYACENTE", "600"))
 TTL_DINERO = int(os.environ.get("BLOQUES_TTL_DINERO", "300"))
 # v4.94: velas diarias de Yahoo. La de hoy cambia durante la sesión; las anteriores ya no.
 TTL_VELAS = int(os.environ.get("BLOQUES_TTL_VELAS", "900"))
+# v4.97: la ficha profunda. Se genera una vez al día, así que releerla más a menudo solo gasta disco.
+TTL_FUNDAMENTALES = int(os.environ.get("BLOQUES_TTL_FUNDAMENTALES", "3600"))
+# Directorio NEUTRO donde el agente publica las fichas y donde este puente deja los recados. No es
+# el del agente a propósito: el servicio corre con ProtectHome=true y no puede entrar en /home.
+FICHAS = os.environ.get("BLOQUES_FICHAS", "/var/lib/fichas-bloques")
 
 # Presupuesto de suscripciones de ESTE puente. El cupo real es de la cuenta y se comparte;
 # aquí nos limitamos a un trozo pequeño y devolvemos lo que no se usa.
@@ -842,17 +848,28 @@ def dinero():
 
 
 """
-Bajar velas de fuera. Dos detalles que costaron un 429 y conviene no perder:
+Bajar velas de fuera.
 
-  · **La galleta.** Yahoo mira la cookie de sesión antes de servir el gráfico. Se consigue pidiendo
-    cualquier cosa a fc.yahoo.com —que contesta un error, da igual— y guardándola. Sin ella, una IP
-    de centro de datos (la de un VPS lo es) se lleva un 429 a la primera.
-  · **El navegador.** Sin User-Agent de navegador la respuesta es la misma: 429.
+EL USER-AGENT CORTO NO SE TOCA. Es contraintuitivo y costó un rato entenderlo, así que queda
+escrito con la prueba al lado (VPS, 19-ago-2026, tres rondas seguidas en el mismo minuto y desde
+la misma IP, reproducible en los dos sentidos):
 
-El opener se crea UNA vez y se reutiliza, que es lo que mantiene viva la cookie.
+    User-Agent: Mozilla/5.0            -> 200 · 200 · 200
+    UA de Chrome completo              -> 429 · 429 · 429
+    sin User-Agent                     -> 429 · 429 · 429
+
+O sea que Yahoo penaliza precisamente el UA de navegador completo cuando viene de una IP de centro
+de datos —lo contrario de lo que uno supondría—, y la versión anterior de este fichero mandaba
+justo ese. El comentario decía "sin User-Agent de navegador la respuesta es 429": era falso, y por
+creerlo se añadieron una cookie y un segundo host que no hacían falta.
+
+El `grafico.py` del bot lleva meses pidiendo velas desde esta misma máquina con `Mozilla/5.0` y no
+ha fallado nunca. Esa era la pista, y estaba delante.
+
+El opener se crea UNA vez y se reutiliza; el tarro de cookies se queda porque no estorba y guarda
+lo que Yahoo mande por su cuenta.
 """
-_NAVEGADOR = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+_NAVEGADOR = "Mozilla/5.0"
 _opener = None
 _opener_lock = threading.Lock()
 
@@ -861,14 +878,8 @@ def _abridor():
     global _opener
     with _opener_lock:
         if _opener is None:
-            tarro = CookieJar()
-            _opener = build_opener(HTTPCookieProcessor(tarro))
-            _opener.addheaders = [("User-Agent", _NAVEGADOR),
-                                  ("Accept", "*/*"), ("Accept-Language", "en-US,en;q=0.9")]
-            try:  # la galleta: contesta 404 y da igual, lo que importa es la cookie que deja
-                _opener.open("https://fc.yahoo.com/", timeout=8).read()
-            except Exception:
-                pass
+            _opener = build_opener(HTTPCookieProcessor(CookieJar()))
+            _opener.addheaders = [("User-Agent", _NAVEGADOR), ("Accept", "*/*")]
         return _opener
 
 
@@ -1001,10 +1012,11 @@ def velas():
             break
         intentos.append(f"{host}: sin velas")
 
-    # --- 2) Stooq, que da la misma vela diaria en CSV y no pide credenciales.
-    #        Está aquí porque Yahoo limita por IP y la de un VPS de Hetzner es de centro de datos:
-    #        el 18-ago-2026 contestó 429 a la primera petición del servidor. Una fuente que depende
-    #        de que a Yahoo le caiga bien tu IP no es una fuente.
+    # --- 2) Stooq, último recurso. AVISO: comprobado el 19-ago-2026 en este VPS, contesta 200
+    #        pero con una página de verificación por JavaScript, no con el CSV — o sea que hoy no
+    #        va a servir velas. Se queda porque no cuesta nada (solo se intenta si Yahoo falla) y
+    #        porque el parseo está probado; pero no es una red de seguridad de verdad. La red de
+    #        seguridad de verdad es el User-Agent corto de arriba.
     if salida is None:
         dias = {"1mo": 40, "3mo": 100, "6mo": 190, "1y": 380, "2y": 750, "5y": 1850}[rango]
         d1 = (datetime.now(timezone.utc) - timedelta(days=dias)).strftime("%Y%m%d")
@@ -1032,6 +1044,147 @@ def velas():
         payload["aviso"] = "Las velas vienen de " + fuente + ". " + " · ".join(intentos)
     cache_set(clave, payload)
     return jsonify({**payload, "cacheado": False, "edad_s": 0})
+
+
+@app.route("/fundamentales")
+def fundamentales():
+    """
+    La ficha profunda de un valor: estados financieros por trimestres, deuda, múltiplos contra su
+    propio histórico, Morningstar, consenso de analistas y accionariado.  /fundamentales?codigo=US.IREN
+
+    Esta ruta NO llama a OpenD y NO ejecuta nada. La ficha la genera un script del usuario `agente`
+    (`fundamental_profundo.py`) y la publica en un directorio neutro; aquí solo se lee y se envuelve.
+
+    Lo único que este puente ESCRIBE en toda su vida es el recado: un fichero vacío en `pedidos/`
+    que el vigilante del agente ve en un segundo y atiende. Es una excepción consciente a la regla
+    de "solo lectura", acotada a un directorio, con el nombre validado antes de tocar el disco.
+
+    Por qué un directorio neutro y no las fichas del agente: el servicio corre con `ProtectHome=true`
+    y no puede entrar en /home ni queriendo. No era una preferencia, era la única opción.
+
+    Los tres estados:
+      hay ficha            -> 200 con la ficha TAL CUAL, sin renombrar ni un campo
+      hay error de HOY     -> 404 con el motivo que trae dentro
+      no hay nada          -> 202 "generando", se deja el recado y la app reintenta a los 45 s
+    """
+    codigo = request.args.get("codigo", "").strip().upper()
+    if not codigo:
+        return error("Falta el parámetro 'codigo'. Ejemplo: /fundamentales?codigo=US.IREN")
+    ticker = codigo.split(".")[-1]
+    # El nombre acaba siendo parte de una ruta de fichero, así que se valida ANTES de tocar el
+    # disco y además se le pasa un basename: el patrón ya impide barras, y aun así no se confía.
+    if not re.match(r"^[A-Z][A-Z.]{0,5}$", ticker) or ticker != os.path.basename(ticker) or ticker.strip(".") == "":
+        return error(f"Código no válido: {codigo}")
+
+    ruta_ficha = os.path.join(FICHAS, f"ficha_{ticker}.json")
+    ruta_error = os.path.join(FICHAS, f"error_{ticker}.json")
+    ruta_pedido = os.path.join(FICHAS, "pedidos", ticker)
+
+    valor, edad = cache_get("fundamentales:" + ticker, TTL_FUNDAMENTALES)
+    if valor is not None:
+        return jsonify({**valor, "cacheado": True, "edad_s": round(edad, 1)})
+
+    # ---- 1) ¿hay ficha?
+    if os.path.exists(ruta_ficha):
+        try:
+            with open(ruta_ficha, "r", encoding="utf-8") as f:
+                ficha = json.load(f)
+        except PermissionError:
+            return error(f"La ficha de {ticker} existe pero el puente no puede leerla (permisos). "
+                         f"Faltan los comandos de /var/lib/fichas-bloques, o el ReadWritePaths "
+                         f"del servicio.", 503)
+        except ValueError:
+            return error(f"La ficha de {ticker} está corrupta.", 502)
+        except OSError as e:
+            return error(f"No se pudo leer la ficha de {ticker}: {e}", 503)
+
+        generada = _fecha_de_ficha(ficha, ruta_ficha)
+        ahora = datetime.now(timezone.utc)
+        # `del_dia` se decide en hora de MADRID, no en UTC: a las 00:30 de Madrid en verano son las
+        # 22:30 UTC del día anterior, y la ficha parecería de ayer sin serlo.
+        hoy = (ahora.astimezone(MADRID) if MADRID else ahora).date()
+        payload = {
+            "ok": True, "codigo": codigo, "ticker": ticker,
+            "generada": generada.isoformat(),
+            "del_dia": generada.astimezone(MADRID).date() == hoy if MADRID else generada.date() == hoy,
+            "ficha": ficha,
+        }
+        payload["edad_s"] = round((ahora - generada).total_seconds(), 1)
+        cache_set("fundamentales:" + ticker, payload)
+        return jsonify({**payload, "cacheado": False})
+
+    # ---- 2) ¿hay un error de hoy? Uno de ayer no cuenta: se vuelve a intentar.
+    if os.path.exists(ruta_error):
+        try:
+            reciente = (datetime.fromtimestamp(os.path.getmtime(ruta_error), timezone.utc)
+                        .astimezone(MADRID if MADRID else timezone.utc).date()
+                        == (datetime.now(MADRID) if MADRID else datetime.now(timezone.utc)).date())
+        except OSError:
+            reciente = False
+        if reciente:
+            motivo = ""
+            try:
+                with open(ruta_error, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                motivo = str(d.get("motivo") or d.get("error") or d.get("mensaje") or "").strip()
+            except Exception:
+                motivo = ""
+            return error(motivo or f"Hoy no se pudo generar la ficha de {ticker}.", 404)
+
+    # ---- 3) no hay nada: se deja el recado y se dice cuándo volver
+    #
+    # Antes, un tope. La cola de verdad (5) la lleva el vigilante, que es quien genera; esto es un
+    # tope MUY por encima, y su valor está en lo que revela: si los recados se acumulan sin que nadie
+    # los borre, el vigilante no está corriendo. Sin esto, ese caso se vive como "generando…" para
+    # siempre, que es exactamente el síntoma más difícil de diagnosticar de toda esta ruta.
+    try:
+        pendientes = len(os.listdir(os.path.dirname(ruta_pedido)))
+    except OSError:
+        pendientes = 0
+    if pendientes >= 20:
+        return error(f"Hay {pendientes} recados de fichas sin atender en el servidor. Lo normal es "
+                     f"que se borren en segundos, así que probablemente el vigilante de fichas no "
+                     f"esté corriendo: revísalo antes de seguir pidiendo.", 503)
+
+    try:
+        os.makedirs(os.path.dirname(ruta_pedido), exist_ok=True)
+        # 'a' en vez de 'w': si el recado ya está, no se pisa ni se reinicia su hora
+        with open(ruta_pedido, "a", encoding="utf-8"):
+            pass
+    except PermissionError:
+        return error(f"No se pudo dejar el recado para generar la ficha de {ticker}: el servicio no "
+                     f"puede escribir en {os.path.dirname(ruta_pedido)}. Falta el ReadWritePaths del "
+                     f"servicio, o los permisos de la carpeta.", 503)
+    except OSError as e:
+        return error(f"No se pudo dejar el recado para generar la ficha de {ticker}: {e}", 503)
+
+    # 202: ni éxito ni error — "en ello". La app pinta "generando ficha" y reintenta; lo que NO
+    # debe hacer es bloquear la pantalla esperando, que son 20-40 s.
+    return jsonify({"ok": False, "estado": "generando", "ticker": ticker,
+                    "reintenta_en_s": 45,
+                    "aviso": "La ficha se está generando en el servidor. Suele tardar entre 20 y 40 "
+                             "segundos; dentro de las franjas de mantenimiento, lo que dure la franja."}), 202
+
+
+def _fecha_de_ficha(ficha, ruta):
+    """
+    Cuándo se generó la ficha, siempre con zona horaria.
+
+    El campo se llama `generado` (no `generada`) y viene como "2026-07-26T02:00": sin zona,
+    con precisión de minutos y en hora LOCAL DE MADRID. Parsearlo como UTC lo desplaza dos horas
+    en verano, y eso convierte una ficha de esta madrugada en una de ayer.
+    """
+    d = None
+    try:
+        d = datetime.fromisoformat(str(ficha.get("generado")))
+    except (TypeError, ValueError):
+        d = None
+    if d is not None:
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=MADRID) if MADRID else d.astimezone()
+        return d
+    # sin campo utilizable, la fecha del fichero — que sí es inequívoca
+    return datetime.fromtimestamp(os.path.getmtime(ruta), timezone.utc)
 
 
 if __name__ == "__main__":

@@ -137,7 +137,58 @@ curl "http://127.0.0.1:8777/dinero?codigo=US.MRVL&token=TUCLAVE"
 
 # velas diarias (van por Yahoo, NO gastan cupo de OpenD)
 curl "http://127.0.0.1:8777/velas?codigo=US.MRVL&rango=1y&token=TUCLAVE"
+
+# la ficha profunda: 202 la primera vez, 200 con la ficha unos 30 s después
+curl "http://127.0.0.1:8777/fundamentales?codigo=US.IREN&token=TUCLAVE"
 ```
+
+### El User-Agent de las velas NO se toca
+
+`_NAVEGADOR = "Mozilla/5.0"`, corto. Es contraintuitivo, así que va con la prueba al lado
+(19-ago-2026, tres rondas seguidas, mismo minuto, misma IP):
+
+| User-Agent | R1 | R2 | R3 |
+|---|---|---|---|
+| `Mozilla/5.0` | 200 | 200 | 200 |
+| UA de Chrome completo | 429 | 429 | 429 |
+| ninguno | 429 | 429 | 429 |
+
+Yahoo penaliza el UA de navegador **completo** desde IPs de centro de datos, que es lo contrario
+de lo que uno supondría. Una versión anterior mandaba justo ese y añadió una cookie y un segundo
+host para arreglar lo que no era el problema.
+
+### `/fundamentales` y el buzón de recados
+
+La ruta no llama a OpenD y no ejecuta nada: lee la ficha que publica el vigilante del usuario
+`agente` en `/var/lib/fichas-bloques/`, y si no está, **deja un recado** (un fichero vacío en
+`pedidos/`) y contesta **202 «generando»**. Es lo único que este puente escribe en toda su vida.
+
+Dos cosas que hacen falta y que no son evidentes:
+
+1. **`ReadWritePaths=-/var/lib/fichas-bloques/pedidos` en el servicio.** El puente corre con
+   `ProtectSystem=strict`, que deja el disco entero en solo lectura: sin esa línea no puede crear
+   el recado **por muchos permisos que tenga la carpeta**, y `/fundamentales` devolvería 202 para
+   siempre sin un error que lo explicara. Ya está en `instalar.sh`. El guion de delante hace que
+   systemd tolere que la carpeta aún no exista — sin él, un arranque temprano falla y con
+   `Restart=always` entra en bucle.
+2. **Las carpetas, que las crea root una vez:**
+
+   ```bash
+   sudo mkdir -p /var/lib/fichas-bloques/pedidos
+   sudo chown agente:bloques /var/lib/fichas-bloques
+   sudo chown bloques:agente /var/lib/fichas-bloques/pedidos
+   sudo chmod 750 /var/lib/fichas-bloques         # agente escribe, bloques lee
+   sudo chmod 770 /var/lib/fichas-bloques/pedidos # bloques deja recados, agente los borra
+   ```
+
+   Y **después** se re-ejecuta el instalador, para que el servicio coja el `ReadWritePaths`.
+
+Si los recados se amontonan (20 o más sin atender), la ruta contesta 503 diciendo que
+probablemente el vigilante no esté corriendo. Ese aviso existe porque el síntoma contrario
+—«generando…» eterno— es el más difícil de diagnosticar de toda la ruta.
+
+**Por qué un directorio neutro y no las fichas del agente:** el servicio corre con
+`ProtectHome=true` y no puede entrar en `/home` ni queriendo. No era una preferencia.
 
 Tres cosas que conviene saber de ellas:
 
