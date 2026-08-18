@@ -136,6 +136,9 @@ console.log("=== niveles y dinero, a mano ===");
 console.log("  resistencia esperada: $230 con 5 toques · soporte esperado: $150 con 5 toques");
 console.log("  neto grandes: +$4M · neto pequeñas: −$2M · neto total: +$1.5M\n");
 
+const FUENTE_VELAS = "Stooq";   /* a propósito NO es Yahoo: si la app la tuviera escrita a fuego,
+                                   diría "Yahoo" el día que las velas vengan de la otra fuente */
+
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 const llamadas = [];
 /* el puente simulado, en una función: la prueba del ΔOI necesita una SEGUNDA sesión y no vale
@@ -150,7 +153,9 @@ const montaPuente = async (c, registrar) => {
     if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.TEST", nombre: "Test Inc", iv: 44.0, hv_30d: 40.0, iv_rank: 62.0 } });
     if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: [VTO, VTO2] });
     if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: contratos.length, de_cache: 0, sin_datos: [] });
-    if (u.pathname === "/velas") return J({ ok: true, simbolo: "TEST", velas: VELAS, total: VELAS.length, fuente: "Yahoo Finance" });
+    /* la fuente llega como la manda el puente, con su coletilla entre paréntesis: la app tiene
+       que quedarse con el nombre y no escupir el paréntesis en medio de la frase */
+    if (u.pathname === "/velas") return J({ ok: true, simbolo: "TEST", velas: VELAS, total: VELAS.length, fuente: FUENTE_VELAS + " (no gasta cupo de OpenD)" });
     if (u.pathname === "/valoracion") return J({ ok: true, valoracion: VALORACION });
     if (u.pathname === "/dinero") return J({ ok: true, dinero: DINERO, columnas: ["capital_in_big"] });
     return J({ ok: true });
@@ -267,6 +272,9 @@ ok(/52 semanas: \$/.test(t), "y el rango de 52 semanas");
 ok(!/RETROCESOS/i.test(t) && !/61\.8%/.test(t),
   "NO se dibuja ningún Fibonacci: sus niveles los calcula el detector del servidor y aproximarlos es peor que no tenerlos");
 ok(/Niveles de tu detector: no disponibles/.test(t), "y el hueco se dice, en vez de dejarlo mudo");
+ok(/Sobre velas diarias de Stooq, que NO gastan cupo/.test(t),
+  "la ficha dice la fuente REAL de las velas (aquí Stooq), no 'Yahoo' escrito a fuego");
+ok(!/velas diarias de Yahoo/.test(t), "y no queda ningún 'Yahoo' cableado en el texto");
 ok(/no son los de tu detector/.test(t), "avisando de que los soportes de la app NO son los del detector");
 const grafico = await page.evaluate(() => {
   const s = Array.from(document.querySelectorAll("svg")).find((x) => (x.getAttribute("aria-label") || "") === "Precio con sus niveles");

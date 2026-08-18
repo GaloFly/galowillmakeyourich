@@ -27,7 +27,7 @@ sys.modules.setdefault("futu", falso)
 os.environ.setdefault("BLOQUES_TOKEN", "prueba")
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "servidor"))
-from puente import velas_de_yahoo  # noqa: E402
+from puente import velas_de_yahoo, velas_de_stooq  # noqa: E402
 
 fallos = []
 
@@ -80,6 +80,26 @@ comprueba(len(v3) == 2, "no se inventa la vela que falta al final (%d)" % len(v3
 print("\n=== nan, que en JSON llega como 'NaN' ===")
 v4 = velas_de_yahoo(json.loads('{"chart":{"result":[{"timestamp":[%d],"indicators":{"quote":[{"close":[NaN]}]}}]}}' % T0))
 comprueba(v4 == [], "un NaN se trata como hueco, no como número")
+
+print("\n=== la segunda fuente: Stooq ===")
+# Stooq existe porque el 18-ago-2026 Yahoo contestó 429 al VPS: limita por IP y la de un centro
+# de datos lo es. Las dos fuentes tienen que parsearse a la MISMA forma, o la app tendría que
+# saber de cuál viene cada vela — y ahí es donde se cuelan los fallos silenciosos.
+CSV = ("Date,Open,High,Low,Close,Volume\n"
+       "2026-08-14,70.00,72.00,69.50,71.50,1000000\n"
+       "2026-08-15,71.00,73.50,70.50,73.00,1200000\n"
+       "2026-08-17,74.00,76.00,73.00,75.50,\n"          # sin volumen: pasa de verdad
+       "2026-08-18,77.50,79.00,77.00,78.40,900000\n")
+w = velas_de_stooq(CSV)
+comprueba(len(w) == 4, "cuatro velas del CSV (%d)" % len(w))
+comprueba([x["c"] for x in w] == [71.5, 73.0, 75.5, 78.4], "los cierres, sin tocar")
+comprueba(w[2]["v"] is None, "un volumen que falta se queda en 'no hay', NO en 0")
+comprueba(sorted(w[0].keys()) == sorted(v[0].keys()),
+          "MISMA forma que las de Yahoo: la app no tiene que saber de dónde vienen")
+comprueba(velas_de_stooq("No data") == [] and velas_de_stooq("") == [],
+          "un símbolo que Stooq no conoce da lista vacía, no una vela inventada")
+comprueba(velas_de_stooq("Date,Open,High,Low,Close,Volume\nbasura,1,2\n") == [],
+          "una línea rota se salta en vez de tumbar la respuesta")
 
 print("\nFALLA: " + str(len(fallos)) if fallos else "\nOK")
 sys.exit(1 if fallos else 0)
