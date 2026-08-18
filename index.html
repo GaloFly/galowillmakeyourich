@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.92"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.93"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6647,6 +6647,8 @@ function ActIcon({ name, size, color }) {
           campanas, reloj con rango, dos velas): las otras o se emborronan o no significan nada.
           Va en ActIcon: la fila de pestañas de Herramientas pinta con ActIcon, no con NavIcon (en la
           v4.64 se puso en el juego equivocado y la pestaña salió sin dibujo). */}
+      {/* v4.93: lupa con barras dentro — "mirar un ticker por dentro" */}
+      {name === "analisis" && (<g {...P}><circle cx="10.5" cy="10.5" r="7" /><path d="M15.6 15.6L21 21" /><path d="M8 12.5v-2" /><path d="M10.5 12.5v-4.5" /><path d="M13 12.5v-3" /></g>)}
       {name === "dobles" && (<g {...P}><path d="M2.5 18.5h19" /><path d="M3.5 16.5c2.5 0 3.2-8 5.2-8s2.6 5.2 3.3 5.2 1.3-5.2 3.3-5.2 2.7 8 5.2 8" /></g>)}
     </svg>
   );
@@ -8362,6 +8364,15 @@ const bs = (S, K, anios, sigma, esCall) => {
   const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * anios) / st, d2 = d1 - st;
   return esCall ? S * Ncdf(d1) - K * Ncdf(d2) : K * Ncdf(-d2) - S * Ncdf(-d1);
 };
+/* v4.93: la GAMMA de Black-Scholes. Hace falta para el punto de giro del análisis: la gamma que
+   manda OpenD es la de AHORA, y para saber a qué precio el conjunto cambia de signo hay que volver
+   a valorarla a otros precios. La misma r=0 que el resto del modelador. */
+const gammaBS = (S, K, anios, sigma) => {
+  if (!(anios > 0) || !(sigma > 0) || !(S > 0) || !(K > 0)) return 0;
+  const st = sigma * Math.sqrt(anios);
+  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * anios) / st;
+  return Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI) / (S * st);
+};
 /* v4.75 — el modelador. Victor: *"igual podemos hacer un modelador en condiciones para modular todo:
    IV cortas, largas, media, strikes, y cómo evoluciona según pasa el tiempo"*.
 
@@ -9304,12 +9315,17 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
                 /* v4.76: DC va detrás de Screener, como pidió Victor. Sigue apareciendo solo con
                    servidor propio, así que sus amigos ven las cuatro de siempre en el orden de siempre. */
                 ...(puenteConfigurado(puente) ? [{ id: "dc", label: "DC", icon: "dobles" }] : []),
+                /* v4.93: Análisis, también solo con servidor propio — sin él no hay ni una cifra que
+                   enseñar, así que sus amigos siguen viendo las cuatro pestañas de siempre. */
+                ...(puenteConfigurado(puente) ? [{ id: "analisis", label: "Análisis", icon: "analisis" }] : []),
                 { id: "alerts", label: "Alertas", icon: "bolt" }]}
         value={sub} onChange={pick} renderIcon={(it) => <ActIcon name={it.icon} size={22} />} />
       {sub === "puts" ? (
         <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} puente={puente} />
       ) : sub === "alerts" ? (
         <AlertsToolContent apiKey={apiKey} />
+      ) : sub === "analisis" ? (
+        <AnalisisContent puente={puente} />
       ) : sub === "dc" ? (
         <DobleCalendarContent puente={puente} onOpenPosition={onOpenPosition} />
       ) : sub === "screener" ? (
@@ -9413,6 +9429,319 @@ function StrikeTile({ side, k, pct, em, onNudge, raw, onType }) {
     </div>
   );
 }
+/* ================= v4.93 — ANÁLISIS DE UN TICKER =================
+   Victor: *"tengo el bot de telegram que me saca valora, flujo, gamma, OI, smart, niveles.
+   ¿Podrías hacerme una herramienta donde ponga un ticker y me salga todo esto de una vez,
+   con presentación más guapa?"*.
+
+   De las seis cosas del bot, aquí están las que salen ENTERAS de OpenD: volatilidad, muros de
+   gamma con su punto de giro, interés abierto por strike y flujo del día. Las otras tres NO se
+   fingen y se dice por qué en la propia pantalla: la valoración (Morningstar, consenso,
+   fundamentales) no está en OpenD; el smart money necesita los ticks con el tamaño de cada orden;
+   los niveles necesitan velas, que van por otro lado.
+
+   COSTE: cuatro llamadas por análisis, y ni una por strike — el cupo es de la cuenta que se
+   comparte con root y con el agente. La cadena se cachea 6 h en el puente, así que cambiar de
+   vencimiento no vuelve a gastarla.
+
+   LA FRONTERA DATO / MODELO / SUPUESTO, que se dice en pantalla igual que en el Double Calendar:
+     · OI, volumen, gamma y GEX por strike → DATO. Vienen de OpenD tal cual.
+     · El PUNTO DE GIRO                    → MODELO. Hay que revaluar la gamma de cada contrato a
+       otros precios con Black-Scholes; es lo mismo que hace el bot ("flip por perfil BS").
+     · El SIGNO (calls +, puts −)          → SUPUESTO del sector. Nadie publica el inventario real
+       de los creadores de mercado. Si no se cumple, el signo se da la vuelta entero. */
+function AnalisisContent({ puente }) {
+  const [tkr, setTkr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [datos, setDatos] = useState(null);
+
+  const analizar = async (ticker, vtoPedido) => {
+    const t = String(ticker || "").trim().toUpperCase();
+    if (!t) { setMsg("Escribe un ticker."); return; }
+    setBusy(true); setMsg("");
+    try {
+      const cod = "US." + t;
+      const q = await puenteFetch(puente, "/cotiza", { codigos: cod });
+      if (!q || !q.ok) throw new Error((q && q.error) || "el servidor no contestó al pedir el precio");
+      const spot = q.cotizaciones && q.cotizaciones[cod] ? n(q.cotizaciones[cod].ultimo) : NaN;
+      if (!isFinite(spot) || spot <= 0) throw new Error("el servidor no da precio de " + t + ". ¿Está bien escrito?");
+
+      /* volatilidad del subyacente (v4.87). Si el puente es viejo y no conoce la ruta, se sigue sin ella */
+      let vol = null;
+      try { const sv = await puenteFetch(puente, "/subyacente", { codigo: cod }); if (sv && sv.ok) vol = sv.subyacente; } catch (e) {}
+
+      const hoy = new Date();
+      const cad = await puenteFetch(puente, "/cadena", {
+        codigo: cod, desde: iso(new Date(hoy.getTime() + 3 * 86400000)), hasta: iso(new Date(hoy.getTime() + 70 * 86400000)) });
+      if (!cad || !cad.ok) throw new Error((cad && cad.error) || "el servidor no contestó al pedir la cadena");
+      const vtos = (cad.vencimientos || []).slice().sort();
+      if (!vtos.length) throw new Error("no hay vencimientos de " + t + " en las próximas diez semanas");
+      const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
+      /* por defecto, el más cercano a 30 días: es donde vive el interés abierto que mueve el precio */
+      const vto = vtoPedido && vtos.includes(vtoPedido) ? vtoPedido
+        : vtos.slice().sort((a, b) => Math.abs(dias(a) - 30) - Math.abs(dias(b) - 30))[0];
+
+      /* solo los strikes con sentido: alrededor del dinero y con tope de códigos. Una cadena entera
+         de un subyacente líquido son cientos de contratos y el cupo no es solo nuestro. */
+      const delVto = (cad.contratos || []).filter((c) => String(c.vencimiento || "").slice(0, 10) === vto);
+      const cerca = delVto
+        .filter((c) => { const k = n(c.strike); return k > 0 && k >= spot * 0.7 && k <= spot * 1.35; })
+        .sort((a, b) => Math.abs(n(a.strike) - spot) - Math.abs(n(b.strike) - spot))
+        .slice(0, 180);
+      if (!cerca.length) throw new Error("no hay strikes de " + t + " cerca del precio en " + vto);
+      const op = await puenteFetch(puente, "/opciones", { codigos: cerca.map((c) => c.codigo).join(",") });
+      if (!op || !op.ok) throw new Error((op && op.error) || "el servidor no contestó al pedir los contratos");
+      const marcas = op.opciones || {};
+      const contratos = cerca.filter((c) => marcas[c.codigo]).map((c) => ({ ...c, ...marcas[c.codigo] }));
+      if (!contratos.length) throw new Error("el servidor no devolvió datos de ningún contrato de " + vto);
+
+      /* ---- todo junto POR STRIKE: la put y la call del mismo strike son una fila ---- */
+      const porK = {};
+      let sinGamma = 0, conGamma = 0;
+      contratos.forEach((c) => {
+        const k = n(c.strike);
+        if (!isFinite(k) || !k) return;
+        const esCall = String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0;
+        const f = porK[k] || (porK[k] = { k, callOi: 0, putOi: 0, callVol: 0, putVol: 0, gex: 0 });
+        const oi = numOrNaN(c.interes_abierto), vl = numOrNaN(c.volumen), g = numOrNaN(c.gamma);
+        if (isFinite(oi)) { if (esCall) f.callOi += oi; else f.putOi += oi; }
+        if (isFinite(vl)) { if (esCall) f.callVol += vl; else f.putVol += vl; }
+        if (isFinite(g) && isFinite(oi)) {
+          /* GEX en dólares por cada 1% de movimiento: gamma × OI × 100 acciones × spot² × 1% */
+          f.gex += (esCall ? 1 : -1) * g * oi * 100 * spot * spot * 0.01;
+          conGamma++;
+        } else if (isFinite(oi) && oi > 0) sinGamma++;
+      });
+      const filas = Object.values(porK).sort((a, b) => a.k - b.k);
+      let muroCall = null, muroPut = null;
+      filas.forEach((f) => {
+        if (f.gex > 0 && (!muroCall || f.gex > muroCall.gex)) muroCall = f;
+        if (f.gex < 0 && (!muroPut || f.gex < muroPut.gex)) muroPut = f;
+      });
+      const gexTotal = filas.reduce((s, f) => s + f.gex, 0);
+
+      /* ---- PUNTO DE GIRO: el único MODELO de la pantalla ----
+         Se descartó el atajo de "GEX acumulado cruzando cero": eso depende del ORDEN de los strikes,
+         no del precio, y da un número que se parece al bueno sin serlo. Aquí se revalúa la gamma de
+         cada contrato a distintos precios con SU propia IV y se busca dónde el total cambia de signo. */
+      const anios = Math.max(1, dias(vto)) / 365;
+      const conIv = contratos.map((c) => ({
+        k: n(c.strike), esCall: String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0,
+        oi: numOrNaN(c.interes_abierto), iv: numOrNaN(c.iv) / 100,
+      })).filter((c) => c.k > 0 && isFinite(c.oi) && c.oi > 0 && isFinite(c.iv) && c.iv > 0);
+      const gexEn = (S) => conIv.reduce((s, c) =>
+        s + (c.esCall ? 1 : -1) * gammaBS(S, c.k, anios, c.iv) * c.oi * 100 * S * S * 0.01, 0);
+      let flip = null;
+      if (conIv.length) {
+        const paso = spot * 0.005;
+        let prevS = spot * 0.7, prev = gexEn(prevS);
+        for (let S = prevS + paso; S <= spot * 1.3; S += paso) {
+          const gg = gexEn(S);
+          if (isFinite(prev) && isFinite(gg) && ((prev < 0 && gg >= 0) || (prev > 0 && gg <= 0))) {
+            flip = prevS + (S - prevS) * (0 - prev) / (gg - prev);
+            break;
+          }
+          prev = gg; prevS = S;
+        }
+      }
+
+      /* ---- flujo del día ---- */
+      const primaDe = (esCallLado) => contratos.reduce((s, c) => {
+        const esCall = String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0;
+        if (esCall !== esCallLado) return s;
+        const vl = numOrNaN(c.volumen), px = numOrNaN(c.medio != null ? c.medio : c.ultimo);
+        return s + (isFinite(vl) && isFinite(px) ? vl * px * 100 : 0);
+      }, 0);
+      const tops = contratos.map((c) => {
+        const vl = numOrNaN(c.volumen), px = numOrNaN(c.medio != null ? c.medio : c.ultimo), oi = numOrNaN(c.interes_abierto);
+        return { c, esCall: String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0,
+                 prima: isFinite(vl) && isFinite(px) ? vl * px * 100 : 0, vol: vl,
+                 vOI: isFinite(vl) && isFinite(oi) && oi > 0 ? vl / oi : NaN };
+      }).filter((x) => x.prima > 0).sort((a, b) => b.prima - a.prima).slice(0, 6);
+
+      setDatos({ tkr: t, spot, vol, vtos, vto, dte: dias(vto), filas, muroCall, muroPut, gexTotal,
+                 flip, sinGamma, conGamma, primaCall: primaDe(true), primaPut: primaDe(false), tops,
+                 cuando: Date.now() });
+    } catch (e) {
+      setDatos(null);
+      setMsg("No se pudo analizar " + t + ": " + (e && e.message ? e.message : String(e)));
+    }
+    setBusy(false);
+  };
+
+  const Barra = ({ v, max, color, derecha }) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: derecha ? "flex-end" : "flex-start" }}>
+      <div style={{ height: 9, borderRadius: 5, background: color, width: max > 0 ? Math.max(2, (Math.abs(v) / max) * 100) + "%" : "2px" }} />
+    </div>
+  );
+  const Ficha = ({ titulo, nota, children }) => (
+    <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 10 }}>
+      <div>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{titulo}</div>
+        {nota ? <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, marginTop: 3 }}>{nota}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+  const millones = (x) => (Math.abs(x) >= 1e6 ? money2(x / 1e6) + "M" : money(x / 1e3) + "k");
+
+  return (
+    <div style={{ display: "grid", gap: 12, padding: "0 2px 24px" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <WizInput label="Ticker" value={tkr} onChange={setTkr} upper placeholder="MRVL" />
+        </div>
+        <button type="button" onClick={() => analizar(tkr, "")} disabled={busy}
+          style={{ flex: "none", border: "none", borderRadius: 12, padding: "0 18px", height: 40, fontSize: 13.5, fontWeight: 800, background: T.dark, color: "#fff", opacity: busy ? 0.6 : 1, cursor: "pointer" }}>
+          {busy ? "Analizando…" : "Analizar"}
+        </button>
+      </div>
+      {msg ? <div style={{ fontSize: 12, fontWeight: 700, color: T.red, lineHeight: 1.45 }}>{msg}</div> : null}
+      {!datos && !busy && !msg && (
+        <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, lineHeight: 1.55 }}>
+          Escribe un ticker y sale de una vez la volatilidad, los muros de gamma con su punto de giro,
+          el interés abierto por strike y el flujo de opciones del día. Cuatro llamadas a tu servidor,
+          ni una por strike.
+        </div>
+      )}
+      {datos && (() => {
+        const v = datos.vol || {};
+        const maxOi = Math.max(1, ...datos.filas.map((f) => Math.max(f.callOi, f.putOi)));
+        const callVol = datos.filas.reduce((s, f) => s + f.callVol, 0);
+        const putVol = datos.filas.reduce((s, f) => s + f.putVol, 0);
+        const pc = callVol > 0 ? putVol / callVol : NaN;
+        const ivhv = isFinite(n(v.iv)) && isFinite(n(v.hv_30d)) && n(v.hv_30d) > 0 ? n(v.iv) / n(v.hv_30d) : NaN;
+        return (<>
+          {/* ---------- cabecera ---------- */}
+          <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: T.ink, letterSpacing: -0.6 }}>{datos.tkr}</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(datos.spot)}</span>
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>
+              {v.nombre ? v.nombre + " · " : ""}vencimiento {ibkrDate(datos.vto)} · {datos.dte} días · {fechaCorta(datos.cuando)}
+            </div>
+            {datos.vtos.length > 1 && (
+              <div className="no-scrollbar" style={{ display: "flex", gap: 6, overflowX: "auto", padding: 4, margin: -4 }}>
+                {datos.vtos.map((x) => (
+                  <button key={x} onClick={() => analizar(datos.tkr, x)} disabled={busy}
+                    style={{ flexShrink: 0, border: "none", borderRadius: 999, padding: "6px 11px", fontSize: 11, fontWeight: 800, cursor: "pointer",
+                      background: x === datos.vto ? T.dark : T.tile, color: x === datos.vto ? "#fff" : T.sub, boxShadow: x === datos.vto ? "none" : T.raiseSm }}>
+                    {ibkrDate(x)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {isFinite(n(v.iv)) && (
+              <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset, fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.5 }}>
+                {"IV "}<span style={{ color: T.ink }}>{n(v.iv).toFixed(1)}</span>
+                {isFinite(n(v.hv_30d)) ? <>{" · HV 30d "}<span style={{ color: T.ink }}>{n(v.hv_30d).toFixed(1)}</span></> : null}
+                {isFinite(ivhv) ? <>{" · IV/HV "}<span style={{ color: ivhv >= 1 ? T.green : T.gold, fontWeight: 800 }}>{ivhv.toFixed(2)}</span></> : null}
+                {isFinite(n(v.iv_rank)) ? " · IV rank " + n(v.iv_rank).toFixed(0) : ""}
+              </div>
+            )}
+          </div>
+
+          {/* ---------- gamma ---------- */}
+          <Ficha titulo="Muros de gamma y punto de giro"
+            nota="Los muros son DATO: gamma e interés abierto los manda tu servidor. El punto de giro es un MODELO — hay que revaluar la gamma a otros precios y eso es Black-Scholes. Y todo ello sobre un SUPUESTO del sector: creadores de mercado largos de calls y cortos de puts. Nadie publica su inventario real; si el supuesto no se cumple, el signo se da la vuelta.">
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
+              <div style={{ background: T.tileGreen, borderRadius: 14, padding: "11px 12px" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: T.green, textTransform: "uppercase", letterSpacing: 0.5 }}>Muro call</div>
+                <div style={{ fontSize: 19, fontWeight: 800, color: T.green, fontVariantNumeric: "tabular-nums" }}>{datos.muroCall ? "$" + money2(datos.muroCall.k) : "—"}</div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.35 }}>{datos.muroCall ? "techo que cuesta pasar · OI " + money(datos.muroCall.callOi) : "sin gamma suficiente"}</div>
+              </div>
+              <div style={{ background: T.tileRed, borderRadius: 14, padding: "11px 12px" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: T.red, textTransform: "uppercase", letterSpacing: 0.5 }}>Muro put</div>
+                <div style={{ fontSize: 19, fontWeight: 800, color: T.red, fontVariantNumeric: "tabular-nums" }}>{datos.muroPut ? "$" + money2(datos.muroPut.k) : "—"}</div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.35 }}>{datos.muroPut ? "suelo donde suele frenar · OI " + money(datos.muroPut.putOi) : "sin gamma suficiente"}</div>
+              </div>
+            </div>
+            <div style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.inset, fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.6, fontVariantNumeric: "tabular-nums" }}>
+              {"Punto de giro "}<span style={{ color: T.ink, fontWeight: 800 }}>{isFinite(datos.flip) ? "$" + money2(datos.flip) : "no lo hay en ±30%"}</span>
+              {isFinite(datos.flip) ? (datos.spot >= datos.flip
+                ? <span style={{ color: T.green }}>{" · estás POR ENCIMA: la gamma tiende a frenar los movimientos"}</span>
+                : <span style={{ color: T.red }}>{" · estás POR DEBAJO: la gamma tiende a amplificarlos"}</span>) : ""}
+              <br />
+              {"Gamma total en el precio de ahora: "}
+              <span style={{ color: datos.gexTotal >= 0 ? T.green : T.red, fontWeight: 800 }}>
+                {(datos.gexTotal >= 0 ? "+" : "−") + "$" + millones(Math.abs(datos.gexTotal)) + " por cada 1%"}
+              </span>
+            </div>
+            {datos.sinGamma > 0 && (
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45 }}>
+                {datos.sinGamma} contratos con interés abierto no traían gamma y quedan fuera del cálculo, de {datos.sinGamma + datos.conGamma} en total.
+              </div>
+            )}
+          </Ficha>
+
+          {/* ---------- interés abierto ---------- */}
+          <Ficha titulo="Interés abierto por strike"
+            nota="Contratos vivos al cierre de ayer. El volumen de hoy va en la ficha de abajo: son cosas distintas y mezclarlas engaña.">
+            <div style={{ display: "grid", gap: 4 }}>
+              {datos.filas.filter((f) => f.callOi + f.putOi > 0)
+                .slice().sort((a, b) => (b.callOi + b.putOi) - (a.callOi + a.putOi)).slice(0, 10)
+                .sort((a, b) => b.k - a.k).map((f) => (
+                <div key={f.k} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span style={{ flex: "none", width: 50, textAlign: "right", fontSize: 11, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                    color: Math.abs(f.k - datos.spot) < datos.spot * 0.012 ? T.purple : T.sub }}>{money2(f.k)}</span>
+                  <Barra v={f.putOi} max={maxOi} color={T.red} derecha />
+                  <Barra v={f.callOi} max={maxOi} color={T.green} />
+                  <span style={{ flex: "none", width: 62, fontSize: 10, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{money(f.putOi) + "/" + money(f.callOi)}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub }}>
+              <span style={{ color: T.red, fontWeight: 800 }}>puts</span> a la izquierda · <span style={{ color: T.green, fontWeight: 800 }}>calls</span> a la derecha · en violeta, el strike pegado al precio
+            </div>
+          </Ficha>
+
+          {/* ---------- flujo ---------- */}
+          <Ficha titulo="Flujo de opciones de hoy"
+            nota="Volumen de la sesión y dinero movido. OJO: esto NO distingue comprado de vendido — no se sabe quién fue el agresor. Es una pista, no una dirección.">
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 9 }}>
+              {[["P/C por volumen", isFinite(pc) ? pc.toFixed(2) : "—", isFinite(pc) ? (pc < 0.7 ? T.green : pc > 1.1 ? T.red : T.ink) : T.sub],
+                ["Prima en calls", "$" + millones(datos.primaCall), T.green],
+                ["Prima en puts", "$" + millones(datos.primaPut), T.red]].map(([l, x, col]) => (
+                <div key={l} style={{ background: T.tile, borderRadius: 12, padding: "10px 8px", boxShadow: T.inset, textAlign: "center" }}>
+                  <div style={{ fontSize: 15.5, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums" }}>{x}</div>
+                  <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 3, lineHeight: 1.25, minHeight: "2.5em", display: "flex", alignItems: "center", justifyContent: "center" }}>{l}</div>
+                </div>
+              ))}
+            </div>
+            {datos.tops.length > 0 && (
+              <div style={{ display: "grid", gap: 5 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Lo más negociado</span>
+                {datos.tops.map((x, i) => (
+                  <div key={i} style={{ background: T.tile, borderRadius: 10, padding: "7px 9px", boxShadow: T.inset,
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: x.esCall ? T.green : T.red, minWidth: 0 }}>
+                      {(x.esCall ? "C" : "P") + money2(n(x.c.strike))}
+                      <span style={{ color: T.sub, fontWeight: 600 }}>
+                        {" · vol " + money(x.vol) + (isFinite(x.vOI) ? " · v/OI " + x.vOI.toFixed(1) : "")}
+                      </span>
+                    </span>
+                    <span style={{ flex: "none", fontSize: 11.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${millones(x.prima)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Ficha>
+
+          {/* ---------- lo que NO está, dicho ---------- */}
+          <div style={{ background: T.tile, borderRadius: 14, padding: "11px 13px", boxShadow: T.inset, fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.55 }}>
+            Tu bot saca tres cosas más que aquí NO están, y no es un olvido: la <b>valoración</b>
+            (Morningstar, consenso, fundamentales) no vive en OpenD; el <b>smart money</b> necesita los
+            ticks con el tamaño de cada orden, que el servidor no da; y los <b>niveles</b> necesitan velas,
+            que van por otra vía. Antes de inventarlas, no están.
+          </div>
+        </>);
+      })()}
+    </div>
+  );
+}
+
 function ScreenerToolContent({ apiKey, onOpenEarnings }) {
   /* v3.10 (Victor: "al pulsar una tarjeta que aparezcan más datos — pre/post, IV crush, EM, Ø EM,
      Ø actual, POP open/high/low/close — y un botón de añadir a Earnings"): las tarjetas del screener

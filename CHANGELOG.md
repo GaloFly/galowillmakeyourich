@@ -1,5 +1,64 @@
 # CHANGELOG — Bloques
 
+Bloques v4.93 — Pestaña **Análisis**: un ticker y sale todo de una vez
+
+## Lo que pidió Victor
+*"Tengo el bot de telegram que poniéndole comandos me saca lo siguiente: Valora, flujo, gamma, OI,
+smart, niveles. Creo que podrías hacerme una herramienta de análisis, donde ponga un ticker y me
+salga todo esto de una vez pero con presentación más guapa tipo moomoo. Esa pestaña solo se ve con la
+contraseña del servidor activada."*
+
+## Lo que hay (y lo que NO, dicho en la propia pantalla)
+
+Herramientas → **Análisis**. Escribes el ticker y sale, en una pantalla:
+
+- **Muros de gamma y punto de giro.** El muro de calls y el de puts (donde más gamma hay acumulada) y
+  el GEX total en dólares por cada 1% que se mueva el precio.
+- **Interés abierto por strike.** Diez strikes alrededor del precio, puts a la izquierda y calls a la
+  derecha, con el strike pegado al precio marcado en violeta.
+- **Flujo de opciones de hoy.** P/C por volumen, prima movida en calls y en puts, y los seis
+  contratos más negociados con su volumen sobre interés abierto.
+- **IV, HV e IV rank** del subyacente en la cabecera.
+
+**No están valoración ni smart money, y se dice por qué en la propia pantalla**: la valoración no
+sale de OpenD (son fundamentales, otra fuente), y el smart money necesita el tamaño de cada
+operación tick a tick, que tampoco manda. Un hueco explicado es mejor que un número inventado — la
+misma regla del VIX de la v4.63.
+
+## Las tres fronteras, marcadas donde se leen
+
+- **Los muros son DATO**: gamma × interés abierto, tal como los manda OpenD.
+- **El punto de giro es MODELO**: para saber dónde se anula la gamma hay que re-valorarla a otros
+  precios con Black-Scholes. Va etiquetado.
+- **El signo (calls suman, puts restan) es un SUPUESTO** sobre de qué lado está el creador de
+  mercado. Es la convención de siempre, pero es una convención y se dice.
+
+Y una que se repite desde la v4.51: **el volumen de hoy y el interés abierto son cosas distintas**
+—contratos vivos al cierre de ayer contra contratos cruzados hoy—, así que van en fichas separadas y
+la de OI lo dice. Mezclarlos es la forma más fácil de leer un muro donde no lo hay.
+
+## Coste para el servidor: cuatro llamadas
+
+`/cotiza` (precio) → `/subyacente` (IV, HV, rank y ahora también volumen y OI agregados, que venían
+ya en la misma respuesta y no se estaban usando) → `/cadena` (para descubrir el vencimiento más
+cercano a 30 días) → `/opciones` con **todos** los contratos de golpe. Nunca se piden los 758 de una
+cadena: se filtra al 70–135% del precio y se corta en 180 códigos.
+
+**Cero cupo de velas.** El de `request_history_kline` es de 100 símbolos distintos cada 7 días para
+toda la cuenta, y root ya gasta 12 con el barrido de sectores. Por eso los **niveles** (soportes,
+resistencias, EMAs) no van aquí todavía: cuando se hagan, será por otra fuente, no por ahí.
+
+## Verificación
+- `pruebas/analisis.mjs`: cadena sintética con los números calculados **a mano fuera de la app** —
+  muro call 220, muro put 180, GEX +$580k por cada 1%, punto de giro 195,79, P/C 0,71. 14 de 14.
+- Se cuenta que son **exactamente cuatro** llamadas al puente, y que **sin servidor la pestaña no
+  existe** (los amigos de Victor siguen viendo las de siempre).
+- Capturas recortadas de las tres fichas en iPhone, miradas una a una. Lección de la v4.90: medir no
+  basta, hay que ver el dibujo.
+- `npm run prueba` — OK, 18 retratos idénticos.
+
+---
+
 Bloques v4.92 — Las alertas se pueden desbloquear (y la app dice cómo)
 
 ## El síntoma
