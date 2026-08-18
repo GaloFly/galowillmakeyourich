@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.93"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.94"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8373,6 +8373,83 @@ const gammaBS = (S, K, anios, sigma) => {
   const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * anios) / st;
   return Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI) / (S * st);
 };
+
+/* ---------- v4.94: NIVELES a partir de las velas diarias ----------
+   Las velas son DATO (vienen de Yahoo por el puente, sin gastar cupo de OpenD). Todo lo de aquí
+   abajo es cálculo sobre ellas, y por eso se dice en pantalla de dónde sale cada cosa:
+
+     · medias exponenciales — cuenta cerrada sobre los cierres, no hay nada que suponer
+     · máximo y mínimo de 52 semanas — el mayor y el menor de las velas del último año
+     · soportes y resistencias — PIVOTES: un día cuyo máximo es el mayor de los cinco días de
+       antes y los cinco de después. Un precio al que se ha dado la vuelta varias veces importa
+       más que uno tocado una sola vez, así que los pivotes cercanos se agrupan en zonas y se
+       cuenta cuántas veces se han tocado. Es la definición de siempre, pero es UNA definición:
+       con otra ventana salen otros niveles, y por eso la ventana se dice.
+     · retrocesos de Fibonacci — sobre el tramo más grande del periodo, del mínimo al máximo (o al
+       revés, según cuál llegara después). No predicen nada: son los sitios donde mira todo el mundo. */
+const emaSerie = (cierres, p) => {
+  const out = cierres.map(() => NaN);
+  if (!cierres.length || cierres.length < p) return out;
+  const k = 2 / (p + 1);
+  /* se arranca con la media simple de las primeras p velas — sembrar con el primer cierre haría
+     que la media de 200 arrastrase durante meses el precio de un solo día */
+  let e = cierres.slice(0, p).reduce((s, c) => s + c, 0) / p;
+  out[p - 1] = e;
+  for (let i = p; i < cierres.length; i++) { e = cierres[i] * k + e * (1 - k); out[i] = e; }
+  return out;
+};
+
+const nivelesDeVelas = (velas, spot) => {
+  const vs = (velas || []).filter((v) => isFinite(n(v.c)) && n(v.c) > 0);
+  if (vs.length < 30) return null;
+  const alto = (v) => (isFinite(n(v.h)) && n(v.h) > 0 ? n(v.h) : n(v.c));
+  const bajo = (v) => (isFinite(n(v.l)) && n(v.l) > 0 ? n(v.l) : n(v.c));
+  const cierres = vs.map((v) => n(v.c));
+
+  const emas = [20, 50, 200].map((p) => ({ p, v: emaSerie(cierres, p)[cierres.length - 1] }))
+    .filter((e) => isFinite(e.v));
+
+  const ult = vs.slice(-252);                         /* 52 semanas hábiles */
+  const max52 = Math.max(...ult.map(alto)), min52 = Math.min(...ult.map(bajo));
+
+  /* ---- pivotes y zonas ---- */
+  const K = 5;
+  const pivotes = [];
+  for (let i = K; i < vs.length - K; i++) {
+    const h = alto(vs[i]), l = bajo(vs[i]);
+    let esAlto = true, esBajo = true;
+    for (let j = i - K; j <= i + K; j++) {
+      if (j === i) continue;
+      if (alto(vs[j]) >= h) esAlto = false;
+      if (bajo(vs[j]) <= l) esBajo = false;
+    }
+    if (esAlto) pivotes.push({ px: h, i });
+    if (esBajo) pivotes.push({ px: l, i });
+  }
+  const zonas = [];
+  pivotes.slice().sort((a, b) => a.px - b.px).forEach((p) => {
+    const z = zonas[zonas.length - 1];
+    if (z && Math.abs(p.px - z.px) <= z.px * 0.015) {
+      z.toques++; z.px = (z.px * (z.toques - 1) + p.px) / z.toques; z.ultimo = Math.max(z.ultimo, p.i);
+    } else zonas.push({ px: p.px, toques: 1, ultimo: p.i });
+  });
+  const resistencias = zonas.filter((z) => z.px > spot).sort((a, b) => a.px - b.px).slice(0, 3);
+  const soportes = zonas.filter((z) => z.px < spot).sort((a, b) => b.px - a.px).slice(0, 3);
+
+  /* ---- el tramo grande y sus retrocesos ---- */
+  let iMax = 0, iMin = 0;
+  vs.forEach((v, i) => { if (alto(v) > alto(vs[iMax])) iMax = i; if (bajo(v) < bajo(vs[iMin])) iMin = i; });
+  const pMax = alto(vs[iMax]), pMin = bajo(vs[iMin]);
+  const subiendo = iMax > iMin;                        /* el máximo llegó DESPUÉS: tramo al alza */
+  const fibos = pMax > pMin
+    ? [0.236, 0.382, 0.5, 0.618].map((f) => ({ f, px: subiendo ? pMax - (pMax - pMin) * f : pMin + (pMax - pMin) * f }))
+    : [];
+
+  return { velas: vs, emas, max52, min52, resistencias, soportes, fibos, subiendo,
+           tramo: { de: subiendo ? pMin : pMax, a: subiendo ? pMax : pMin,
+                    desde: vs[Math.min(iMax, iMin)].f, hasta: vs[Math.max(iMax, iMin)].f },
+           ventanaPivote: K };
+};
 /* v4.75 — el modelador. Victor: *"igual podemos hacer un modelador en condiciones para modular todo:
    IV cortas, largas, media, strikes, y cómo evoluciona según pasa el tiempo"*.
 
@@ -9450,6 +9527,51 @@ function StrikeTile({ side, k, pct, em, onNudge, raw, onType }) {
        otros precios con Black-Scholes; es lo mismo que hace el bot ("flip por perfil BS").
      · El SIGNO (calls +, puts −)          → SUPUESTO del sector. Nadie publica el inventario real
        de los creadores de mercado. Si no se cumple, el signo se da la vuelta entero. */
+/* v4.94 — el precio con sus niveles encima. Sin esto hay que leer siete números y colocarlos
+   mentalmente alrededor del precio, que es justo el trabajo que un gráfico hace gratis. */
+function GraficoNiveles({ niveles, spot }) {
+  const vs = niveles.velas.slice(-120);
+  if (vs.length < 10) return null;
+  const cierres = niveles.velas.map((v) => n(v.c));
+  const e20 = emaSerie(cierres, 20).slice(-vs.length);
+  const e50 = emaSerie(cierres, 50).slice(-vs.length);
+  const lineas = [...niveles.soportes.slice(0, 2).map((z) => ({ ...z, sop: true })),
+                  ...niveles.resistencias.slice(0, 2).map((z) => ({ ...z, sop: false }))];
+  const W = 320, H = 150, ML = 4, MR = 42, MT = 8, MB = 16;
+  const lo = Math.min(spot, ...vs.map((v) => n(v.l) || n(v.c)), ...lineas.map((l) => l.px));
+  const hi = Math.max(spot, ...vs.map((v) => n(v.h) || n(v.c)), ...lineas.map((l) => l.px));
+  const pad = (hi - lo) * 0.06 || 1;
+  const px = (i) => ML + (i / (vs.length - 1)) * (W - ML - MR);
+  const py = (v) => MT + (1 - (v - (lo - pad)) / ((hi + pad) - (lo - pad))) * (H - MT - MB);
+  const linea = (serie) => serie.map((v, i) => (isFinite(v) ? px(i) + "," + py(v) : null)).filter(Boolean).join(" ");
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Precio con sus niveles">
+        {lineas.map((l) => (
+          <g key={l.px}>
+            <line x1={ML} y1={py(l.px)} x2={W - MR} y2={py(l.px)} stroke={l.sop ? T.green : T.red}
+              strokeWidth="1.4" strokeDasharray="4 3" opacity="0.85" />
+            <text x={W - MR + 3} y={py(l.px) + 3.5} fill={l.sop ? T.green : T.red} fontSize="9" fontWeight="800">
+              {money2(l.px)}
+            </text>
+          </g>
+        ))}
+        <polyline points={linea(e50)} fill="none" stroke={T.gold} strokeWidth="1.6" opacity="0.9" />
+        <polyline points={linea(e20)} fill="none" stroke={T.purple} strokeWidth="1.6" opacity="0.9" />
+        <polyline points={vs.map((v, i) => px(i) + "," + py(n(v.c))).join(" ")} fill="none"
+          stroke={T.ink} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={px(vs.length - 1)} cy={py(spot)} r="3.4" fill={T.card} stroke={T.ink} strokeWidth="2" />
+        <text x={ML} y={H - 4} fill={T.sub} fontSize="9" fontWeight="700" textAnchor="start">{diaMesCorto(vs[0].f)}</text>
+        <text x={W - MR} y={H - 4} fill={T.sub} fontSize="9" fontWeight="700" textAnchor="end">{diaMesCorto(vs[vs.length - 1].f)}</text>
+      </svg>
+      <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>
+        {vs.length} sesiones · <span style={{ color: T.purple }}>EMA 20</span> · <span style={{ color: T.gold }}>EMA 50</span>
+        {" · "}<span style={{ color: T.green }}>soportes</span> y <span style={{ color: T.red }}>resistencias</span> a rayas
+      </div>
+    </div>
+  );
+}
+
 function AnalisisContent({ puente }) {
   const [tkr, setTkr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -9470,6 +9592,24 @@ function AnalisisContent({ puente }) {
       /* volatilidad del subyacente (v4.87). Si el puente es viejo y no conoce la ruta, se sigue sin ella */
       let vol = null;
       try { const sv = await puenteFetch(puente, "/subyacente", { codigo: cod }); if (sv && sv.ok) vol = sv.subyacente; } catch (e) {}
+
+      /* v4.94 — valoración, velas y reparto de capital. Cada una en su propio intento: si el puente
+         del servidor todavía es el de antes y no conoce la ruta, esa ficha no sale y el resto de la
+         pantalla funciona igual. Nunca "falta un dato → falla todo". */
+      let val = null, velas = null, dinero = null, columnasDinero = null, fallos = [];
+      try {
+        const r = await puenteFetch(puente, "/valoracion", { codigo: cod });
+        if (r && r.ok) val = r.valoracion; else if (r && r.error) fallos.push("valoración: " + r.error);
+      } catch (e) { fallos.push("valoración: " + (e && e.message ? e.message : e)); }
+      try {
+        const r = await puenteFetch(puente, "/velas", { codigo: cod, rango: "1y" });
+        if (r && r.ok) velas = r.velas; else if (r && r.error) fallos.push("velas: " + r.error);
+      } catch (e) { fallos.push("velas: " + (e && e.message ? e.message : e)); }
+      try {
+        const r = await puenteFetch(puente, "/dinero", { codigo: cod });
+        if (r && r.ok) { dinero = r.dinero; columnasDinero = r.columnas || null; }
+        else if (r && r.error) fallos.push("dinero grande: " + r.error);
+      } catch (e) { fallos.push("dinero grande: " + (e && e.message ? e.message : e)); }
 
       const hoy = new Date();
       const cad = await puenteFetch(puente, "/cadena", {
@@ -9562,6 +9702,7 @@ function AnalisisContent({ puente }) {
 
       setDatos({ tkr: t, spot, vol, vtos, vto, dte: dias(vto), filas, muroCall, muroPut, gexTotal,
                  flip, sinGamma, conGamma, primaCall: primaDe(true), primaPut: primaDe(false), tops,
+                 val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), fallos,
                  cuando: Date.now() });
     } catch (e) {
       setDatos(null);
@@ -9572,7 +9713,10 @@ function AnalisisContent({ puente }) {
 
   const Barra = ({ v, max, color, derecha }) => (
     <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: derecha ? "flex-end" : "flex-start" }}>
-      <div style={{ height: 9, borderRadius: 5, background: color, width: max > 0 ? Math.max(2, (Math.abs(v) / max) * 100) + "%" : "2px" }} />
+      {/* un cero se deja EN BLANCO. El mínimo de 2px pintaba una rayita del color contrario al lado
+          de cada barra —rojo junto a un neto positivo— y eso se lee como un dato pequeño, no como
+          la ausencia de dato que es. */}
+      {v ? <div style={{ height: 9, borderRadius: 5, background: color, width: max > 0 ? Math.max(2, (Math.abs(v) / max) * 100) + "%" : "2px" }} /> : null}
     </div>
   );
   const Ficha = ({ titulo, nota, children }) => (
@@ -9585,6 +9729,15 @@ function AnalisisContent({ puente }) {
     </div>
   );
   const millones = (x) => (Math.abs(x) >= 1e6 ? money2(x / 1e6) + "M" : money(x / 1e3) + "k");
+  /* capitalizaciones: en B y T, que es como las lee él en moomoo y en IBKR todos los días */
+  const gordo = (x) => (Math.abs(x) >= 1e12 ? money2(x / 1e12) + "T"
+    : Math.abs(x) >= 1e9 ? money2(x / 1e9) + "B" : millones(x));
+  const Tile = ({ l, x, col }) => (
+    <div style={{ background: T.tile, borderRadius: 12, padding: "10px 8px", boxShadow: T.inset, textAlign: "center" }}>
+      <div style={{ fontSize: 15.5, fontWeight: 800, color: col || T.ink, fontVariantNumeric: "tabular-nums" }}>{x}</div>
+      <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 3, lineHeight: 1.25, minHeight: "2.5em", display: "flex", alignItems: "center", justifyContent: "center" }}>{l}</div>
+    </div>
+  );
 
   return (
     <div style={{ display: "grid", gap: 12, padding: "0 2px 24px" }}>
@@ -9600,9 +9753,9 @@ function AnalisisContent({ puente }) {
       {msg ? <div style={{ fontSize: 12, fontWeight: 700, color: T.red, lineHeight: 1.45 }}>{msg}</div> : null}
       {!datos && !busy && !msg && (
         <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, lineHeight: 1.55 }}>
-          Escribe un ticker y sale de una vez la volatilidad, los muros de gamma con su punto de giro,
-          el interés abierto por strike y el flujo de opciones del día. Cuatro llamadas a tu servidor,
-          ni una por strike.
+          Escribe un ticker y sale de una vez: valoración, niveles con soportes y resistencias,
+          volatilidad, muros de gamma con su punto de giro, interés abierto por strike, flujo de
+          opciones del día y de dónde viene el dinero. Siete llamadas a tu servidor, ni una por strike.
         </div>
       )}
       {datos && (() => {
@@ -9642,6 +9795,121 @@ function AnalisisContent({ puente }) {
               </div>
             )}
           </div>
+
+          {/* ---------- valoración (v4.94) ---------- */}
+          {datos.val && (() => {
+            const V = datos.val;
+            const per = isFinite(n(V.per_ttm)) && n(V.per_ttm) > 0 ? n(V.per_ttm) : n(V.per);
+            const min = n(V.min_52s), max = n(V.max_52s);
+            const hayRango = isFinite(min) && isFinite(max) && max > min;
+            const pos = hayRango ? Math.max(0, Math.min(1, (datos.spot - min) / (max - min))) : NaN;
+            return (
+              <Ficha titulo="Valoración"
+                nota="Fundamentales tal y como los manda moomoo, sin retocar. Son de la empresa, no del mercado de hoy: cambian cuando publica resultados, no cada tarde.">
+                {!V.fundamentales_validos ? (
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: T.gold, lineHeight: 1.5 }}>
+                    Tu servidor marca estos fundamentales como no válidos para {datos.tkr}. Suele pasar con
+                    ETFs y fondos, que no tienen beneficios ni valor contable — no es una avería.
+                  </div>
+                ) : (<>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
+                    <Tile l="Capitalización" x={isFinite(n(V.capitalizacion)) && n(V.capitalizacion) > 0 ? "$" + gordo(n(V.capitalizacion)) : "—"} />
+                    <Tile l="PER" x={isFinite(per) && per > 0 ? money2(per) : "—"}
+                      col={isFinite(per) && per > 0 ? (per < 20 ? T.green : per > 45 ? T.red : T.ink) : T.sub} />
+                    <Tile l="Precio / valor contable" x={isFinite(n(V.p_vc)) && n(V.p_vc) > 0 ? money2(n(V.p_vc)) : "—"} />
+                    <Tile l="Dividendo TTM" x={isFinite(n(V.dividendo_ttm_pct)) && n(V.dividendo_ttm_pct) > 0 ? money2(n(V.dividendo_ttm_pct)) + "%" : "no paga"} />
+                  </div>
+                  {hayRango && (
+                    <div style={{ display: "grid", gap: 5 }}>
+                      <div style={{ position: "relative", height: 10, borderRadius: 5, background: T.tile, boxShadow: T.inset }}>
+                        <div style={{ position: "absolute", left: "calc(" + (pos * 100).toFixed(1) + "% - 4px)", top: -2,
+                          width: 8, height: 14, borderRadius: 4, background: T.purple }} />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+                        <span>{"mín 52s $" + money2(min)}</span>
+                        <span style={{ color: T.purple, fontWeight: 800 }}>{"ahora, al " + Math.round(pos * 100) + "% del rango"}</span>
+                        <span>{"máx 52s $" + money2(max)}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset, fontSize: 11, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.5 }}>
+                    {isFinite(n(V.bpa)) ? <>{"BPA "}<span style={{ color: T.ink }}>{"$" + money2(n(V.bpa))}</span>{" · "}</> : null}
+                    {isFinite(n(V.valor_contable_accion)) ? <>{"valor contable "}<span style={{ color: T.ink }}>{"$" + money2(n(V.valor_contable_accion))}</span>{" por acción · "}</> : null}
+                    {isFinite(n(V.rotacion)) ? <>{"rotación "}<span style={{ color: T.ink }}>{money2(n(V.rotacion)) + "%"}</span></> : null}
+                  </div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                    Lo que tu bot llama <b>valoración</b> lleva además el precio objetivo de los analistas.
+                    Eso no lo da OpenD: no es dato de mercado sino opinión publicada, y hace falta otra fuente.
+                  </div>
+                </>)}
+              </Ficha>
+            );
+          })()}
+
+          {/* ---------- niveles (v4.94) ---------- */}
+          {datos.niveles && (() => {
+            const N = datos.niveles;
+            const dist = (p) => ((p - datos.spot) / datos.spot) * 100;
+            return (
+              <Ficha titulo="Niveles: soportes, resistencias y medias"
+                nota={"Sobre velas diarias de Yahoo, que NO gastan cupo de tu servidor. Los soportes y resistencias son sitios donde el precio ya se dio la vuelta (máximos o mínimos que superan a los " + N.ventanaPivote + " días de cada lado), agrupados por cercanía; el número dice cuántas veces se tocaron. Es una definición, no una ley: con otra ventana salen otros niveles."}>
+                <GraficoNiveles niveles={N} spot={datos.spot} />
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
+                  <div style={{ background: T.tileRed, borderRadius: 14, padding: "10px 11px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: T.red, textTransform: "uppercase", letterSpacing: 0.5 }}>Resistencias</div>
+                    {N.resistencias.length ? N.resistencias.map((z) => (
+                      /* el porcentaje y los toques van DEBAJO del precio: en media pantalla de
+                         iPhone, en la misma línea, "toques" se cae al renglón siguiente él solo */
+                      <div key={z.px} style={{ marginTop: 4 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{"$" + money2(z.px)}</div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{"+" + dist(z.px).toFixed(1) + "% · " + z.toques + (z.toques === 1 ? " toque" : " toques")}</div>
+                      </div>
+                    )) : <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 3 }}>ninguna por encima: está en máximos del periodo</div>}
+                  </div>
+                  <div style={{ background: T.tileGreen, borderRadius: 14, padding: "10px 11px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: T.green, textTransform: "uppercase", letterSpacing: 0.5 }}>Soportes</div>
+                    {N.soportes.length ? N.soportes.map((z) => (
+                      <div key={z.px} style={{ marginTop: 4 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{"$" + money2(z.px)}</div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{dist(z.px).toFixed(1) + "% · " + z.toques + (z.toques === 1 ? " toque" : " toques")}</div>
+                      </div>
+                    )) : <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 3 }}>ninguno por debajo: está en mínimos del periodo</div>}
+                  </div>
+                </div>
+                <div style={{ background: T.tile, borderRadius: 12, padding: "10px 11px", boxShadow: T.inset, fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums", lineHeight: 1.6 }}>
+                  {N.emas.map((e) => (
+                    <span key={e.p}>
+                      {"EMA " + e.p + " "}
+                      <span style={{ color: datos.spot >= e.v ? T.green : T.red, fontWeight: 800 }}>{"$" + money2(e.v)}</span>
+                      {"  "}
+                    </span>
+                  ))}
+                  <br />
+                  {"52 semanas: "}<span style={{ color: T.ink }}>{"$" + money2(N.min52) + " – $" + money2(N.max52)}</span>
+                  <br />
+                  <span style={{ fontSize: 10, fontWeight: 600 }}>
+                    {"en "}<span style={{ color: T.green, fontWeight: 800 }}>verde</span>
+                    {" las medias que quedan por DEBAJO del precio, en "}
+                    <span style={{ color: T.red, fontWeight: 800 }}>rojo</span>{" las que quedan por encima"}
+                  </span>
+                </div>
+                {N.fibos.length > 0 && (
+                  <div style={{ display: "grid", gap: 5 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                      {"Retrocesos del tramo " + (N.subiendo ? "al alza" : "a la baja") + " ($" + money2(N.tramo.de) + " → $" + money2(N.tramo.a) + ")"}
+                    </span>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {N.fibos.map((f) => (
+                        <span key={f.f} style={{ background: T.tile, boxShadow: T.raiseSm, borderRadius: 999, padding: "5px 10px", fontSize: 11, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+                          {(f.f * 100).toFixed(1).replace(".0", "") + "% · $" + money2(f.px)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </Ficha>
+            );
+          })()}
 
           {/* ---------- gamma ---------- */}
           <Ficha titulo="Muros de gamma y punto de giro"
@@ -9729,12 +9997,69 @@ function AnalisisContent({ puente }) {
             )}
           </Ficha>
 
+          {/* ---------- dinero grande (v4.94) ---------- */}
+          {datos.dinero && (() => {
+            const D = datos.dinero, e = D.entra || {}, s = D.sale || {};
+            const tramos = [["muy_grande", "Muy grandes"], ["grande", "Grandes"], ["media", "Medianas"], ["pequena", "Pequeñas"]]
+              .map(([k, l]) => ({ k, l, entra: n(e[k]), sale: n(s[k]), neto: n(e[k]) - n(s[k]),
+                                  hay: isFinite(n(e[k])) || isFinite(n(s[k])) }))
+              .filter((x) => x.hay);
+            if (!tramos.length) {
+              return (
+                <Ficha titulo="De dónde viene el dinero"
+                  nota="Tu servidor contestó, pero sin ninguna de las columnas esperadas. Se enseñan las que mandó para poder arreglarlo de una vez, en vez de dejar la ficha vacía.">
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: T.gold, lineHeight: 1.5, wordBreak: "break-word" }}>
+                    {(datos.columnasDinero || []).join(" · ") || "no mandó ninguna columna"}
+                  </div>
+                </Ficha>
+              );
+            }
+            const maxAbs = Math.max(1, ...tramos.map((x) => Math.abs(x.neto)));
+            const grandes = tramos.filter((x) => x.k === "muy_grande" || x.k === "grande").reduce((a, x) => a + x.neto, 0);
+            const chicas = tramos.filter((x) => x.k === "pequena").reduce((a, x) => a + x.neto, 0);
+            const total = tramos.reduce((a, x) => a + x.neto, 0);
+            return (
+              <Ficha titulo="De dónde viene el dinero"
+                nota="Dinero que entra menos el que sale en la sesión, separado por el TAMAÑO de la orden que lo movió. Es lo que tu bot llama flujo por tamaño. Lo que NO es: sigue sin decir quién fue el agresor de cada cruce, así que es un rastro, no una dirección.">
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
+                  <Tile l="Neto de órdenes grandes" x={(grandes >= 0 ? "+" : "−") + "$" + millones(Math.abs(grandes))} col={grandes >= 0 ? T.green : T.red} />
+                  <Tile l="Neto de órdenes pequeñas" x={(chicas >= 0 ? "+" : "−") + "$" + millones(Math.abs(chicas))} col={chicas >= 0 ? T.green : T.red} />
+                </div>
+                <div style={{ display: "grid", gap: 5 }}>
+                  {tramos.map((x) => (
+                    <div key={x.k} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ flex: "none", width: 96, fontSize: 10.5, fontWeight: 700, color: T.sub }}>{x.l}</span>
+                      <Barra v={x.neto < 0 ? x.neto : 0} max={maxAbs} color={T.red} derecha />
+                      <Barra v={x.neto > 0 ? x.neto : 0} max={maxAbs} color={T.green} />
+                      <span style={{ flex: "none", width: 62, textAlign: "right", fontSize: 10.5, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                        color: x.neto >= 0 ? T.green : T.red }}>{(x.neto >= 0 ? "+" : "−") + "$" + millones(Math.abs(x.neto))}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset, fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.55 }}>
+                  {"Neto de la sesión: "}
+                  <span style={{ color: total >= 0 ? T.green : T.red, fontWeight: 800 }}>{(total >= 0 ? "+" : "−") + "$" + millones(Math.abs(total))}</span>
+                  {grandes * chicas < 0 ? (grandes > 0
+                    ? " · las órdenes grandes compran mientras las pequeñas venden"
+                    : " · las órdenes grandes venden mientras las pequeñas compran") : ""}
+                </div>
+              </Ficha>
+            );
+          })()}
+
           {/* ---------- lo que NO está, dicho ---------- */}
+          {(!datos.val || !datos.niveles || !datos.dinero) && (
+            <div style={{ background: T.tile, borderRadius: 14, padding: "11px 13px", boxShadow: T.inset, fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.55 }}>
+              <b>Faltan fichas en esta pantalla.</b> Casi siempre es que el puente del servidor todavía es
+              el de antes y no conoce las rutas nuevas: hay que reiniciarlo tras actualizarlo.
+              {datos.fallos && datos.fallos.length ? <div style={{ marginTop: 5, color: T.sub, wordBreak: "break-word" }}>{datos.fallos.join(" · ")}</div> : null}
+            </div>
+          )}
           <div style={{ background: T.tile, borderRadius: 14, padding: "11px 13px", boxShadow: T.inset, fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.55 }}>
-            Tu bot saca tres cosas más que aquí NO están, y no es un olvido: la <b>valoración</b>
-            (Morningstar, consenso, fundamentales) no vive en OpenD; el <b>smart money</b> necesita los
-            ticks con el tamaño de cada orden, que el servidor no da; y los <b>niveles</b> necesitan velas,
-            que van por otra vía. Antes de inventarlas, no están.
+            Siete llamadas por análisis y ninguna por strike. Las velas van por Yahoo a propósito: el
+            cupo de histórico de moomoo es de 100 símbolos cada siete días <b>para toda la cuenta</b>, y
+            se comparte con el barrido de sectores. Lo único que sigue sin estar es el <b>precio objetivo
+            de los analistas</b>: no es dato de mercado, es opinión publicada, y hace falta otra fuente.
           </div>
         </>);
       })()}

@@ -1,5 +1,75 @@
 # CHANGELOG — Bloques
 
+Bloques v4.94 — Análisis completo: valoración, niveles y de dónde viene el dinero
+
+## Lo que dijo Victor
+*"Pues mételo de Yahoo sí, y todo lo que te he pasado se puede sacar de Moomoo y OpenD, porque de
+ahí lo saca el bot de telegram del servidor."*
+
+Y tenía razón en las dos cosas. La v4.93 decía que la valoración y el smart money "no viven en
+OpenD", y eso era **falso**: sí viven, pero por otra puerta.
+
+## Las dos puertas que faltaba abrir
+
+**La valoración estaba en la misma llamada que ya se hacía.** `get_market_snapshot` trae dieciséis
+campos de fundamentales —capitalización, PER, P/VC, BPA, valor contable, dividendo—. Lo que
+despistó: pedido sobre un CONTRATO ese bloque llega con `equity_valid False` y todo a nan, y así
+salió en el volcado de las 142 columnas del 17-ago. Pedido sobre el código de la ACCIÓN, viene
+lleno. Cero llamadas nuevas de un tipo distinto.
+
+**El smart money es `get_capital_distribution`**: dinero que entra y que sale en la sesión separado
+por el TAMAÑO de la orden que lo movió. Es exactamente el "flujo por tamaño" del bot.
+
+## Los niveles, por Yahoo — y no es una preferencia, es el cupo
+
+El histórico de moomoo (`request_history_kline`) tiene un cupo de **100 símbolos distintos cada 7
+días para toda la cuenta**, y root ya gasta 12 con el barrido nocturno de sectores. Un ticker
+mirado hoy queda apuntado una semana entera: una tarde de análisis se comería el cupo de los tres
+sistemas de la máquina, en silencio y quitándoselo a los otros dos. Yahoo da la misma vela diaria
+y no gasta nada de Futu.
+
+Con las velas salen: **soportes y resistencias** (pivotes de cinco días a cada lado, agrupados por
+cercanía y con las veces que se tocó cada zona), **EMA 20/50/200**, **rango de 52 semanas**,
+**retrocesos de Fibonacci** del tramo grande, y un **gráfico** con el precio, las dos medias y los
+niveles a rayas. Sin el gráfico había que leer siete números y colocarlos mentalmente alrededor del
+precio, que es el trabajo que un dibujo hace gratis.
+
+## Lo que se dice en pantalla, como siempre
+
+- Los soportes y resistencias van con **su definición escrita** (ventana de cinco días): con otra
+  ventana salen otros niveles, y un nivel sin su definición parece una ley cuando es un criterio.
+- La ficha del dinero repite el aviso de la de flujo: **no dice quién fue el agresor** de cada
+  cruce. Es un rastro, no una dirección.
+- Y lo único que sigue faltando se nombra: el **precio objetivo de los analistas**. No es dato de
+  mercado, es opinión publicada, y hace falta otra fuente. Antes de inventarlo, no está.
+- Si el puente del servidor todavía es el viejo, las fichas nuevas no salen y la app **dice cuál
+  falló y por qué**, en vez de dejar huecos que no se distinguen de una avería.
+
+## Un cero ya no se pinta
+
+Las barras tenían un mínimo de 2 píxeles, así que junto a cada neto positivo aparecía una rayita
+roja y junto a cada negativo una verde. Eso se lee como un dato pequeño, no como el cero que era.
+
+## Verificación
+- `pruebas/analisis.mjs`, ampliada: velas fabricadas como una onda que va justo de 150 a 230, para
+  que el precio TOQUE de verdad los mismos dos niveles cinco veces cada uno. Salen resistencia $230
+  con 5 toques, soporte $150 con 5 toques y el 50% de Fibonacci en $190 = 150 + 80×0,5, todo
+  calculado a mano fuera de la app. **30 de 30.**
+  - El primer intento de esos datos estaba MAL: una recta con un "valle" plantado en 150 donde el
+    precio valía 130. La prueba lo cazó (salían 2 toques y no 3) y el fallo era del dato, no del
+    código — pero solo porque los toques se contaban uno a uno en vez de mirar si "había niveles".
+- `pruebas/velas-yahoo.py` (nueva): el parseo de la respuesta de Yahoo con los huecos que manda de
+  verdad —días enteros a null, cierres sin volumen, listas más cortas que la de fechas, NaN—. Una
+  vela mal parseada valdría 0 y arrastraría medias y soportes sin dar la cara. 9 de 9.
+- Las seis fichas, recortadas y miradas una a una en pantalla de iPhone.
+- `npm run prueba` — OK, 18 retratos idénticos para quien no tiene servidor.
+
+## Ojo: hay que reiniciar el puente
+Las tres rutas nuevas (`/valoracion`, `/dinero`, `/velas`) viven en `servidor/puente.py`. Hasta que
+no se actualice y se reinicie el servicio en el VPS, esas tres fichas no salen.
+
+---
+
 Bloques v4.93 — Pestaña **Análisis**: un ticker y sale todo de una vez
 
 ## Lo que pidió Victor
