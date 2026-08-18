@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.94"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.95"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8385,8 +8385,12 @@ const gammaBS = (S, K, anios, sigma) => {
        más que uno tocado una sola vez, así que los pivotes cercanos se agrupan en zonas y se
        cuenta cuántas veces se han tocado. Es la definición de siempre, pero es UNA definición:
        con otra ventana salen otros niveles, y por eso la ventana se dice.
-     · retrocesos de Fibonacci — sobre el tramo más grande del periodo, del mínimo al máximo (o al
-       revés, según cuál llegara después). No predicen nada: son los sitios donde mira todo el mundo. */
+   Lo que aquí NO se calcula, y es una decisión (v4.95, regla de Victor): los niveles de SU detector
+   —el impulso mayor con sus fechas, el 50%, el 38,2%, el 61,8% y la banda de ±3%—. Eso corre en el
+   servidor y no sale por ninguna ruta del puente. La v4.94 dibujaba unos retrocesos de Fibonacci
+   calculados aquí sobre el tramo mayor: mismo concepto, otra cuenta, y por tanto OTROS números para
+   el mismo ticker que los suyos. Un nivel mal calculado es peor que ningún nivel, así que se quitó.
+   El hueco queda dicho en pantalla; cuando esos niveles lleguen de verdad, se pintan y ya está. */
 const emaSerie = (cierres, p) => {
   const out = cierres.map(() => NaN);
   if (!cierres.length || cierres.length < p) return out;
@@ -8406,7 +8410,9 @@ const nivelesDeVelas = (velas, spot) => {
   const bajo = (v) => (isFinite(n(v.l)) && n(v.l) > 0 ? n(v.l) : n(v.c));
   const cierres = vs.map((v) => n(v.c));
 
-  const emas = [20, 50, 200].map((p) => ({ p, v: emaSerie(cierres, p)[cierres.length - 1] }))
+  /* 21, 50 y 200: las mismas que usa su sistema. La de 20 es la de manual, pero tener dos números
+     distintos para "la media rápida" en dos pantallas que él mira a la vez es pedir una confusión. */
+  const emas = [21, 50, 200].map((p) => ({ p, v: emaSerie(cierres, p)[cierres.length - 1] }))
     .filter((e) => isFinite(e.v));
 
   const ult = vs.slice(-252);                         /* 52 semanas hábiles */
@@ -8436,19 +8442,68 @@ const nivelesDeVelas = (velas, spot) => {
   const resistencias = zonas.filter((z) => z.px > spot).sort((a, b) => a.px - b.px).slice(0, 3);
   const soportes = zonas.filter((z) => z.px < spot).sort((a, b) => b.px - a.px).slice(0, 3);
 
-  /* ---- el tramo grande y sus retrocesos ---- */
-  let iMax = 0, iMin = 0;
-  vs.forEach((v, i) => { if (alto(v) > alto(vs[iMax])) iMax = i; if (bajo(v) < bajo(vs[iMin])) iMin = i; });
-  const pMax = alto(vs[iMax]), pMin = bajo(vs[iMin]);
-  const subiendo = iMax > iMin;                        /* el máximo llegó DESPUÉS: tramo al alza */
-  const fibos = pMax > pMin
-    ? [0.236, 0.382, 0.5, 0.618].map((f) => ({ f, px: subiendo ? pMax - (pMax - pMin) * f : pMin + (pMax - pMin) * f }))
-    : [];
+  return { velas: vs, emas, max52, min52, resistencias, soportes, ventanaPivote: K };
+};
 
-  return { velas: vs, emas, max52, min52, resistencias, soportes, fibos, subiendo,
-           tramo: { de: subiendo ? pMin : pMax, a: subiendo ? pMax : pMin,
-                    desde: vs[Math.min(iMax, iMin)].f, hasta: vs[Math.max(iMax, iMin)].f },
-           ventanaPivote: K };
+/* ---------- v4.95: la foto diaria del interés abierto ----------
+   El ΔOI —cuánto sube o baja el interés abierto de un strike de un día para otro— dice si ahí se
+   ABRIÓ posición o se CERRÓ. No dice comprado o vendido, pero abrir o cerrar es la mitad honesta.
+
+   El servidor tiene un histórico nocturno de esto y la app no lo puede leer. Así que mientras tanto
+   la app guarda su propia foto, y **cuesta cero llamadas**: los contratos ya se descargan enteros
+   para la gamma, el interés abierto viene dentro.
+
+   Lo que hay que decir en pantalla, porque es la diferencia con el del servidor: esta foto solo
+   tiene los días en los que ÉL abrió ese ticker. Si mira un lunes y un viernes, el cambio es de
+   cuatro días, no de uno — y se dice la fecha de la foto anterior, no "ayer".
+
+   No viaja en el backup, por la misma regla que las marcas y las griegas (v4.56): es dato de
+   mercado. La diferencia es que este no se puede volver a bajar — se rehace mirando dos días. */
+const OI_CLAVE = "bloques_oi_v1";
+const OI_MAX_FECHAS = 5;   /* por serie: con más, localStorage crece sin tope y ahí viven las posiciones */
+const OI_MAX_SERIES = 10;  /* tickers×vencimiento distintos que se recuerdan, los más recientes */
+const OI_MIN_CONTRATOS = 500, OI_MIN_PCT = 0.25;  /* el criterio de su sistema */
+
+const fotoYDeltaOi = (tkr, vto, contratos) => {
+  let libro = {};
+  try { libro = JSON.parse(localStorage.getItem(OI_CLAVE) || "{}") || {}; } catch (e) { libro = {}; }
+  const serie = tkr + "|" + vto;
+  const hoy = iso(new Date());
+  const previas = Object.keys(libro[serie] || {}).filter((f) => f < hoy).sort();
+  const desde = previas.length ? previas[previas.length - 1] : null;
+  const antes = desde ? libro[serie][desde] : null;
+
+  /* la foto de hoy: interés abierto por código, y el strike y el lado para poder pintarlo luego */
+  const foto = {};
+  contratos.forEach((c) => {
+    const oi = numOrNaN(c.interes_abierto), k = n(c.strike);
+    if (!isFinite(oi) || !isFinite(k) || !k) return;
+    foto[c.codigo] = { k, c: String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0 ? 1 : 0, oi };
+  });
+  if (Object.keys(foto).length) {
+    const s = libro[serie] || (libro[serie] = {});
+    s[hoy] = foto;
+    Object.keys(s).sort().slice(0, Math.max(0, Object.keys(s).length - OI_MAX_FECHAS)).forEach((f) => delete s[f]);
+    /* y si hay demasiadas series guardadas, se sueltan las que llevan más tiempo sin mirarse */
+    const series = Object.keys(libro).map((x) => ({ x, ult: Object.keys(libro[x] || {}).sort().pop() || "" }))
+      .sort((a, b) => (a.ult < b.ult ? 1 : -1));
+    series.slice(OI_MAX_SERIES).forEach((s2) => delete libro[s2.x]);
+    try { localStorage.setItem(OI_CLAVE, JSON.stringify(libro)); } catch (e) {}
+  }
+  if (!antes) return { desde: null, filas: [] };
+
+  const filas = [];
+  Object.keys(foto).forEach((cod) => {
+    const a = antes[cod];
+    if (!a || !isFinite(n(a.oi))) return;
+    const d = foto[cod].oi - n(a.oi);
+    if (!d) return;
+    /* solo lo que se mueve de verdad: 500 contratos, o un cuarto de lo que había */
+    if (Math.abs(d) < OI_MIN_CONTRATOS && !(n(a.oi) > 0 && Math.abs(d) / n(a.oi) >= OI_MIN_PCT)) return;
+    filas.push({ k: foto[cod].k, esCall: foto[cod].c === 1, oi: foto[cod].oi, antes: n(a.oi), delta: d });
+  });
+  filas.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  return { desde, filas: filas.slice(0, 8) };
 };
 /* v4.75 — el modelador. Victor: *"igual podemos hacer un modelador en condiciones para modular todo:
    IV cortas, largas, media, strikes, y cómo evoluciona según pasa el tiempo"*.
@@ -9533,7 +9588,7 @@ function GraficoNiveles({ niveles, spot }) {
   const vs = niveles.velas.slice(-120);
   if (vs.length < 10) return null;
   const cierres = niveles.velas.map((v) => n(v.c));
-  const e20 = emaSerie(cierres, 20).slice(-vs.length);
+  const e21 = emaSerie(cierres, 21).slice(-vs.length);
   const e50 = emaSerie(cierres, 50).slice(-vs.length);
   const lineas = [...niveles.soportes.slice(0, 2).map((z) => ({ ...z, sop: true })),
                   ...niveles.resistencias.slice(0, 2).map((z) => ({ ...z, sop: false }))];
@@ -9557,7 +9612,7 @@ function GraficoNiveles({ niveles, spot }) {
           </g>
         ))}
         <polyline points={linea(e50)} fill="none" stroke={T.gold} strokeWidth="1.6" opacity="0.9" />
-        <polyline points={linea(e20)} fill="none" stroke={T.purple} strokeWidth="1.6" opacity="0.9" />
+        <polyline points={linea(e21)} fill="none" stroke={T.purple} strokeWidth="1.6" opacity="0.9" />
         <polyline points={vs.map((v, i) => px(i) + "," + py(n(v.c))).join(" ")} fill="none"
           stroke={T.ink} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
         <circle cx={px(vs.length - 1)} cy={py(spot)} r="3.4" fill={T.card} stroke={T.ink} strokeWidth="2" />
@@ -9565,7 +9620,7 @@ function GraficoNiveles({ niveles, spot }) {
         <text x={W - MR} y={H - 4} fill={T.sub} fontSize="9" fontWeight="700" textAnchor="end">{diaMesCorto(vs[vs.length - 1].f)}</text>
       </svg>
       <div style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>
-        {vs.length} sesiones · <span style={{ color: T.purple }}>EMA 20</span> · <span style={{ color: T.gold }}>EMA 50</span>
+        {vs.length} sesiones · <span style={{ color: T.purple }}>EMA 21</span> · <span style={{ color: T.gold }}>EMA 50</span>
         {" · "}<span style={{ color: T.green }}>soportes</span> y <span style={{ color: T.red }}>resistencias</span> a rayas
       </div>
     </div>
@@ -9700,9 +9755,13 @@ function AnalisisContent({ puente }) {
                  vOI: isFinite(vl) && isFinite(oi) && oi > 0 ? vl / oi : NaN };
       }).filter((x) => x.prima > 0).sort((a, b) => b.prima - a.prima).slice(0, 6);
 
+      /* v4.95: se guarda la foto del interés abierto de hoy y, si ya había otra de otro día, sale
+         el cambio. Va aquí y no en el render porque guardar es un efecto, y el render se repite. */
+      const oi = fotoYDeltaOi(t, vto, contratos);
+
       setDatos({ tkr: t, spot, vol, vtos, vto, dte: dias(vto), filas, muroCall, muroPut, gexTotal,
                  flip, sinGamma, conGamma, primaCall: primaDe(true), primaPut: primaDe(false), tops,
-                 val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), fallos,
+                 val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), fallos, oi,
                  cuando: Date.now() });
     } catch (e) {
       setDatos(null);
@@ -9893,20 +9952,14 @@ function AnalisisContent({ puente }) {
                     <span style={{ color: T.red, fontWeight: 800 }}>rojo</span>{" las que quedan por encima"}
                   </span>
                 </div>
-                {N.fibos.length > 0 && (
-                  <div style={{ display: "grid", gap: 5 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>
-                      {"Retrocesos del tramo " + (N.subiendo ? "al alza" : "a la baja") + " ($" + money2(N.tramo.de) + " → $" + money2(N.tramo.a) + ")"}
-                    </span>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {N.fibos.map((f) => (
-                        <span key={f.f} style={{ background: T.tile, boxShadow: T.raiseSm, borderRadius: 999, padding: "5px 10px", fontSize: 11, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-                          {(f.f * 100).toFixed(1).replace(".0", "") + "% · $" + money2(f.px)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* el hueco del detector, dicho. Aquí es donde irían el impulso mayor, el 50%, el
+                    38,2%, el 61,8% y la banda de ±3% el día que salgan del servidor. */}
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.5 }}>
+                  <b>Niveles de tu detector: no disponibles.</b> El impulso mayor con su 50%, 38,2% y
+                  61,8% los calcula el servidor y no salen por el puente. Lo de arriba son soportes y
+                  resistencias calculados por la app sobre las velas — <b>no son los de tu detector</b>,
+                  y no se parecen a ellos por casualidad. Aproximarlos sería peor que no tenerlos.
+                </div>
               </Ficha>
             );
           })()}
@@ -9964,6 +10017,47 @@ function AnalisisContent({ puente }) {
               <span style={{ color: T.red, fontWeight: 800 }}>puts</span> a la izquierda · <span style={{ color: T.green, fontWeight: 800 }}>calls</span> a la derecha · en violeta, el strike pegado al precio
             </div>
           </Ficha>
+
+          {/* ---------- cambio de interés abierto (v4.95) ---------- */}
+          {datos.oi && (
+            <Ficha titulo="Qué se abrió y qué se cerró"
+              nota="Cambio del interés abierto respecto a la foto anterior. Si sube, ahí se abrió posición nueva; si baja, se cerró. No dice comprado o vendido, pero abrir o cerrar sí, y esa es la mitad honesta del dato.">
+              {datos.oi.desde ? (<>
+                <div style={{ display: "grid", gap: 5 }}>
+                  {datos.oi.filas.map((f, i) => (
+                    <div key={i} style={{ background: T.tile, borderRadius: 10, padding: "7px 9px", boxShadow: T.inset,
+                      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 800, color: f.esCall ? T.green : T.red, minWidth: 0 }}>
+                        {(f.esCall ? "C" : "P") + money2(f.k)}
+                        <span style={{ color: T.sub, fontWeight: 600 }}>{" · de " + money(f.antes) + " a " + money(f.oi)}</span>
+                      </span>
+                      <span style={{ flex: "none", fontSize: 11.5, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                        color: f.delta > 0 ? T.green : T.red }}>
+                        {(f.delta > 0 ? "+" : "−") + money(Math.abs(f.delta)) + (f.delta > 0 ? " abiertos" : " cerrados")}
+                      </span>
+                    </div>
+                  ))}
+                  {!datos.oi.filas.length && (
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.5 }}>
+                      Ningún strike se movió lo bastante desde la foto anterior (hace falta un cambio de
+                      500 contratos o de un cuarto de lo que había).
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.5 }}>
+                  Comparado con la foto del <b>{ibkrDate(datos.oi.desde)}</b>, que es el último día que
+                  abriste este ticker — no necesariamente ayer. Esta foto la guarda la app, no el
+                  servidor: solo tiene los días que tú miraste, y no viaja en el backup.
+                </div>
+              </>) : (
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.55 }}>
+                  <b>Primera foto guardada.</b> El cambio saldrá la próxima vez que abras {datos.tkr} en
+                  otro día. La app se guarda ella sola el interés abierto de cada análisis —no cuesta ni
+                  una llamada más, el dato ya venía dentro—, así que a partir de mañana hay con qué comparar.
+                </div>
+              )}
+            </Ficha>
+          )}
 
           {/* ---------- flujo ---------- */}
           <Ficha titulo="Flujo de opciones de hoy"
