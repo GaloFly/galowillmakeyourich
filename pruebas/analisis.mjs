@@ -87,10 +87,14 @@ const DELTA_PUT = { 170: -0.10, 180: -0.18, 190: -0.30, 200: -0.50, 210: -0.70, 
 /* volumen por vencimiento fuera del de 30 días, para que cada horizonte tenga un veredicto claro:
    corto muy comprador, medio empatado, largo muy vendedor y con aperturas. */
 const OTROS = {
-  [VTOS.a]: { call: 100, put: 20, oi: 5000 },   [VTOS.b]: { call: 100, put: 20, oi: 5000 },
-  [VTOS.d]: { call: 50, put: 100, oi: 5000 },   [VTOS.e]: { call: 50, put: 100, oi: 5000 },
+  [VTOS.a]: { call: 100, put: 20, oi: 400 },    [VTOS.b]: { call: 100, put: 20, oi: 400 },
+  [VTOS.d]: { call: 50, put: 100, oi: 800 },    [VTOS.e]: { call: 50, put: 100, oi: 800 },
   [VTOS.f]: { call: 10, put: 300, oi: 100 },    [VTOS.g]: { call: 10, put: 300, oi: 100 },
 };
+/* el interés abierto de estos vencimientos se bajó en la v4.98 (era 5.000 en todos) para que la
+   mariposa se pueda JUZGAR mirándola: con un OI uniforme y enorme, el volumen del día quedaba en
+   un píxel en todas las filas y el dibujo no decía nada. No cambia ningún veredicto: las aperturas
+   siguen pidiendo más de 200 de volumen, y esos vencimientos mueven 100 o menos. */
 
 const cod = (k, lado, v) => "US.TEST" + v.slice(2).replace(/-/g, "") + lado + k * 1000;
 const contratos = [];
@@ -286,6 +290,18 @@ await page.waitForTimeout(2000);
 const t = await page.evaluate(() => document.body.innerText);
 await page.screenshot({ path: D + "/analisis.png", fullPage: true });
 /* recortes de cada ficha, para MIRARLAS y no solo medirlas */
+/* recorte de la mariposa aparte: vive dentro de la ficha de flujo y hay que MIRARLA */
+const recorta = async (etiqueta, nombre) => {
+  const c = await page.evaluate((e) => {
+    const s = Array.from(document.querySelectorAll("svg")).find((x) => (x.getAttribute("aria-label") || "").indexOf(e) === 0);
+    if (!s) return null;
+    s.scrollIntoView({ block: "center" });
+    const b = s.getBoundingClientRect();
+    return { x: Math.max(0, b.x - 8), y: Math.max(0, b.y - 8), width: b.width + 16, height: b.height + 16 };
+  }, etiqueta);
+  if (c && c.height > 20) { await page.waitForTimeout(300); await page.screenshot({ path: D + "/" + nombre + ".png", clip: c }); }
+};
+
 const caja = (q) => page.evaluate((s) => {
   const f = Array.from(document.querySelectorAll("div")).filter((x) => (x.textContent || "").indexOf(s) === 0);
   const d = f.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length).pop();
@@ -305,6 +321,8 @@ for (const [nombre, txt] of [["roi", "El put que venderías"], ["valoracion", "V
   const c2 = await caja(txt);
   if (c2) await page.screenshot({ path: D + "/analisis-" + nombre + ".png", clip: c2 });
 }
+
+await recorta("Volumen de hoy sobre interés abierto", "analisis-mariposa");
 
 console.log("\n=== lo que pinta la app ===");
 console.log("  llamadas al puente:", llamadas.join(" · "));
@@ -413,8 +431,49 @@ ok(/ALCISTA\s+\+3/.test(t) && /P\/C de volumen 0\.20/.test(plano), "corto: ALCIS
 ok(/NEUTRAL\s+\+0/.test(t) && /P\/C de volumen 1\.17/.test(plano), "medio: NEUTRAL 0 con P/C 1,17 — ninguna de las cuatro señales se decanta");
 ok(/BAJISTA\s+−4/.test(t) && /P\/C de volumen 30\.00/.test(plano), "largo: BAJISTA −4 con P/C 30 — las cuatro señales a la vez");
 ok(/APERTURA/.test(t), "y se marcan las APERTURAS (volumen 300 sobre 100 de interés abierto = 3×)");
+/* el voto de la prima dice cuántas VECES es mayor un lado, que es lo que explica el voto:
+   corto 700k/112k = 6,3× calls · largo 1,68M/70k = 24× puts. Los importes van en las barras. */
+ok(/6\.3× calls/.test(plano), "el voto de la prima dice 6,3× calls en el corto, no repite los dos importes");
+ok(/24\.0× puts/.test(plano), "y 24× puts en el largo");
+ok(/calls[\s\S]{0,40}\$700k/.test(plano) && /puts[\s\S]{0,40}\$112k/.test(plano),
+  "y los importes van dibujados en barras a la misma escala, debajo");
 ok(/no se sabe quién fue el agresor/.test(t), "con el aviso de que no se sabe quién fue el agresor");
 ok(/sesión de HOY[^\n]*cierre de AYER/.test(t), "y el de la mezcla temporal, que es lo que hace dudosa una apertura");
+
+console.log("\n=== v4.98: los tres dibujos nuevos ===");
+const svgs = await page.evaluate(() => Array.from(document.querySelectorAll("svg"))
+  .map((x) => ({ etiqueta: x.getAttribute("aria-label") || "", rects: x.querySelectorAll("rect").length,
+                 lineas: x.querySelectorAll("line").length })));
+const mariposa = svgs.find((x) => /Volumen de hoy sobre interés abierto/.test(x.etiqueta));
+console.log("  mariposa:", mariposa || "no está");
+ok(!!mariposa, "la mariposa de volumen sobre interés abierto se dibuja");
+/* cuatro rectángulos por fila: la sombra del OI y el sólido del volumen, de cada lado */
+ok(!!mariposa && mariposa.rects >= 7 * 4,
+  "con las DOS capas de cada lado: sombra del interés abierto y sólido del volumen (" + (mariposa ? mariposa.rects : 0) + " barras)");
+ok(!!mariposa && mariposa.lineas >= 1, "y la línea del precio cruzada por su sitio entre los strikes");
+ok(/el bloque sólido es el volumen de HOY, la sombra el interés abierto del cierre de AYER/.test(t),
+  "diciendo qué es cada capa: mezclarlas sin decirlo es lo que fabrica muros que no existen");
+
+/* las referencias externas: precio, Morningstar y consenso en la MISMA escala */
+ok(/Precio ahora/.test(t) && /Morningstar/.test(t) && /Consenso Wall St/.test(t),
+  "las tres referencias en la misma escala");
+/* Morningstar 120 sobre un precio de 200 son −40%; el consenso 165, −18% */
+ok(/−40%/.test(t), "Morningstar $120 contra un precio de $200 sale como −40%, calculado a mano");
+ok(/−18%/.test(t), "y el consenso $165, como −18%");
+
+/* los múltiplos, con su color contra su PROPIA historia */
+ok(/14x/.test(t) && /hist 5–22 \(med 9\)/.test(t),
+  "EV/EBITDA 14x con su rango histórico debajo: 5–22, mediana 9");
+/* la ficha de prueba NO trae `fcf_yield_pct` a propósito: solo el histórico con su `actual`.
+   Antes eso salía como "0%" y pintado de rojo — un dato que falta valiendo cero, que además es
+   el número más llamativo que se puede enseñar. */
+ok(/3\.1%/.test(t) && /hist 1\.2–8\.4 \(med 4\.5\)/.test(t),
+  "la caja sobre precio sale del histórico cuando no viene suelta: 3,1%, no 0%");
+ok(!/>0%</.test(t.replace(/\n/g, ">")), "y ningún múltiplo se pinta como 0% por faltar");
+ok((t.match(/dónde cae hoy/g) || []).length === 0,
+  "y el rango no se repite dos veces: lo dice la ficha con su color, y ya");
+ok(/barato contra\s+su PROPIA historia/.test(plano) || /barato contra su PROPIA historia/.test(plano),
+  "con la leyenda de que el verde y el rojo son contra SU historia, no contra otras empresas");
 
 console.log("\n=== v4.97: gráfico y muros ===");
 ok(/Diario · 9 meses/.test(t) && /Semanal · 3 años/.test(t), "las dos pestañas del gráfico");
@@ -430,7 +489,7 @@ ok(/Ficha profunda/.test(t), "la ficha profunda se pinta");
 ok(/2026\/Q3/.test(t) && /son un año/i.test(t),
   "por TRIMESTRES, y se dice cuánto tiempo son de verdad cuatro periodos: un año, bien escrito");
 ok(/deuda\/EBITDA/.test(t) && /2/.test(t), "deuda neta, EBITDA y su cociente");
-ok(/EV \/ EBITDA/.test(t) && /mediana 9/.test(t),
+ok(/EV \/ EBITDA/.test(t) && /med 9/.test(t),
   "EV/EBITDA contra su propio histórico: 14 con la mediana en 9 — sin eso, un múltiplo no dice nada");
 ok(/según morningstar/i.test(t) && /\$120/.test(t), "Morningstar con su nombre encima, como dato de terceros");
 ok(/consenso de analistas · 34/i.test(t) && /\$165/.test(t) && /62% comprar/.test(t), "el consenso con su reparto");

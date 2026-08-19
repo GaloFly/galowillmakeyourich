@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.97"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.98"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -9658,7 +9658,13 @@ const flujoDeContratos = (lista) => {
   const dif = callVol - putVol;
   votos.push({ nombre: "calls − puts", valor: (dif >= 0 ? "+" : "−") + money(Math.abs(dif)),
                voto: dif > umbral ? 1 : dif < -umbral ? -1 : 0 });
-  votos.push({ nombre: "prima por lado", valor: "$" + money(primaC / 1000) + "k / $" + money(primaP / 1000) + "k",
+  /* v4.98: el voto enseña CUÁNTAS VECES es mayor un lado, no los dos importes — que van dibujados
+     justo debajo. Así el número explica el voto en vez de repetir lo de la barra: el listón está en
+     1,5×, y con "6,3× calls" delante se ve que lo pasa de largo. */
+  const mayor = Math.max(primaC, primaP), menor = Math.min(primaC, primaP);
+  votos.push({ nombre: "prima por lado",
+               valor: menor > 0 ? (mayor / menor).toFixed(1) + "× " + (primaC >= primaP ? "calls" : "puts")
+                     : mayor > 0 ? "todo en " + (primaC >= primaP ? "calls" : "puts") : "—",
                voto: primaC > primaP * 1.5 ? 1 : primaP > primaC * 1.5 ? -1 : 0 });
   votos.push({ nombre: "aperturas", valor: aperturasC + " / " + aperturasP,
                voto: aperturasC > aperturasP ? 1 : aperturasP > aperturasC ? -1 : 0 });
@@ -9704,6 +9710,113 @@ const putDelRoi = (lista, spot, dte) => {
     motivo: "",
   };
 };
+
+/* ---------- v4.98: la MARIPOSA de volumen sobre interés abierto ----------
+   Puts a la izquierda, calls a la derecha, un strike por fila y el precio cruzado en medio.
+
+   Las dos capas dicen cosas distintas y por eso se pintan distinto: el interés abierto (lo que
+   había al cierre de AYER) va en claro y de fondo, y el volumen de HOY va sólido encima. Cuando la
+   barra sólida se acerca a la sombra, ahí se está negociando hoy tanto como todo lo vivo que había:
+   eso es lo que hay que ver, y en una lista de cuatro strikes no se ve. */
+function MariposaVolumen({ filas, spot }) {
+  const fs = (filas || []).filter((f) => f.callVol + f.putVol + f.callOi + f.putOi > 0);
+  if (fs.length < 3) return null;
+  /* si hay muchos strikes, se enseñan los que más se mueven — pero ordenados por precio, que es
+     como se lee un gráfico de strikes */
+  const usa = fs.slice().sort((a, b) => (b.callVol + b.putVol + b.callOi + b.putOi) - (a.callVol + a.putVol + a.callOi + a.putOi))
+    .slice(0, 22).sort((a, b) => b.k - a.k);
+  const maxOi = Math.max(1, ...usa.map((f) => Math.max(f.callOi, f.putOi)));
+  const maxVol = Math.max(1, ...usa.map((f) => Math.max(f.callVol, f.putVol)));
+  /* las dos capas comparten escala: si no, el volumen de hoy parecería enorme siempre */
+  const max = Math.max(maxOi, maxVol);
+  const W = 320, FILA = 11, MT = 14, MB = 14, MC = 34;   /* MC: el hueco central de los strikes */
+  const H = MT + usa.length * FILA + MB;
+  const medio = W / 2;
+  /* las dos capas comparten escala —es lo que permite comparar—, pero un volumen pequeño sobre un
+     interés abierto grande se quedaba en menos de un píxel y desaparecía. Un mínimo de 2,5 px sobre
+     los ~143 de media anchura distorsiona un 1,7% y a cambio se ve QUE HAY algo. Cero sigue siendo
+     cero: nada dibujado. */
+  const ancho = (v) => (v > 0 ? Math.max(2.5, (v / max) * (medio - MC / 2 - 2)) : 0);
+  /* dónde cae el precio entre los strikes de la lista, para cruzar la línea por su sitio */
+  let yPrecio = null;
+  for (let i = 0; i < usa.length - 1; i++) {
+    if (spot <= usa[i].k && spot >= usa[i + 1].k) {
+      const t = (usa[i].k - spot) / (usa[i].k - usa[i + 1].k || 1);
+      yPrecio = MT + (i + 0.5 + t) * FILA;
+      break;
+    }
+  }
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Volumen de hoy sobre interés abierto, por strike">
+        {usa.map((f, i) => {
+          const y = MT + i * FILA;
+          return (
+            <g key={f.k}>
+              {/* sombra: lo que había vivo al cierre de ayer */}
+              <rect x={medio - MC / 2 - ancho(f.putOi)} y={y + 1.5} width={ancho(f.putOi)} height={FILA - 4} fill={T.red} opacity="0.18" rx="1.5" />
+              <rect x={medio + MC / 2} y={y + 1.5} width={ancho(f.callOi)} height={FILA - 4} fill={T.green} opacity="0.18" rx="1.5" />
+              {/* sólido: lo que se ha cruzado hoy */}
+              <rect x={medio - MC / 2 - ancho(f.putVol)} y={y + 3} width={ancho(f.putVol)} height={FILA - 7} fill={T.red} rx="1.5" />
+              <rect x={medio + MC / 2} y={y + 3} width={ancho(f.callVol)} height={FILA - 7} fill={T.green} rx="1.5" />
+              <text x={medio} y={y + FILA - 3} fill={Math.abs(f.k - spot) < spot * 0.012 ? T.purple : T.sub}
+                fontSize="7.5" fontWeight="800" textAnchor="middle">{money2(f.k)}</text>
+            </g>
+          );
+        })}
+        {yPrecio != null && (
+          /* en DOS tramos, saltándose la columna de strikes: de una pieza tachaba el número justo
+             del strike más importante, el que está pegado al precio */
+          <g>
+            <line x1="2" y1={yPrecio} x2={medio - MC / 2 - 1} y2={yPrecio} stroke={T.purple} strokeWidth="1.4" strokeDasharray="5 3" />
+            <line x1={medio + MC / 2 + 1} y1={yPrecio} x2={W - 2} y2={yPrecio} stroke={T.purple} strokeWidth="1.4" strokeDasharray="5 3" />
+            <text x={W - 3} y={yPrecio - 3.5} fill={T.purple} fontSize="8" fontWeight="800" textAnchor="end">{"$" + money2(spot)}</text>
+          </g>
+        )}
+      </svg>
+      <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+        <span style={{ color: T.red, fontWeight: 800 }}>puts</span> a la izquierda ·{" "}
+        <span style={{ color: T.green, fontWeight: 800 }}>calls</span> a la derecha · el bloque
+        sólido es el volumen de HOY, la sombra el interés abierto del cierre de AYER
+      </div>
+    </div>
+  );
+}
+
+/* ---------- v4.98: dónde está el precio contra las referencias de fuera ----------
+   Tres puntos en la MISMA escala: lo que vale ahora, lo que dice Morningstar y lo que dice el
+   consenso. En columna de números hay que restar mentalmente tres veces; aquí se ve de un vistazo
+   si el precio está por debajo de las dos, entre ellas, o por encima. */
+function Referencias({ spot, filas }) {
+  const usa = (filas || []).filter((f) => isFinite(n(f.v)) && n(f.v) > 0);
+  if (usa.length < 2) return null;
+  const lo = Math.min(spot, ...usa.map((f) => n(f.v)));
+  const hi = Math.max(spot, ...usa.map((f) => n(f.v)));
+  const pad = (hi - lo) * 0.18 || 1;
+  const pos = (v) => ((v - (lo - pad)) / ((hi + pad) - (lo - pad))) * 100;
+  return (
+    <div style={{ display: "grid", gap: 7 }}>
+      {usa.map((f) => {
+        const pct = ((n(f.v) - spot) / spot) * 100;
+        return (
+          <div key={f.et} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: "none", width: 74, fontSize: 10, fontWeight: 800, color: f.col, lineHeight: 1.2 }}>{f.et}</span>
+            <div style={{ flex: 1, minWidth: 0, position: "relative", height: 9, borderRadius: 5, background: T.tile, boxShadow: T.inset }}>
+              <div style={{ position: "absolute", left: "calc(" + pos(n(f.v)).toFixed(1) + "% - 5px)", top: -2,
+                width: 10, height: 13, borderRadius: 4, background: f.col }} />
+            </div>
+            <span style={{ flex: "none", width: 82, textAlign: "right", fontSize: 11, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+              {"$" + money(n(f.v))}
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: f.base ? T.sub : pct >= 0 ? T.green : T.red }}>
+                {f.base ? "" : " " + (pct >= 0 ? "+" : "−") + Math.abs(pct).toFixed(0) + "%"}
+              </span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /* v4.94 — el precio con sus niveles encima. Sin esto hay que leer siete números y colocarlos
    mentalmente alrededor del precio, que es justo el trabajo que un gráfico hace gratis. */
@@ -9917,6 +10030,23 @@ function AnalisisContent({ puente }) {
         r: flujoDeContratos(h.vtos.flatMap((v) => delVencimiento(v))),
       })).filter((h) => h.r);
 
+      /* v4.98 — el volumen de HOY por strike, sumando TODOS los vencimientos, para el gráfico de
+         mariposa. Es la vista que faltaba: en una lista de cuatro strikes no se ve dónde está
+         pegándose el mercado, y en un dibujo se ve sin leer un número. */
+      const porStrike = {};
+      todos.forEach((c) => {
+        const k = n(c.strike);
+        if (!isFinite(k) || !k) return;
+        const esCall = String(c.tipo || "").toUpperCase().indexOf("CALL") >= 0;
+        const f = porStrike[k] || (porStrike[k] = { k, callVol: 0, putVol: 0, callOi: 0, putOi: 0 });
+        const vl = numOrNaN(c.volumen), oi = numOrNaN(c.interes_abierto);
+        if (isFinite(vl)) { if (esCall) f.callVol += vl; else f.putVol += vl; }
+        if (isFinite(oi)) { if (esCall) f.callOi += oi; else f.putOi += oi; }
+      });
+      const mariposa = Object.values(porStrike)
+        .filter((f) => f.callVol + f.putVol + f.callOi + f.putOi > 0)
+        .sort((a, b) => b.k - a.k);
+
       /* ---- todo junto POR STRIKE: la put y la call del mismo strike son una fila ---- */
       const porK = {};
       let sinGamma = 0, conGamma = 0;
@@ -9989,7 +10119,7 @@ function AnalisisContent({ puente }) {
                  flip, sinGamma, conGamma, primaCall: primaDe(true), primaPut: primaDe(false), tops,
                  val, dinero, columnasDinero, niveles: nivelesDeVelas(velas, spot), velasFuente, fallos, oi,
                  velas, semanal: semanalDeVelas(velas), roi, roiVto: vtoRoi, roiDte: dias(vtoRoi), roiFuera,
-                 flujo, edadMax, avisoVentana,
+                 flujo, mariposa, edadMax, avisoVentana,
                  cuando: Date.now() });
     } catch (e) {
       setDatos(null);
@@ -10241,6 +10371,36 @@ function AnalisisContent({ puente }) {
                   const vlr = F.valoracion || {}, own = F.ownership || {};
                   const per = (fin.periodos || []).slice(0, 6);
                   const dias = isFinite(n(ficha.edad_s)) ? n(ficha.edad_s) / 86400 : NaN;
+                  /* v4.98 — el múltiplo como FICHA, con su color y su rango debajo. Un número
+                     suelto no se puede juzgar; con "hist 5,0-22,0 (med 9,0)" al lado y el color
+                     puesto, se juzga sin pensar. Verde = barato contra su propia historia, rojo =
+                     caro. Y es contra la SUYA: comparar el EV/EBITDA de dos empresas distintas no
+                     dice nada, compararlo con el suyo de los últimos años sí. */
+                  const Multiplo = ({ etiqueta, v, h, sufijo, alRevés }) => {
+                    /* numOrNaN y NO n(): n() convierte lo que falta en CERO, y un múltiplo que no
+                       viene salía pintado como "0%" y en rojo. Un dato que falta tiene que
+                       desaparecer, no valer cero — que además es el valor más llamativo de todos. */
+                    let val = numOrNaN(v);
+                    if (!isFinite(val) && h) val = numOrNaN(h.actual);   /* el histórico trae el de hoy */
+                    if (!isFinite(val)) return null;
+                    const hay = h && isFinite(numOrNaN(h.mediana)) && isFinite(numOrNaN(h.min)) && isFinite(numOrNaN(h.max));
+                    const caro = hay ? (alRevés ? val < n(h.mediana) : val > n(h.mediana)) : null;
+                    return (
+                      <div style={{ background: caro === null ? T.tile : caro ? T.tileRed : T.tileGreen,
+                        borderRadius: 12, padding: "10px 9px", boxShadow: caro === null ? T.inset : "none", textAlign: "center" }}>
+                        <div style={{ fontSize: 15.5, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                          color: caro === null ? T.ink : caro ? T.red : T.green }}>
+                          {money2(val) + (sufijo || "")}
+                        </div>
+                        <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{etiqueta}</div>
+                        {hay && (
+                          <div style={{ fontSize: 8.5, fontWeight: 600, color: T.sub, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+                            {"hist " + money2(n(h.min)) + "–" + money2(n(h.max)) + " (med " + money2(n(h.mediana)) + ")"}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
                   /* un múltiplo contra su propio histórico: es lo ÚNICO que lo convierte en lectura.
                      Un EV/EBITDA de 14 no dice nada; un 14 cuando su mediana es 9, sí. */
                   const Historico = ({ etiqueta, h, sufijo, alRevés }) => {
@@ -10318,8 +10478,31 @@ function AnalisisContent({ puente }) {
                       </div>
                     )}
 
-                    <Historico etiqueta="EV / EBITDA" h={mul.hist_ev_ebitda} />
-                    <Historico etiqueta="Rentabilidad de la caja libre" h={mul.hist_fcf_yield} sufijo="%" alRevés />
+                    {/* v4.98: las referencias de fuera, en la misma escala. Es lo que más se lee
+                        de un vistazo: si el precio está por debajo de las dos, entre ellas, o por
+                        encima — y eso en tres números en columna hay que restarlo a mano. */}
+                    {(isFinite(n(vlr.morningstar_fair_value)) || (vlr.consenso_analistas && isFinite(n(vlr.consenso_analistas.medio)))) && (
+                      <Referencias spot={datos.spot} filas={[
+                        { et: "Precio ahora", v: datos.spot, col: T.ink, base: true },
+                        { et: "Morningstar", v: n(vlr.morningstar_fair_value), col: T.green },
+                        { et: "Consenso Wall St", v: vlr.consenso_analistas ? n(vlr.consenso_analistas.medio) : NaN, col: T.gold },
+                      ]} />
+                    )}
+
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
+                      <Multiplo etiqueta="EV / EBITDA" v={mul.ev_ebitda} h={mul.hist_ev_ebitda} sufijo="x" />
+                      <Multiplo etiqueta="Caja / precio" v={mul.fcf_yield_pct} h={mul.hist_fcf_yield} sufijo="%" alRevés />
+                      <Multiplo etiqueta="Deuda / EBITDA" v={mul.net_debt_ebitda} sufijo="x" />
+                    </div>
+                    <div style={{ fontSize: 9.5, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>
+                      <span style={{ color: T.green, fontWeight: 800 }}>verde</span> = barato contra
+                      su PROPIA historia · <span style={{ color: T.red, fontWeight: 800 }}>rojo</span> = caro.
+                      Comparar el múltiplo de dos empresas distintas no dice gran cosa; compararlo con el
+                      suyo de los últimos años, sí.
+                    </div>
+                    {/* las barras de rango que había aquí se quitaron en la v4.98: decían lo MISMO
+                        que las fichas de arriba, que ya llevan el rango escrito y el color puesto.
+                        Dos veces el mismo dato hace la tarjeta larga y no añade nada. */}
 
                     {(isFinite(n(vlr.morningstar_fair_value)) || vlr.moat) && (
                       <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px", boxShadow: T.inset }}>
@@ -10590,6 +10773,26 @@ function AnalisisContent({ puente }) {
                         </div>
                       ))}
                     </div>
+                    {/* v4.98: la prima de cada lado, dibujada. "$700k / $112k" obliga a dividir
+                        mentalmente; dos barras a la misma escala se leen sin hacer nada. */}
+                    {(R.primaC > 0 || R.primaP > 0) && (() => {
+                      const mx = Math.max(R.primaC, R.primaP, 1);
+                      return (
+                        <div style={{ display: "grid", gap: 3 }}>
+                          {[["calls", R.primaC, T.green], ["puts", R.primaP, T.red]].map(([et, v, c]) => (
+                            <div key={et} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ flex: "none", width: 30, fontSize: 9.5, fontWeight: 700, color: T.sub }}>{et}</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ height: 8, borderRadius: 4, background: c, width: Math.max(2, (v / mx) * 100) + "%" }} />
+                              </div>
+                              <span style={{ flex: "none", width: 52, textAlign: "right", fontSize: 10, fontWeight: 800, color: c, fontVariantNumeric: "tabular-nums" }}>
+                                {"$" + millones(v)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {R.tops.length > 0 && (
                       <div style={{ display: "grid", gap: 3 }}>
                         {R.tops.map((x, i) => (
@@ -10611,6 +10814,10 @@ function AnalisisContent({ puente }) {
                   </div>
                 );
               })}
+              {/* v4.98: dónde se está pegando el mercado hoy, dibujado. Con los cuatro strikes más
+                  negociados de cada horizonte no se ve la FORMA: si el volumen está pegado al precio,
+                  arriba en las calls, o abajo defendiendo un suelo. */}
+              {datos.mariposa && <MariposaVolumen filas={datos.mariposa} spot={datos.spot} />}
               <div style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
                 <b>APERTURA</b> = más de 200 contratos negociados y más de vez y media el interés abierto
                 que había: casi seguro posición nueva, no cierre de otra.
