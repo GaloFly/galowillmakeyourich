@@ -54,15 +54,35 @@ const URL_APP = "http://localhost:" + PUERTO + "/index.html";
 
 const dentroDe = (d) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
 
-/* DOS tickers, porque la escalera de vencimientos no es igual en todos y ahí estuvo el fallo:
-     · MRVL — la escalera COMPLETA, con uno pegado a cada plazo pedido, hasta el año.
-     · RDDT — la escalera REAL de la mayoría: semanales cerca, mensuales unos meses, y NADA
-       a un año. Es el caso de las capturas de Victor del 19-ago-2026. */
+/* El LEAP de enero, calculado igual que en la app: el primer tercer-viernes-de-enero a más de
+   300 días. Es DONDE viven las opciones largas, y por eso la prueba lo pone donde toca en vez de
+   sembrar un vencimiento a 360 días que en la realidad no existe casi nunca. */
+const tercerViernesEnero = (a) => {
+  const uno = new Date(Date.UTC(a, 0, 1));
+  return new Date(Date.UTC(a, 0, 1 + ((5 - uno.getUTCDay() + 7) % 7) + 14));
+};
+const DTE_LEAP = (() => {
+  const hoy = new Date();
+  for (let i = 0; i < 3; i++) {
+    const d = Math.round((tercerViernesEnero(hoy.getUTCFullYear() + i).getTime() - hoy.getTime()) / 86400000);
+    if (d > 300) return d;
+  }
+  return 365;
+})();
+
+/* TRES tickers, porque la escalera de vencimientos no es igual en todos y ahí estuvo el fallo:
+     · MRVL — la escalera COMPLETA, con uno pegado a cada plazo pedido.
+     · RDDT — la escalera REAL de un valor con LEAPS: semanales cerca, mensuales unos meses, el
+       enero de dentro de nada... y NADA entre medias hasta el enero siguiente. Es el caso de las
+       capturas de Victor del 19-ago-2026: tiene LEAPS, pero no tiene nada a 360 días.
+     · PEQ — un valor pequeño SIN LEAPS, que los hay: nada pasados los seis meses. */
 const MUNDOS = {
   MRVL: { spot: 215.73, k0: 130, k1: 220, paso: 5,
-          dtes: [8, 15, 29, 36, 43, 57, 64, 92, 120, 178, 211, 360] },
+          dtes: [8, 15, 29, 36, 43, 57, 64, 92, 120, 178, 211, DTE_LEAP] },
   RDDT: { spot: 158.25, k0: 95, k1: 160, paso: 5,
-          dtes: [9, 16, 23, 30, 37, 44, 58, 93, 149, 212] },
+          dtes: [9, 16, 23, 30, 37, 44, 58, 93, 149, 212, DTE_LEAP] },
+  PEQ: { spot: 42.5, k0: 20, k1: 42, paso: 2,
+         dtes: [9, 16, 23, 30, 37, 44, 58, 93, 149] },
 };
 const contratos = {}, opciones = {}, VTOS = {};
 Object.entries(MUNDOS).forEach(([tkr, m]) => {
@@ -156,10 +176,12 @@ const cabeceras = await cabecerasDe(page);
 console.log("\n=== los seis plazos ===");
 const dtesEnPantalla = cabeceras.map((c) => parseInt((c.match(/(\d+) días/) || [0, "0"])[1], 10));
 console.log("  plazos que salen:", dtesEnPantalla.join(" · "));
-[30, 45, 60, 90, 180, 360].forEach((obj) => {
+[30, 45, 60, 90, 180].forEach((obj) => {
   const cerca = dtesEnPantalla.some((d) => Math.abs(d - obj) <= 20);
   ok(cerca, "hay un vencimiento cerca de los " + obj + " días");
 });
+ok(dtesEnPantalla.some((d) => Math.abs(d - DTE_LEAP) <= 20),
+  "y el LEAP de enero, que está a " + DTE_LEAP + " días y no a 360 (" + dtesEnPantalla.join(" · ") + ")");
 ok(dtesEnPantalla.length === 6, "y son SEIS grupos, uno por plazo pedido (" + dtesEnPantalla.length + ")");
 
 console.log("\n=== plegados, pero legibles ===");
@@ -202,43 +224,61 @@ await page.waitForTimeout(400);
 await page.screenshot({ path: D + "/puts-plazos.png" });
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
 
+/* una búsqueda entera en un contexto limpio, que es lo que hacen los tres escenarios de abajo */
+const buscar = async (tkr, extra) => {
+  cadenas = [];
+  const c = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
+  for (const [re, h] of rutas) await c.route(re, h);
+  const p = await c.newPage();
+  const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message));
+  await p.addInitScript(SEMILLA);
+  if (extra) await p.addInitScript(extra);
+  await p.goto(URL_APP, { waitUntil: "load" });
+  await p.waitForTimeout(2400);
+  for (const paso of PASOS(tkr)) { await p.evaluate(paso.f, paso.arg); await p.waitForTimeout(paso.ms); }
+  const cab = await cabecerasDe(p);
+  cab.forEach((x) => console.log("   ·", x));
+  return { p, errs, cab, dtes: cab.map((x) => parseInt((x.match(/(\d+) días/) || [0, "0"])[1], 10)),
+           texto: await p.evaluate(() => document.body.innerText), cadenas: cadenas.slice() };
+};
+
 /* ---------------------------------------------------------------------------
-   EL CASO DE LAS CAPTURAS DEL 19-AGO-2026 (v5.01, arreglado en la v5.02)
+   EL CASO DE LAS CAPTURAS DEL 19-AGO-2026, EN DOS ACTOS
 
-   Victor: *"no están saliendo las de 360 y en RDDT no más de 90"*. RDDT tiene semanales cerca,
-   mensuales unos meses y NADA a un año — que es la escalera normal, no una rareza.
+   Acto 1 (v5.01): *"no están saliendo las de 360 y en RDDT no más de 90"*. Se buscaba el plazo
+   largo solo entre los días 348 y 375 y, al no encontrar, se RELLENABA el hueco con el
+   vencimiento libre más cercano — el de 23 días. Salían seis grupos con pinta de ser los seis
+   pedidos y dos eran cortos disfrazados.
 
-   La v5.01 hacía dos cosas mal con eso, y la segunda era la grave:
-     1. buscaba el de 360 solo entre los días 348 y 375, donde casi nunca hay vencimiento;
-     2. y como no encontraba, RELLENABA ese hueco con el vencimiento libre más cercano — que era
-        el de 23 días. En pantalla salían seis grupos, parecían los seis plazos pedidos, y dos de
-        ellos eran vencimientos cortos disfrazados. Ese es el fallo que hay que no repetir jamás:
-        una lista corta y honesta es mejor que una completa y falsa.
+   Acto 2 (v5.02): con el hueco ya vacío en vez de relleno, la app decía que RDDT "no tiene
+   vencimientos cerca de 360 días". Victor: *"no es verdad, RDDT sí tiene LEAPS"*. Y las tiene:
+   enero de 2027 y enero de 2028. Lo que no tiene es un vencimiento A 360 DÍAS — la ventana caía
+   entre julio y septiembre de 2027, en el hueco entre los dos eneros. El plazo largo no es un
+   número de días: es el tercer viernes de enero.
 --------------------------------------------------------------------------- */
-console.log("\n=== RDDT: sin vencimientos a un año ===");
-cadenas = [];
-const ctxR = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
-for (const [re, h] of rutas) await ctxR.route(re, h);
-const pr = await ctxR.newPage();
-const erroresR = [];
-pr.on("pageerror", (e) => erroresR.push(e.message));
-await pr.addInitScript(SEMILLA);
-await pr.goto(URL_APP, { waitUntil: "load" });
-await pr.waitForTimeout(2400);
-for (const paso of PASOS("RDDT")) { await pr.evaluate(paso.f, paso.arg); await pr.waitForTimeout(paso.ms); }
-const cabR = await cabecerasDe(pr);
-cabR.forEach((c) => console.log("   ·", c));
-const dtesR = cabR.map((c) => parseInt((c.match(/(\d+) días/) || [0, "0"])[1], 10));
-ok(cadenas.length === 3, "sigue costando TRES cadenas aunque falte un plazo (" + cadenas.length + ")");
-ok(dtesR.length === 5, "salen CINCO grupos, no seis: el de 360 no existe y no se inventa (" + dtesR.length + ")");
-ok(!dtesR.some((d) => d < 25), "y NINGÚN vencimiento corto ocupa el sitio del que falta (" + dtesR.join(" · ") + ")");
-ok(dtesR.some((d) => Math.abs(d - 180) <= 44), "el de 180 SÍ sale ahora, con la holgura ancha (" + dtesR.join(" · ") + ")");
-const textoR = await pr.evaluate(() => document.body.innerText);
-ok(/no tiene vencimientos cerca de 360 días/.test(textoR), "y se DICE en pantalla cuál falta, en vez de que desaparezca en silencio");
-ok(!erroresR.length, "sin errores de JS " + JSON.stringify(erroresR.slice(0, 2)));
-await pr.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => /^[▾▸]/.test((x.innerText || "").trim())); if (b) b.scrollIntoView({ block: "center" }); });
-await pr.waitForTimeout(300);
-await pr.screenshot({ path: D + "/puts-rddt.png" });
+console.log("\n=== RDDT: TIENE LEAPS, y tienen que salir ===");
+const R = await buscar("RDDT");
+ok(R.cadenas.length === 3, "sigue costando TRES cadenas (" + R.cadenas.length + ")");
+ok(R.dtes.length === 6, "salen los SEIS plazos (" + R.dtes.length + ")");
+ok(R.dtes.some((d) => Math.abs(d - DTE_LEAP) <= 20),
+  "y el sexto es el LEAP de enero, a " + DTE_LEAP + " días — que es donde vive, no a 360 (" + R.dtes.join(" · ") + ")");
+ok(!R.dtes.some((d) => d < 25), "sin ningún vencimiento corto colado (" + R.dtes.join(" · ") + ")");
+ok(R.dtes.some((d) => Math.abs(d - 180) <= 44), "y el de 180 también sale (" + R.dtes.join(" · ") + ")");
+ok(!/no tiene/.test(R.texto), "y NO se avisa de que falte nada, porque no falta nada");
+ok(!R.errs.length, "sin errores de JS " + JSON.stringify(R.errs.slice(0, 2)));
+await R.p.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => /^[▾▸]/.test((x.innerText || "").trim())); if (b) b.scrollIntoView({ block: "center" }); });
+await R.p.waitForTimeout(300);
+await R.p.screenshot({ path: D + "/puts-rddt.png" });
+
+/* y el valor pequeño que de verdad NO tiene LEAPS: ahí el hueco sigue teniendo que quedarse
+   vacío y decirse, que es lo que arregló la v5.02 */
+console.log("\n=== PEQ: un valor pequeño SIN LEAPS ===");
+const P = await buscar("PEQ");
+ok(P.dtes.length === 5, "salen CINCO grupos, no seis: el LEAP no existe y no se inventa (" + P.dtes.length + ")");
+ok(!P.dtes.some((d) => d < 25), "y NINGÚN vencimiento corto ocupa el sitio del que falta (" + P.dtes.join(" · ") + ")");
+ok(/no tiene el LEAP de enero/.test(P.texto), "y se dice que lo que falta es el LEAP, no 'vencimientos cerca de 520 días'");
+ok(!P.errs.length, "sin errores de JS " + JSON.stringify(P.errs.slice(0, 2)));
 
 /* ---------------------------------------------------------------------------
    LA CIFRA DE LA CABECERA TIENE QUE SER LA MISMA QUE LA DE LA FILA (v5.03)

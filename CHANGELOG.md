@@ -1,5 +1,59 @@
 # CHANGELOG — Bloques
 
+Bloques v5.04 — El plazo largo no es "360 días", es el LEAP de enero
+
+## El síntoma
+Victor, corrigiendo a la app y a mí: *"no es verdad, RDDT sí tiene LEAPS"*.
+
+Tenía razón. La v5.02 decía en pantalla que RDDT *"no tiene vencimientos cerca de 360 días"*, lo
+cual era literalmente cierto y prácticamente falso: **RDDT sí tiene opciones largas**, en enero de
+2027 y enero de 2028.
+
+## La causa: buscar por un número de días en vez de por una fecha
+Pasado el año, las opciones **no están repartidas por el calendario**. Se concentran en el tercer
+viernes de enero — eso son las LEAPS. Desde el 19-ago-2026:
+
+| | fecha | días |
+|---|---|---|
+| LEAP de enero 2027 | 15-ene-2027 | 149 |
+| LEAP de enero 2028 | **21-ene-2028** | **520** |
+| ventana que se buscaba para "360 días" | 1-jul-2027 → 27-sep-2027 | 316-404 |
+
+La ventana caía **en el hueco entre los dos eneros**. No era que RDDT no tuviera nada: es que se
+estaba mirando justo donde no hay nada, y donde no lo hay casi para nadie. Ensanchar la ventana (lo
+que hizo la v5.02) no arreglaba esto, solo lo movía: el problema no era el ancho, era el sitio.
+
+## El arreglo
+El sexto plazo **deja de ser "360 días" y pasa a ser el LEAP de enero**, calculado: el primer
+tercer-viernes-de-enero a más de 300 días. Se calcula la fecha en vez de suponer un número.
+
+Sigue costando **las mismas tres llamadas** de cadena: esta ventana sustituye a la de 360, no se
+suma. Y donde de verdad no hay LEAP —que los hay, sobre todo en valores pequeños— se sigue diciendo,
+pero ahora **con su nombre**: *"no tiene el LEAP de enero"* en vez de *"no tiene vencimientos cerca
+de 520 días"*, que es exacto y no significa nada.
+
+## Verificación
+La prueba pasa a tener **tres** tickers, y el del medio es justo el caso que se falló:
+- **MRVL** — la escalera completa.
+- **RDDT** — semanales, mensuales, enero de 2027, **enero de 2028**, y nada entre medias. Se exige
+  que salgan los SEIS plazos, que el sexto sea el LEAP, y que **no se avise de que falta nada**.
+- **PEQ** — un valor pequeño sin LEAPS: cinco grupos, ningún vencimiento corto colado en el hueco,
+  y el aviso nombrando el LEAP.
+
+Comprobado que caza el fallo: devolviendo el objetivo a 360 días fijos, RDDT vuelve a salir con
+**30 · 44 · 58 · 93 · 149** y se caen tres comprobaciones.
+
+## Lección
+Tres versiones seguidas tropezando con lo mismo: **la v5.01 rellenaba el hueco, la v5.02 lo dejaba
+vacío pero seguía mirando donde no había nada, y la v5.03 pintaba mal la cifra**. Las tres las
+encontró Victor mirando la pantalla, no las pruebas. El patrón común es haber modelado el mercado
+con un número redondo (360) en vez de con su calendario real — y haber escrito pruebas que
+confirmaban mi propio modelo, porque los datos de prueba los ponía yo. De ahí que ahora los tres
+tickers de la prueba tengan escaleras **distintas y realistas**, no una cómoda.
+
+Sin regresiones: `npm run prueba` (18/18 idénticas) y cero elementos fuera de pantalla a 320 px.
+
+
 Bloques v5.03 — La cifra de la cabecera estaba dividida por cien
 
 ## El síntoma
