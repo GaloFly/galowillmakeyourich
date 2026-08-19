@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+Bloques v5.05 — Existir y cotizar no son lo mismo
+
+## El dato que lo resolvió
+Victor mandó la escalera ENTERA de vencimientos de RDDT desde Moomoo. Ahí estaba todo:
+
+| vencimiento | días | IV que da Moomoo |
+|---|---|---|
+| 17-jun-27 | 302 | 68,28% |
+| **17-sep-27** | **394** | **`-- (--)`** |
+| 21-ene-28 | 520 | 64,92% |
+
+El de septiembre de 2027 **existe y no cotiza**. Y la ventana que buscaba el plazo de 360 días
+(316-404, de la v5.02) cogía justo ese, y se dejaba fuera por catorce días el de junio, que sí
+tiene precios. El plazo largo salía vacío no por falta de vencimiento, sino por falta de datos —
+y la pantalla no distinguía una cosa de la otra.
+
+De paso, esto deja claro que la v5.04 acertó por casualidad: apuntar al LEAP de enero (520 días)
+funcionaba porque ese sí cotiza, no porque enero sea el sitio. Se ha retirado y **vuelven los seis
+plazos que pidió Victor: 30, 45, 60, 90, 180 y 360**.
+
+## Tres arreglos
+1. **La holgura del plazo largo pasa a ser asimétrica: −58/+30 en vez de ±44.** Cuanto más lejos,
+   menos líquido, así que desde un objetivo el vencimiento ÚTIL está casi siempre antes y no
+   después. La ventana pasa de 316-404 a 302-390 y coge el de junio. Sigue midiendo 88 días, que
+   es lo que cabe en una llamada.
+2. **De cada plazo largo se bajan DOS vencimientos, no uno**, y se enseña el más cercano al
+   objetivo **que tenga datos**. No cuesta ni una llamada más: todas las marcas van en la misma.
+3. **Y si ninguno de los dos cotiza, se dice, con su fecha**: *"A 360 días el vencimiento de
+   SEP 17 '27 existe, pero ninguna de sus puts tiene precio y delta ≤ 0,30. Sube la delta o
+   cámbiate de plazo."* No es lo mismo que *"no tiene vencimientos a 360 días"*: la primera se
+   arregla subiendo la delta, la segunda no se arregla. Callarse no se distingue de estar roto
+   (v4.55, v4.46 y ya van tres).
+
+## Verificación
+La prueba usa ahora **la escalera real de RDDT**, la de la captura, con `sinPrecio: [394]` para
+reproducir el vencimiento mudo. Y hay un cuarto valor, MUDO, cuyo único vencimiento largo no
+cotiza, para cubrir el aviso nuevo.
+
+**La pieza clave de la prueba es `sinPrecio`**: un puente falso que da precio de TODO no habría
+cazado esto jamás — igual que el que decía que sí a rangos de 120 días no cazó el fallo de la
+v4.97. Los datos de prueba tienen que ser tan incómodos como los de verdad.
+
+Comprobado que caza: devolviendo la ventana simétrica de la v5.02, RDDT vuelve a salir con
+**30 · 44 · 58 · 93 · 149** —exactamente la captura de Victor— y se caen dos comprobaciones.
+
+Sin regresiones: `npm run prueba` (18/18) y cero elementos fuera de pantalla a 320 px.
+
+
 Bloques v5.04 — El plazo largo no es "360 días", es el LEAP de enero
 
 ## El síntoma
