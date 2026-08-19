@@ -231,7 +231,19 @@ const montaPuente = async (c, registrar) => {
     const J = (o) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(o) });
     if (u.pathname === "/cotiza") return J({ ok: true, cotizaciones: { "US.TEST": { ultimo: SPOT, cierre_anterior: SPOT } } });
     if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.TEST", nombre: "Test Inc", iv: 44.0, hv_30d: 40.0, iv_rank: 62.0 } });
-    if (u.pathname === "/cadena") return J({ ok: true, contratos, total: contratos.length, vencimientos: Object.values(VTOS) });
+    if (u.pathname === "/cadena") {
+      /* EL PUENTE FALSO TIENE QUE SER TAN ESTRICTO COMO EL DE VERDAD.
+         Esto se añadió después de que la v4.97 saliera publicada ROTA: pedía la cadena a 120 días
+         y el puente admite 90 como mucho (Futu sirve 30 por llamada, y cada una gasta del cupo
+         compartido), así que la contestaba con un error y la pestaña no funcionaba con NINGÚN
+         ticker. La prueba no lo cazó porque este doble decía que sí a todo.
+         Un doble más permisivo que el original no prueba: da permiso. */
+      const dias = Math.round((Date.parse(u.searchParams.get("hasta")) - Date.parse(u.searchParams.get("desde"))) / 86400000);
+      if (dias > 90) return route.fulfill({ status: 400, contentType: "application/json",
+        body: JSON.stringify({ ok: false, error: "El rango es demasiado largo: como mucho 90 días "
+          + "(Futu solo sirve 30 por llamada y cada una gasta del cupo compartido)." }) });
+      return J({ ok: true, contratos, total: contratos.length, vencimientos: Object.values(VTOS) });
+    }
     if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: contratos.length, de_cache: 0, sin_datos: [] });
     /* la fuente llega como la manda el puente, con su coletilla entre paréntesis: la app tiene
        que quedarse con el nombre y no escupir el paréntesis en medio de la frase */
@@ -328,6 +340,11 @@ console.log("\n=== lo que pinta la app ===");
 console.log("  llamadas al puente:", llamadas.join(" · "));
 /* una llamada por RUTA, ninguna por strike ni por vencimiento: siete vencimientos y 98 contratos
    se resuelven con UNA cadena y UN lote de contratos. Ahí es donde se protege el cupo compartido. */
+/* que la pantalla se haya PINTADO ya prueba que la cadena no se pidió con un rango que el puente
+   rechaza — con el error, aquí no habría ni un número. Se comprueba explícitamente igualmente,
+   porque este fallo llegó a producción y el mensaje era el mismo para el usuario que un servidor
+   caído: "No se pudo analizar MRVL". */
+ok(!/rango es demasiado largo/.test(t), "la cadena se pide dentro del tope de 90 días del puente");
 ok(llamadas.filter((x) => x === "/cadena").length === 1,
   "UNA sola cadena para el ROI, el flujo y la gamma (" + llamadas.filter((x) => x === "/cadena").length + ")");
 ok(llamadas.filter((x) => x === "/opciones").length === 1,
