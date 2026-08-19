@@ -1,5 +1,70 @@
 # CHANGELOG — Bloques
 
+Bloques v4.98 — Más visual: la mariposa de volumen, las referencias en la misma escala y los múltiplos con su color
+
+## Lo que pidió Victor
+Mandó cuatro capturas de su bot —valoración, flujo, gamma y niveles— y una frase: *"¿lo puedes
+hacer más visual?"*. Las capturas dicen exactamente qué falta: donde la app pone números en fila,
+el bot pone una posición en una escala.
+
+## Tres dibujos, y los tres sustituyen a una cuenta mental
+
+**1. La mariposa de volumen sobre interés abierto.** Puts a la izquierda, calls a la derecha, un
+strike por fila y el precio cruzado en medio. Dos capas que dicen cosas distintas y por eso se
+pintan distinto: **la sombra es el interés abierto del cierre de AYER, el bloque sólido es el
+volumen de HOY**. Con los cuatro strikes más negociados de cada horizonte no se veía la FORMA —si
+el volumen está pegado al precio, arriba en las calls, o abajo defendiendo un suelo—, y la forma es
+justo lo que se mira.
+
+Las dos capas comparten escala, que es lo que permite compararlas. Un volumen pequeño sobre un
+interés abierto grande se quedaba en menos de un píxel, así que hay un mínimo de 2,5 px: distorsiona
+un 1,7% de la media anchura y a cambio se ve **que hay algo**. Un cero sigue sin dibujar nada.
+
+La línea del precio va en **dos tramos**, saltándose la columna de strikes: de una pieza tachaba el
+número del strike pegado al precio, justo el más importante.
+
+**2. Las tres referencias en la misma escala.** Precio de ahora, Morningstar y consenso de Wall
+Street, cada uno con su punto sobre la misma barra y su distancia en porcentaje. En tres números en
+columna hay que restar mentalmente dos veces; así se ve de un vistazo si el precio está por debajo
+de las dos, entre ellas, o por encima.
+
+**3. Los múltiplos como fichas con su color.** EV/EBITDA, caja libre sobre precio y deuda sobre
+EBITDA, cada uno con su rango histórico escrito debajo —`hist 5–22 (med 9)`— y **verde si está
+barato contra su PROPIA historia, rojo si está caro**. Un número suelto no se puede juzgar; con su
+rango al lado y el color puesto, se juzga sin pensar. Y se dice en pantalla que la comparación es
+contra su propia historia: el múltiplo de dos empresas distintas no dice gran cosa.
+
+También la **prima de cada lado va dibujada** en dos barras a la misma escala, y el voto que la usa
+pasa a decir **cuántas veces** es mayor un lado (`6,3× calls`) en vez de repetir los dos importes
+que están justo debajo. El listón del voto está en 1,5×, así que el número ahora explica el voto.
+
+## Un fallo que salió al mirarlo
+Un múltiplo que **no venía** en la ficha se pintaba como **`0%` y en rojo**. La causa: se leía con
+la función que convierte lo que falta en cero. Un dato que falta tiene que desaparecer, no valer
+cero — que encima es el valor más llamativo que se puede enseñar. Ahora, si no viene suelto se busca
+en su histórico (que trae el de hoy), y si tampoco está, la ficha no se pinta.
+
+## Y se quita algo
+Las dos barras de rango que había debajo de los múltiplos decían **lo mismo** que las fichas nuevas.
+Dos veces el mismo dato alarga la tarjeta y no añade nada.
+
+## Verificación
+`pruebas/analisis.mjs` — **74 de 74**. Lo nuevo que comprueba, con las cifras a mano:
+- que la mariposa dibuja **las dos capas de cada lado** y la línea del precio por su sitio;
+- que Morningstar a $120 sobre un precio de $200 sale como **−40%**, y el consenso a $165 como −18%;
+- que el EV/EBITDA de 14x lleva su `hist 5–22 (med 9)` debajo;
+- que **ningún múltiplo se pinta como 0% por faltar** — la ficha de prueba omite `fcf_yield_pct` a
+  propósito, y el valor tiene que salir de su histórico;
+- y que el rango no se repite dos veces.
+
+El interés abierto de los vencimientos de prueba se bajó de 5.000 a 400-800: con un OI uniforme y
+enorme, el volumen del día quedaba en un píxel en todas las filas y **la mariposa no se podía juzgar
+mirándola**. No cambia ningún veredicto del flujo.
+
+`npm run prueba` — OK, 18 retratos idénticos.
+
+---
+
 Bloques v4.97 — La ficha de ticker completa: ROI, flujo por horizontes y Valora profunda
 
 **Pendiente de que Victor vea el diff antes de publicarse**, como pide el encargo.
