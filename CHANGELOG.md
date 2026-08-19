@@ -1,5 +1,44 @@
 # CHANGELOG — Bloques
 
+Bloques v5.06 — El mismo contrato entraba o no según la hora a la que buscaras
+
+## El síntoma
+Captura de Victor a las 13:58: RDDT con **29 · 43 · 57 · 92 · 148 días** y sin plazo largo.
+
+Dos pistas dentro de esa captura, y las dos importan:
+- `JAN 15 '27` salía como **148 días** cuando son **149**. Un día de menos, en todos.
+- El grupo de un año no estaba, aunque la v5.05 ya buscaba en la ventana correcta.
+
+## La causa: los días se contaban desde AHORA, no desde medianoche
+`dias()` restaba la fecha del vencimiento menos **el instante exacto** de la búsqueda. Un
+vencimiento a 302 días justos mide 301,5 a las 12:00 y 301,2 a las 18:00: **redondea a 302 por la
+mañana y a 301 por la tarde**.
+
+Y el 17-jun-27 de RDDT cae a **302 días exactos**, que era justo donde empezaba la ventana larga de
+la v5.05 (302-390). Es decir: el mismo contrato, el mismo día, **entraba o no entraba según la hora
+a la que Victor pulsara Buscar**. Por la mañana salía; a las 13:58, ya no.
+
+El "148 días" era el mismo fallo asomando por otro sitio, y llevaba ahí desde siempre.
+
+## El arreglo
+- **Los días se cuentan desde medianoche** (`Date.UTC` del día de hoy), y la fecha del vencimiento
+  se lee también en UTC. Así la cuenta es un número entero exacto, no un redondeo.
+- **La ventana larga pasa de −58/+30 a −60/+28**: sigue midiendo 88 días, pero deja **dos días de
+  margen** en vez de que el vencimiento caiga clavado en el borde. Aunque el redondeo ya no pueda
+  fallar, un límite que pasa por encima de un dato real es un accidente esperando.
+
+## Verificación
+Prueba nueva: **la misma búsqueda a las 1:00, a las 12:30 y a las 23:30 del mismo día**, con el
+reloj del navegador cambiado, exigiendo el MISMO resultado. Un fallo que depende de la hora no lo
+caza ninguna prueba que se ejecute siempre a la misma.
+
+Comprobado que caza, y de forma exacta: devolviendo la cuenta a "desde ahora", a las 12:30 y a las
+23:30 sale **29 · 43 · 57 · 92 · 148** — la captura de Victor dígito a dígito, incluido el 148 — y
+a la 1:00 sale **30 · 44 · 58 · 93 · 149 · 302**. Dos resultados distintos para el mismo día.
+
+Sin regresiones: `npm run prueba` (18/18) y cero elementos fuera de pantalla a 320 px.
+
+
 Bloques v5.05 — Existir y cotizar no son lo mismo
 
 ## El dato que lo resolvió
