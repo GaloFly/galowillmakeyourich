@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.98"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "4.99"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -9959,10 +9959,15 @@ function AnalisisContent({ puente }) {
       const avisoVentana = (respuestas.map((r) => r.aviso).filter(Boolean)
         .find((a) => /ventana|franja|ocupado/i.test(a))) || "";
 
-      /* UNA sola cadena, de mañana a 120 días. Sirve para ROI, flujo y gamma: pedirla tres veces
-         sería gastar tres de las diez llamadas por media hora que tiene TODA la cuenta. */
+      /* UNA sola cadena, de mañana a 90 días. Sirve para ROI, flujo y gamma: pedirla tres veces
+         sería gastar tres de las diez llamadas por media hora que tiene TODA la cuenta.
+
+         90 y no 120: es el TOPE del puente, y no es arbitrario — Futu sirve 30 días por llamada,
+         así que 90 son tres llamadas y 120 serían cuatro. La v4.97 pedía 120 y el puente la
+         rechazaba entera: la pestaña no funcionaba con ningún ticker. El horizonte LARGO del flujo
+         (más de 60 días) sigue teniendo de dónde salir, entre 61 y 90. */
       const cad = await puenteFetch(puente, "/cadena", {
-        codigo: cod, desde: iso(new Date(hoy.getTime() + 86400000)), hasta: iso(new Date(hoy.getTime() + 120 * 86400000)) });
+        codigo: cod, desde: iso(new Date(hoy.getTime() + 86400000)), hasta: iso(new Date(hoy.getTime() + 90 * 86400000)) });
       if (!cad || !cad.ok) throw new Error((cad && cad.error) || "el servidor no contestó al pedir la cadena");
       const vtos = (cad.vencimientos || []).slice().sort();
       if (!vtos.length) throw new Error("no hay vencimientos de " + t + " en los próximos cuatro meses");

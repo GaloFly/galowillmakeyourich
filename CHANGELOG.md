@@ -1,5 +1,46 @@
 # CHANGELOG — Bloques
 
+Bloques v4.99 — La pestaña Análisis no funcionaba con NINGÚN ticker
+
+## El síntoma
+Victor, nada más recibir la 4.98:
+
+> No se pudo analizar MRVL: El rango es demasiado largo: como mucho 90 días (Futu solo sirve 30
+> por llamada y cada una gasta del cupo compartido).
+
+## La causa, y es mía
+El encargo del servidor decía «UNA sola `/cadena` de hoy a hoy+120 días», y lo programé tal cual.
+Pero **el puente admite 90 como mucho**, y no por capricho: Futu sirve 30 días de cadena por
+llamada, así que 90 son tres llamadas y 120 serían cuatro — contra un cupo de diez cada media hora
+que comparten los tres sistemas de la máquina. El puente hacía bien en rechazarlo.
+
+O sea que la v4.97 y la v4.98 salieron con la pestaña **rota para cualquier ticker**. Se pide 90.
+El horizonte LARGO del flujo (más de 60 días) sigue teniendo de dónde salir, entre 61 y 90.
+
+## Por qué no lo cazó la prueba, que es lo más grave
+Porque **el puente falso decía que sí a todo**. Contestaba con la cadena entera fuera cual fuera el
+rango pedido, así que los 120 días pasaban sin rechistar mientras el puente de verdad los rechazaba.
+
+Un doble más permisivo que el original no prueba: **da permiso**. Ahora el falso valida el rango
+igual que el auténtico y contesta el mismo error.
+
+Comprobado que la red nueva sujeta: volviendo a poner 120 días a propósito, la prueba pasa de 0
+fallos a **80**. No es casualidad que sean tantos — es exactamente lo que pasaba en el móvil, que
+sin cadena no se pinta ni un número de la pantalla.
+
+## Verificación
+- `pruebas/analisis.mjs` — 80 de 80 con 90 días; **80 fallos con 120**, que es la prueba de que la
+  prueba sirve.
+- `npm run prueba` — OK, 18 retratos idénticos.
+
+## Y de paso: la publicación en app.alphavext.com queda arreglada de raíz
+Esta es la primera entrega que sale con el aviso automático a Cloudflare. La 4.98 tardó cuatro
+horas y una madrugada de diagnóstico en llegar al móvil porque Cloudflare había dejado de crear
+despliegues de `main` sin decir nada; ahora GitHub se lo pide explícitamente al terminar de
+publicar. Detalle en el comentario del propio fichero de despliegue.
+
+---
+
 Bloques v4.98 — Más visual: la mariposa de volumen, las referencias en la misma escala y los múltiplos con su color
 
 ## Lo que pidió Victor
