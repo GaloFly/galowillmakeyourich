@@ -102,6 +102,8 @@ Object.entries(MUNDOS).forEach(([tkr, m]) => {
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 let cadenas = [];
+let RUTA_NUEVA = true;   /* el puente conoce /vencimientos */
+let pidioVencimientos = 0;
 const deCodigo = (c) => String(c || "").replace("US.", "").split(",")[0];
 const finnhub = (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: 100, dp: 0, pc: 100, h: 100 }) });
 const puente = (route) => {
@@ -114,6 +116,14 @@ const puente = (route) => {
     return J({ ok: true, cotizaciones: { ["US." + tkr]: { ultimo: m.spot, cierre_anterior: m.spot * 0.98 } } });
   }
   if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US." + tkr, nombre: tkr, iv: 83.71, hv_30d: 89.74, iv_rank: 57.2 } });
+  if (u.pathname === "/vencimientos") {
+    /* un puente ANTERIOR a la v5.07 no conoce esta ruta: contesta 501 y la app tiene que
+       seguir funcionando por el camino de las ventanas, no quedarse sin buscador */
+    if (!RUTA_NUEVA) return route.fulfill({ status: 501, contentType: "application/json",
+      body: JSON.stringify({ ok: false, sin_ruta: true, error: "Este OpenD no tiene get_option_expiration_date." }) });
+    pidioVencimientos++;
+    return J({ ok: true, vencimientos: (VTOS[tkr] || []).slice(), total: (VTOS[tkr] || []).length });
+  }
   if (u.pathname === "/cadena") {
     const desde = u.searchParams.get("desde"), hasta = u.searchParams.get("hasta");
     const dias = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86400000);
@@ -241,6 +251,23 @@ const buscar = async (tkr, extra) => {
 };
 
 /* ---------------------------------------------------------------------------
+   CON UN PUENTE VIEJO, EL BUSCADOR SIGUE FUNCIONANDO (v5.07)
+
+   La ruta /vencimientos es nueva. Los servidores que no se hayan reinstalado no la conocen y
+   contestan 501 — y eso NO puede dejar a nadie sin buscador: se vuelve al camino de las
+   ventanas, que es el de la v5.06 y funciona. Regla de la casa: los campos y rutas nuevos son
+   opcionales, y si faltan la cosa se comporta como antes.
+--------------------------------------------------------------------------- */
+console.log("\n=== con un puente que no conoce la ruta nueva ===");
+RUTA_NUEVA = false;
+const V = await buscar("RDDT");
+RUTA_NUEVA = true;
+ok(V.dtes.length === 6, "salen los seis plazos igual (" + V.dtes.length + ")");
+ok(V.dtes.includes(302), "incluido el de 302 días (" + V.dtes.join(" · ") + ")");
+ok(V.cadenas.length === 3, "por el camino de antes: tres ventanas de cadena (" + V.cadenas.length + ")");
+ok(!V.errs.length, "sin errores de JS " + JSON.stringify(V.errs.slice(0, 2)));
+
+/* ---------------------------------------------------------------------------
    EL BORDE DE LA VENTANA NO PUEDE DEPENDER DE LA HORA (v5.06)
 
    El 17-jun-27 de RDDT cae a 302 días EXACTOS. Contando los días desde "ahora" en vez de desde
@@ -295,8 +322,10 @@ ok(Object.values(aLas).every((v) => v.includes("302")), "y el de 302 días entra
    número de días: es el tercer viernes de enero.
 --------------------------------------------------------------------------- */
 console.log("\n=== RDDT, con su escalera de Moomoo ===");
+pidioVencimientos = 0;
 const R = await buscar("RDDT");
-ok(R.cadenas.length === 3, "sigue costando TRES cadenas (" + R.cadenas.length + ")");
+ok(pidioVencimientos === 1, "se pregunta la escalera UNA vez en vez de adivinar dónde está (" + pidioVencimientos + ")");
+ok(R.cadenas.length <= 3, "y las cadenas no suben de tres (" + R.cadenas.join(" · ") + " días)");
 ok(R.dtes.length === 6, "salen los SEIS plazos (" + R.dtes.length + ")");
 ok(R.dtes.includes(302), "y el largo es el de 302 días, que SÍ cotiza (" + R.dtes.join(" · ") + ")");
 ok(!R.dtes.includes(394), "y NO el de 394, que existe pero tiene la IV en blanco en Moomoo");

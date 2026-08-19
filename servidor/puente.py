@@ -660,6 +660,57 @@ def cadena():
     return jsonify(payload), http
 
 
+@app.route("/vencimientos")
+def vencimientos():
+    """
+    SOLO LA LISTA DE FECHAS en las que vence algo. /vencimientos?codigo=US.RDDT
+
+    Por qué existe (19-ago-2026). Hasta ahora la app descubría los vencimientos pidiendo
+    CADENAS, y una cadena son 30 días por llamada (el límite de Futu), agrupadas de tres en
+    tres. Para mirar hasta un año harían falta 12 llamadas de un cupo que es de 10 cada 30 s
+    PARA TODA LA CUENTA, compartido con el sistema de earnings de root y con el agente. Así
+    que no se miraba entera: se abrían tres ventanas colocadas donde se suponía que estaban
+    los plazos pedidos.
+
+    Y suponer dónde están fue el origen de SEIS versiones seguidas de fallos (v5.01 a v5.06):
+    la ventana caía en el hueco entre dos eneros, o cogía un vencimiento que existe y no
+    cotiza, o el borde dependía de la hora del día. Victor lo resumió en una frase — *"¿cómo
+    puede ser que Moomoo sí tenga vencimientos y tú no los puedas sacar?"*— y tenía razón:
+    Moomoo enseña la escalera entera porque la PIDE entera.
+
+    `get_option_expiration_date` da esa lista en UNA llamada y sin ventana de 30 días. Con
+    ella la app deja de adivinar: sabe que RDDT vence a 302, 394, 520, 667, 758 y 849 días,
+    y pide cadena SOLO de las fechas que quiere mirar.
+
+    Si el OpenD instalado no conociera la función, se dice con esas palabras y un 501: la app
+    tiene que poder distinguir "este servidor no sabe hacerlo" (y volver a su camino de antes)
+    de "ha fallado". Se cachea 6 h, como las cadenas: la lista no cambia durante la sesión.
+    """
+    subyacente = request.args.get("codigo", "").strip().upper()
+    if not subyacente:
+        return error("Falta el código. Ejemplo: /vencimientos?codigo=US.RDDT")
+
+    def traer():
+        ctx = contexto()
+        fn = getattr(ctx, "get_option_expiration_date", None)
+        if fn is None:
+            return {"ok": False, "sin_ruta": True,
+                    "error": "Este OpenD no tiene get_option_expiration_date. Actualiza futu-api."}, 501
+        ret, data = fn(code=subyacente)
+        if ret != RET_OK:
+            return {"ok": False, "error": f"OpenD devolvió un error al pedir los vencimientos: {data}"}, 502
+        fechas = set()
+        for r in data.to_dict("records"):
+            # el nombre de la columna ha cambiado entre versiones de la librería; se aceptan las dos
+            f = r.get("strike_time") or r.get("expiration_date") or r.get("date")
+            if f:
+                fechas.add(str(f)[:10])
+        return {"ok": True, "vencimientos": sorted(fechas), "total": len(fechas)}, 200
+
+    payload, http = con_cache(f"vencimientos:{subyacente}", TTL_CADENA, "chain", traer)
+    return jsonify(payload), http
+
+
 @app.route("/subyacente")
 def subyacente():
     """
