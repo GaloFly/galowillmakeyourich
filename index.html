@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.04"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.05"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1903,29 +1903,6 @@ const MARGEN_REGT = (spot, strike) => {
   return Math.max(a, b, 0) * 100;
 };
 const iso = (d) => d.toISOString().slice(0, 10);
-/* v5.04 — EL PLAZO LARGO NO ES "360 DÍAS", ES EL LEAP DE ENERO.
-   Victor: *"no es verdad, RDDT sí tiene LEAPS"*. Y la tiene: enero de 2027 y enero de 2028. Lo que
-   no tiene —ni ella ni casi nadie— es un vencimiento a 360 días. Pasado el año las opciones no
-   están repartidas por el calendario: se concentran en el TERCER VIERNES DE ENERO, que es lo que
-   son las LEAPS. Desde agosto de 2026 eso cae a 520 días, no a 360; buscar alrededor de 360 caía
-   entre julio y septiembre de 2027, justo en el hueco entre los dos eneros, y salía vacío SIEMPRE.
-   Se calcula la fecha en vez de suponer un número de días, y sigue costando las mismas tres
-   llamadas de cadena: esta ventana sustituye a la de 360, no se suma a ella. */
-const tercerViernesEnero = (anio) => {
-  const uno = new Date(Date.UTC(anio, 0, 1));
-  const primerViernes = 1 + ((5 - uno.getUTCDay() + 7) % 7);
-  return new Date(Date.UTC(anio, 0, primerViernes + 14));
-};
-const DTE_LEAP = () => {
-  const hoy = new Date();
-  for (let i = 0; i < 3; i++) {
-    const d = Math.round((tercerViernesEnero(hoy.getUTCFullYear() + i).getTime() - hoy.getTime()) / 86400000);
-    /* el primer enero que esté de verdad lejos: el de dentro de tres meses ya lo cubre el plazo
-       de 180, y contarlo dos veces dejaría el hueco largo sin mirar */
-    if (d > 300) return d;
-  }
-  return 365;
-};
 async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   const tkr = String(ticker || "").trim().toUpperCase();
   if (!tkr) return { error: "Escribe un ticker." };
@@ -1947,10 +1924,16 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   /* v5.02 — LA HOLGURA CRECE CON EL PLAZO, porque los vencimientos se separan con él.
      Cerca del dinero hay uno cada semana; pasado medio año solo quedan los trimestrales y los de
      enero, con meses vacíos de por medio. Buscar ±2 semanas alrededor de los 360 días es buscar
-     donde casi nunca hay nada: en la v5.01 a RDDT no le salió NI el de 180 NI el de 360, y a ASTS
-     no le salió el de 360. Cerca se deja como estaba (±2 semanas basta y sobra) y lejos se abre
-     a ±44 días, que es lo máximo que cabe en una llamada de 90. */
-  const holgura = (obj) => (obj <= 90 ? { antes: 12, despues: 15 } : { antes: 44, despues: 44 });
+     donde casi nunca hay nada.
+
+     v5.05 — Y ES ASIMÉTRICA: SE MIRA MÁS HACIA ATRÁS QUE HACIA DELANTE. Victor mandó la escalera
+     entera de RDDT en Moomoo, y ahí está la razón: tiene 302 días (17-jun-27) con IV 68,28%, y
+     394 días (17-sep-27) **con la IV en blanco, sin una sola cotización**. Los dos existen; solo
+     uno sirve. Cuanto más lejos, menos líquido, así que desde un objetivo el vencimiento útil
+     está casi siempre ANTES y no después. Con ±44 la ventana era 316-404: se comía el muerto y
+     dejaba fuera el bueno por catorce días. Con −58/+30 la ventana es 302-390 y coge el de junio.
+     Sigue midiendo 88 días, que es lo que cabe en una llamada. */
+  const holgura = (obj) => (obj <= 90 ? { antes: 12, despues: 15 } : { antes: 58, despues: 30 });
   const objetivos = dtesObjetivo.slice().sort((a, b) => a - b);
   const ventanas = [];
   objetivos.forEach((obj) => {
@@ -1979,20 +1962,26 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
      que podía ser el de 23 días. RDDT salió con 23 y 37 días ocupando los sitios de 180 y 360, y
      nada en pantalla decía que aquello no era lo pedido. Un plazo sin vencimiento se queda VACÍO
      y se dice cuál es: una lista corta y honesta es mejor que una completa y falsa. */
+  /* v5.05 — de los plazos LARGOS se bajan DOS vencimientos, no uno, y se elige después.
+     Existir y tener precio no son lo mismo: el 17-sep-27 de RDDT sale en la cadena y en Moomoo,
+     y no tiene ni una cotización. Apostando por uno solo, ese plazo se quedaba vacío sin más.
+     Traerse el siguiente NO cuesta ni una llamada más —todas las marcas van en la misma— y el
+     que se enseña es el más cercano al objetivo QUE TENGA DATOS. */
   const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
-  const elegidos = [];
+  const planes = [];
+  const usados = new Set();
   const sinVencimiento = [];
   dtesObjetivo.forEach((obj) => {
     const h = holgura(obj);
-    let mejor = null, dif = Infinity;
-    vtos.forEach((v) => {
-      if (elegidos.includes(v)) return;
-      const d = dias(v);
-      if (d < obj - h.antes || d > obj + h.despues) return;
-      if (Math.abs(d - obj) < dif) { dif = Math.abs(d - obj); mejor = v; }
-    });
-    if (mejor) elegidos.push(mejor); else sinVencimiento.push(obj);
+    const cerca = vtos
+      .filter((v) => !usados.has(v))
+      .filter((v) => { const d = dias(v); return d >= obj - h.antes && d <= obj + h.despues; })
+      .sort((a, b) => Math.abs(dias(a) - obj) - Math.abs(dias(b) - obj))
+      .slice(0, obj > 90 ? 2 : 1);
+    cerca.forEach((v) => usados.add(v));
+    if (cerca.length) planes.push({ obj, vtos: cerca }); else sinVencimiento.push(obj);
   });
+  const elegidos = planes.reduce((a, p) => a.concat(p.vtos), []);
   if (!elegidos.length) {
     return { error: "No hay vencimientos de " + tkr + " cerca de los plazos pedidos (" +
       dtesObjetivo.join(", ") + " días)." };
@@ -2061,8 +2050,19 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   dentro.sort((a, b) => n(b.strike) - n(a.strike)).forEach((f) => {
     (porVencimiento[f.expiry] = porVencimiento[f.expiry] || []).push(f);
   });
+  /* v5.05 — de los dos vencimientos que se bajaron por plazo, se enseña UNO: el más cercano al
+     objetivo que haya dejado alguna candidata. Y si NINGUNO deja ninguna, ese plazo se queda sin
+     grupo y se dice POR QUÉ, con su fecha: no es lo mismo "no hay vencimiento a un año" que
+     "lo hay pero no cotiza ni una put". Tienen soluciones distintas —la primera no tiene, la
+     segunda se arregla subiendo la delta— y callarse no se distingue de estar roto (v4.55). */
   const finales = [];
-  Object.keys(porVencimiento).forEach((v) => finales.push(...porVencimiento[v].slice(0, porVto)));
+  const vencUsados = [];
+  const sinCandidatas = [];
+  planes.forEach((p) => {
+    const bueno = p.vtos.find((v) => (porVencimiento[v] || []).length);
+    if (bueno) { finales.push(...porVencimiento[bueno].slice(0, porVto)); vencUsados.push(bueno); }
+    else sinCandidatas.push({ obj: p.obj, vtos: p.vtos.slice() });
+  });
   if (!finales.length) {
     return { error: "Ninguna de las " + filas.length + " puts miradas baja de delta " + tope.toFixed(2) +
       ". Prueba con un umbral más alto o con vencimientos más largos." };
@@ -2077,8 +2077,8 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
     const sv = await puenteFetch(cfg, "/subyacente", { codigo: cod });
     if (sv && sv.ok && sv.subyacente) vol = sv.subyacente;
   } catch (e) { vol = null; }
-  return { spot, filas: finales, vencimientos: elegidos, pedidos: candidatas.length,
-           miradas: filas.length, fueraDeTope, sinDelta, tope, errores, vol, sinVencimiento };
+  return { spot, filas: finales, vencimientos: vencUsados, pedidos: candidatas.length,
+           miradas: filas.length, fueraDeTope, sinDelta, tope, errores, vol, sinVencimiento, sinCandidatas };
 }
 /* ---------- v4.62: buscador de Double Calendar / Double Diagonal ----------
    Reglas sacadas del manual de OptionsKit que pasó Victor (14-ago-2026):
@@ -13323,7 +13323,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
        Cuesta TRES peticiones de cadena en vez de una —el puente sirve 90 días por llamada—, y por
        eso los resultados salen plegados por vencimiento: treinta filas de golpe no se leen.
        La cadena se cachea 6 h en el puente, así que repetir el mismo ticker sale gratis. */
-    const r = await buscarPuts(puente, tkr, [30, 45, 60, 90, 180, DTE_LEAP()], 5, n(buscaDelta) || 0.30);
+    const r = await buscarPuts(puente, tkr, [30, 45, 60, 90, 180, 360], 5, n(buscaDelta) || 0.30);
     setBuscando(false);
     if (r.error) { setBuscaErr(r.error); return; }
     grabaPuts({ ...guardadas, [tkr]: { ...r, tkr, cuando: Date.now() } });
@@ -13553,7 +13553,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             </button>
           </div>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-            Ticker y <b>delta máxima</b>. Mira los vencimientos más cercanos a 30, 45, 60, 90 y 180 días, más el <b>LEAP de enero</b>, y trae las 5 puts que más pagan sin pasarse de esa delta. Cada plazo llega plegado, con su mejor cifra a la vista.
+            Ticker y <b>delta máxima</b>. Mira los vencimientos más cercanos a 30, 45, 60, 90, 180 y 360 días y trae las 5 puts que más pagan sin pasarse de esa delta. Cada plazo llega plegado, con su mejor cifra a la vista.
           </div>
           {buscaErr && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{buscaErr}</div>}
           {Object.keys(guardadas).sort((a, b) => (guardadas[b].cuando || 0) - (guardadas[a].cuando || 0)).map((tkGuard) => {
@@ -13622,7 +13622,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                   /* v5.04 — el plazo largo se nombra por lo que ES, no por su número de días. Decir
                      "no tiene vencimientos cerca de 520 días" es exacto y no significa nada; lo que
                      se ha buscado ahí es el LEAP de enero. */
-                  const falta = halladas.sinVencimiento.map((d) => (d > 300 ? "el LEAP de enero" : "vencimientos cerca de " + d + " días"));
+                  const falta = halladas.sinVencimiento.map((d) => "vencimientos cerca de " + d + " días");
                   return (
                     <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 3px" }}>
                       {tkGuard} no tiene {falta.join(" ni ")}, así que {falta.length > 1 ? "esos plazos no salen" : "ese plazo no sale"}.
@@ -13630,6 +13630,21 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                     </div>
                   );
                 })()}
+                {/* v5.05 — el otro motivo, que NO es el mismo y se arregla de otra forma: el
+                    vencimiento existe pero no cotiza ni una put suya. Le pasa al 17-sep-27 de
+                    RDDT, que en Moomoo sale con la IV en blanco. Decir "no hay vencimiento"
+                    habría sido mentira, y callarlo habría dejado el plazo desaparecido sin más. */}
+                {(halladas.sinCandidatas || []).length > 0 && (
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 3px" }}>
+                    {halladas.sinCandidatas.map((s) => (
+                      <div key={s.obj}>
+                        A {s.obj} días {s.vtos.length > 1 ? "los vencimientos" : "el vencimiento"} de{" "}
+                        {s.vtos.map(ibkrDate).join(" y ")} {s.vtos.length > 1 ? "existen" : "existe"}, pero ninguna
+                        de sus puts tiene precio y delta ≤ {n(halladas.tope).toFixed(2)}. Sube la delta o cámbiate de plazo.
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* v5.01 — desde que la búsqueda llega a 360 días, el criterio elegido decide algo que
                     antes casi no decidía. Un ROI o un ROM SIN anualizar es la prima entera de la
                     operación: a un año siempre sale mayor que a un mes, por construcción y no porque
@@ -13638,7 +13653,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                     cambia el criterio a sus espaldas: se avisa y él decide. */}
                 {(basis === "roi" || basis === "rom") && (
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45, padding: "0 3px" }}>
-                    Ojo: el {nombreCrit} no está anualizado, así que en el LEAP siempre sale más alto que
+                    Ojo: el {nombreCrit} no está anualizado, así que a un año siempre sale más alto que
                     a 30 días aunque no compense. Para comparar plazos entre sí, elige arriba un criterio anualizado.
                   </div>
                 )}
@@ -13670,7 +13685,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                       <span style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>
                         Las dos son del subyacente, no de un contrato: la IV de cada candidata sale en su fila y es otra cosa.
                         La histórica es del último mes, así que compararla con opciones a 30-60 días ya es aproximado
-                        — y con las de 180 días o el LEAP, mucho más: un mes no dice casi nada de lo que hará un año.
+                        — y con las de 180 o 360, mucho más: un mes no dice casi nada de lo que hará un año.
                       </span>
                     </div>
                   );

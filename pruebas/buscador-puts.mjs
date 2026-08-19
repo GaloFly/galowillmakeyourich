@@ -54,35 +54,29 @@ const URL_APP = "http://localhost:" + PUERTO + "/index.html";
 
 const dentroDe = (d) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
 
-/* El LEAP de enero, calculado igual que en la app: el primer tercer-viernes-de-enero a más de
-   300 días. Es DONDE viven las opciones largas, y por eso la prueba lo pone donde toca en vez de
-   sembrar un vencimiento a 360 días que en la realidad no existe casi nunca. */
-const tercerViernesEnero = (a) => {
-  const uno = new Date(Date.UTC(a, 0, 1));
-  return new Date(Date.UTC(a, 0, 1 + ((5 - uno.getUTCDay() + 7) % 7) + 14));
-};
-const DTE_LEAP = (() => {
-  const hoy = new Date();
-  for (let i = 0; i < 3; i++) {
-    const d = Math.round((tercerViernesEnero(hoy.getUTCFullYear() + i).getTime() - hoy.getTime()) / 86400000);
-    if (d > 300) return d;
-  }
-  return 365;
-})();
+/* TRES tickers, con escaleras REALES y ninguna cómoda — que ahí estuvo el fallo tres veces:
 
-/* TRES tickers, porque la escalera de vencimientos no es igual en todos y ahí estuvo el fallo:
-     · MRVL — la escalera COMPLETA, con uno pegado a cada plazo pedido.
-     · RDDT — la escalera REAL de un valor con LEAPS: semanales cerca, mensuales unos meses, el
-       enero de dentro de nada... y NADA entre medias hasta el enero siguiente. Es el caso de las
-       capturas de Victor del 19-ago-2026: tiene LEAPS, pero no tiene nada a 360 días.
-     · PEQ — un valor pequeño SIN LEAPS, que los hay: nada pasados los seis meses. */
+     · MRVL — la escalera completa, con uno pegado a cada plazo pedido.
+     · RDDT — LA DE VERDAD, la que mandó Victor desde Moomoo el 19-ago-2026. Fíjate en dos cosas:
+       tiene 302 días (17-jun-27) Y 394 (17-sep-27), o sea que a un año hay DOS... pero el de
+       394 sale en Moomoo con la IV en blanco: EXISTE Y NO COTIZA. Va en `sinPrecio` para que la
+       prueba reproduzca eso exactamente, porque es lo que hacía desaparecer el plazo largo.
+     · PEQ — un valor pequeño de verdad sin nada pasados los seis meses.
+
+   `sinPrecio` es la pieza clave: un puente falso que da precio de TODO no habría cazado esto
+   jamás — igual que el que decía que sí a rangos de 120 días no cazó el fallo de la v4.97. */
 const MUNDOS = {
   MRVL: { spot: 215.73, k0: 130, k1: 220, paso: 5,
-          dtes: [8, 15, 29, 36, 43, 57, 64, 92, 120, 178, 211, DTE_LEAP] },
-  RDDT: { spot: 158.25, k0: 95, k1: 160, paso: 5,
-          dtes: [9, 16, 23, 30, 37, 44, 58, 93, 149, 212, DTE_LEAP] },
+          dtes: [8, 15, 29, 36, 43, 57, 64, 92, 120, 178, 211, 302, 394] },
+  RDDT: { spot: 158.25, k0: 95, k1: 160, paso: 5, sinPrecio: [394],
+          dtes: [30, 37, 44, 58, 93, 121, 149, 212, 302, 394, 520, 667, 758, 849] },
   PEQ: { spot: 42.5, k0: 20, k1: 42, paso: 2,
          dtes: [9, 16, 23, 30, 37, 44, 58, 93, 149] },
+  /* el caso peor: a un año hay vencimiento y es el ÚNICO, y no cotiza. No se puede caer en
+     otro, así que el plazo se queda sin grupo — y eso hay que DECIRLO, porque no es lo mismo
+     que no haberlo: esto se arregla subiendo la delta, aquello no se arregla. */
+  MUDO: { spot: 80, k0: 50, k1: 80, paso: 5, sinPrecio: [340],
+          dtes: [16, 30, 44, 58, 93, 149, 340] },
 };
 const contratos = {}, opciones = {}, VTOS = {};
 Object.entries(MUNDOS).forEach(([tkr, m]) => {
@@ -96,6 +90,9 @@ Object.entries(MUNDOS).forEach(([tkr, m]) => {
       /* delta que se hace menos negativa cuanto más lejos está el strike, y prima que crece con el plazo */
       const delta = -Math.max(0.02, 0.5 - otm * 2.2);
       const px = Math.max(0.2, m.spot * 0.09 * Math.sqrt(m.dtes[i] / 365) * Math.exp(-3.4 * otm));
+      /* el vencimiento que existe pero no cotiza sencillamente no entra en la tabla de precios,
+         que es justo lo que hace el servidor de verdad con el 17-sep-27 de RDDT */
+      if ((m.sinPrecio || []).includes(m.dtes[i])) continue;
       opciones[codigo] = { codigo, ultimo: px, medio: px, bid: px - 0.1, ask: px + 0.1,
         volumen: 120, interes_abierto: 3400, iv: 83.7, delta,
         gamma: 0.01, theta: -0.05, vega: 0.2, fecha_dato: "2026-08-19 18:10:00" };
@@ -180,8 +177,8 @@ console.log("  plazos que salen:", dtesEnPantalla.join(" · "));
   const cerca = dtesEnPantalla.some((d) => Math.abs(d - obj) <= 20);
   ok(cerca, "hay un vencimiento cerca de los " + obj + " días");
 });
-ok(dtesEnPantalla.some((d) => Math.abs(d - DTE_LEAP) <= 20),
-  "y el LEAP de enero, que está a " + DTE_LEAP + " días y no a 360 (" + dtesEnPantalla.join(" · ") + ")");
+ok(dtesEnPantalla.some((d) => d >= 302 && d <= 390),
+  "y uno a un año, dentro de la ventana 302-390 (" + dtesEnPantalla.join(" · ") + ")");
 ok(dtesEnPantalla.length === 6, "y son SEIS grupos, uno por plazo pedido (" + dtesEnPantalla.length + ")");
 
 console.log("\n=== plegados, pero legibles ===");
@@ -257,28 +254,36 @@ const buscar = async (tkr, extra) => {
    entre julio y septiembre de 2027, en el hueco entre los dos eneros. El plazo largo no es un
    número de días: es el tercer viernes de enero.
 --------------------------------------------------------------------------- */
-console.log("\n=== RDDT: TIENE LEAPS, y tienen que salir ===");
+console.log("\n=== RDDT, con su escalera de Moomoo ===");
 const R = await buscar("RDDT");
 ok(R.cadenas.length === 3, "sigue costando TRES cadenas (" + R.cadenas.length + ")");
 ok(R.dtes.length === 6, "salen los SEIS plazos (" + R.dtes.length + ")");
-ok(R.dtes.some((d) => Math.abs(d - DTE_LEAP) <= 20),
-  "y el sexto es el LEAP de enero, a " + DTE_LEAP + " días — que es donde vive, no a 360 (" + R.dtes.join(" · ") + ")");
+ok(R.dtes.includes(302), "y el largo es el de 302 días, que SÍ cotiza (" + R.dtes.join(" · ") + ")");
+ok(!R.dtes.includes(394), "y NO el de 394, que existe pero tiene la IV en blanco en Moomoo");
 ok(!R.dtes.some((d) => d < 25), "sin ningún vencimiento corto colado (" + R.dtes.join(" · ") + ")");
-ok(R.dtes.some((d) => Math.abs(d - 180) <= 44), "y el de 180 también sale (" + R.dtes.join(" · ") + ")");
-ok(!/no tiene/.test(R.texto), "y NO se avisa de que falte nada, porque no falta nada");
+ok(R.dtes.includes(149), "y el de 180 cae en el de enero, a 149 días (" + R.dtes.join(" · ") + ")");
+ok(!/no tiene vencimientos/.test(R.texto), "sin avisar de que falte nada, porque no falta nada");
 ok(!R.errs.length, "sin errores de JS " + JSON.stringify(R.errs.slice(0, 2)));
-await R.p.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => /^[▾▸]/.test((x.innerText || "").trim())); if (b) b.scrollIntoView({ block: "center" }); });
+await R.p.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => /^[\u25be\u25b8]/.test((x.innerText || "").trim())); if (b) b.scrollIntoView({ block: "center" }); });
 await R.p.waitForTimeout(300);
 await R.p.screenshot({ path: D + "/puts-rddt.png" });
 
-/* y el valor pequeño que de verdad NO tiene LEAPS: ahí el hueco sigue teniendo que quedarse
-   vacío y decirse, que es lo que arregló la v5.02 */
-console.log("\n=== PEQ: un valor pequeño SIN LEAPS ===");
+/* y el valor pequeño que de verdad no tiene nada largo: ahí el hueco sigue teniendo que
+   quedarse vacío y decirse, que es lo que arregló la v5.02 */
+console.log("\n=== PEQ: sin nada pasados los seis meses ===");
 const P = await buscar("PEQ");
-ok(P.dtes.length === 5, "salen CINCO grupos, no seis: el LEAP no existe y no se inventa (" + P.dtes.length + ")");
+ok(P.dtes.length === 5, "salen CINCO grupos, no seis: no se inventa el que falta (" + P.dtes.length + ")");
 ok(!P.dtes.some((d) => d < 25), "y NINGÚN vencimiento corto ocupa el sitio del que falta (" + P.dtes.join(" · ") + ")");
-ok(/no tiene el LEAP de enero/.test(P.texto), "y se dice que lo que falta es el LEAP, no 'vencimientos cerca de 520 días'");
+ok(/no tiene vencimientos cerca de 360 días/.test(P.texto), "y se dice cuál falta");
 ok(!P.errs.length, "sin errores de JS " + JSON.stringify(P.errs.slice(0, 2)));
+
+console.log("\n=== MUDO: el vencimiento existe pero no cotiza ===");
+const M = await buscar("MUDO");
+ok(M.dtes.length === 5, "el plazo largo no sale —no cotiza— y los otros cinco sí (" + M.dtes.length + ")");
+ok(/existe, pero ninguna de sus puts tiene precio/.test(M.texto),
+  "y se dice que EXISTE pero no cotiza — que no es lo mismo que no haberlo, y se arregla de otra forma");
+ok(!/no tiene vencimientos cerca de 360/.test(M.texto), "sin decir que no lo hay, porque sí lo hay");
+ok(!M.errs.length, "sin errores de JS " + JSON.stringify(M.errs.slice(0, 2)));
 
 /* ---------------------------------------------------------------------------
    LA CIFRA DE LA CABECERA TIENE QUE SER LA MISMA QUE LA DE LA FILA (v5.03)
