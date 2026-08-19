@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.02"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.03"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -13570,6 +13570,16 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             const nombreCrit = basis === "roi" ? "ROI" : basis === "annRoi" ? "ROI anualizado"
               : basis === "rom" ? "return on margin" : basis === "delta" ? "eficiencia vs Delta"
               : "ROM anualizado";
+            /* v5.03 — CÓMO SE ESCRIBE ese valor, y va pegado a `valor` a propósito.
+               `roi`, `rom`, `annRoi` y `annRom` se guardan como FRACCIÓN (0,03 = 3%). La cabecera
+               de la v5.01 los pintaba con `money2`, que no multiplica por cien: un ROI del 3% salía
+               como "0.03%". Victor lo cazó — *"RDDT solo da a 149 días que es el 0.03% que sale a
+               la derecha?"*—, y no era el plazo, era la cifra. `pct` es quien sabe hacerlo, y los
+               decimales son los mismos que usa el número grande del Comparador para cada criterio. */
+            const valorTxt = (c) => (basis === "roi" ? pct(c.roi, 2) : basis === "annRoi" ? pct(c.annRoi, 1)
+              : basis === "rom" ? pct(c.rom, 2)
+              : basis === "delta" ? (isFinite(c.deltaEff) ? c.deltaEff.toFixed(2) + "%/Δ" : "—")
+              : pct(c.annRom, 0));
             let mejor = null;
             conMetricas.forEach((c) => { const v = valor(c); if (isFinite(v) && (!mejor || v > valor(mejor))) mejor = c; });
             const porVto = {};
@@ -13676,7 +13686,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                         </span>
                         {mejorVto && isFinite(valor(mejorVto)) && (
                           <span style={{ flex: "none", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>{money2(valor(mejorVto)) + "%"}</span>
+                            <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>{valorTxt(mejorVto)}</span>
                             <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: T.sub, marginTop: -1 }}>{"P" + money2(n(mejorVto.strike))}</span>
                           </span>
                         )}
