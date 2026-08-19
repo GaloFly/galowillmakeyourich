@@ -1,5 +1,56 @@
 # CHANGELOG — Bloques
 
+Bloques v5.07 — Se pregunta la escalera en vez de adivinarla
+
+## La pregunta de Victor
+*"¿Cómo puede ser que Moomoo sí tenga vencimientos y tú no los puedas sacar?"*
+
+Porque **Moomoo la pide entera y aquí se estaba adivinando dónde estaba**.
+
+Una cadena de opciones son 30 días por llamada (límite de Futu), agrupadas de tres en tres: 90
+días. La escalera de RDDT llega a 849 días. Mirarla entera serían unas 28 llamadas de un cupo que
+es de 10 cada 30 segundos **para toda la cuenta**, compartido con el sistema de earnings de root y
+con el agente de puts. Así que no se miraba: se abrían **tres ventanas colocadas donde se SUPONÍA
+que caían los plazos pedidos**.
+
+Y ahí está el origen de seis versiones seguidas de fallos, todos el mismo con distinta cara:
+
+| | qué se supuso | qué pasó |
+|---|---|---|
+| v5.01 | que a 360 días habría vencimiento | no lo había, y el hueco lo tapaba el de 23 días |
+| v5.02 | que ensanchando la ventana bastaba | cayó en el hueco entre dos eneros |
+| v5.04 | que el largo vive en enero | acertó por casualidad |
+| v5.05 | que la ventana 302-390 valía | el borde estaba clavado en un dato real |
+| v5.06 | — | y ese borde se movía con la hora del día |
+
+## El arreglo: `/vencimientos`
+Ruta nueva en el puente. `get_option_expiration_date` da **la lista entera de fechas en UNA
+llamada y sin ventana de 30 días**. Con ella la app deja de adivinar: sabe que RDDT vence a 302,
+394, 520, 667, 758 y 849 días, coge el más cercano a cada plazo **de la escalera de verdad**, y
+pide cadena solo de esas fechas.
+
+No hay ventana que colocar, así que no hay borde que se mueva, ni hueco en el que caer, ni margen
+que calibrar. La clase entera de fallo desaparece.
+
+**Y si el puente es viejo y no conoce la ruta, se sigue por el camino de antes.** Contesta 501, la
+app lo entiende y vuelve a las ventanas de la v5.06, que funcionan. Nadie se queda sin buscador por
+no haber reinstalado el servidor — la regla de la casa: lo nuevo es opcional, y si falta, la cosa se
+comporta como antes.
+
+## Verificación
+La prueba corre los dos servidores: el que conoce la ruta —donde se comprueba que se pregunta la
+escalera **una** vez y que las cadenas no suben de tres— y **el que no la conoce**, donde se exige
+que salgan los mismos seis plazos por el camino viejo.
+
+Sigue en pie todo lo anterior: la escalera real de RDDT con el vencimiento mudo, el valor sin nada
+largo, el aviso de "existe pero no cotiza", el mismo resultado a la 1:00, a las 12:30 y a las 23:30,
+la cabecera cuadrando con la fila y cero desbordes a 320 px. `npm run prueba`, 18/18.
+
+## Pendiente en el servidor
+El puente hay que reinstalarlo en el VPS para que la ruta exista. Hasta entonces la app funciona
+igual, por el camino de antes.
+
+
 Bloques v5.06 — El mismo contrato entraba o no según la hora a la que buscaras
 
 ## El síntoma

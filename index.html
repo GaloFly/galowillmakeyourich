@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.06"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.07"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1944,21 +1944,63 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
      302 y el 17-jun-27 de RDDT cae EXACTAMENTE en el día 302: justo en el borde, donde el
      redondeo decide. Un vencimiento no puede entrar o no según la hora a la que busques. */
   const holgura = (obj) => (obj <= 90 ? { antes: 12, despues: 15 } : { antes: 60, despues: 28 });
-  const objetivos = dtesObjetivo.slice().sort((a, b) => a - b);
+  const fecha = (d) => iso(new Date(hoy.getTime() + d * 86400000));
+
+  /* v5.07 — SE PREGUNTA LA ESCALERA, NO SE ADIVINA. Victor: *"¿cómo puede ser que Moomoo sí
+     tenga vencimientos y tú no los puedas sacar?"*. Porque Moomoo la pide entera y aquí se
+     estaba adivinando dónde estaba: una cadena son 30 días por llamada, así que se abrían tres
+     ventanas colocadas donde se SUPONÍA que caían los plazos. Adivinar fue el origen de seis
+     versiones de fallos seguidas — la ventana en el hueco entre dos eneros, el vencimiento que
+     existe y no cotiza, el borde que dependía de la hora.
+     `/vencimientos` da la lista entera en UNA llamada. Con ella no hay ventana que colocar: se
+     coge el más cercano a cada plazo de la escalera DE VERDAD, y se piden cadenas solo de esas
+     fechas. Si el puente es viejo y no la conoce, se sigue por el camino de antes — no se deja
+     a nadie sin buscador por no haber actualizado el servidor. */
+  let escalera = null;
+  try {
+    const lista = await puenteFetch(cfg, "/vencimientos", { codigo: cod });
+    if (lista && lista.ok && Array.isArray(lista.vencimientos) && lista.vencimientos.length) {
+      escalera = lista.vencimientos.slice().sort();
+    }
+  } catch (e) { escalera = null; }
+
   const ventanas = [];
-  objetivos.forEach((obj) => {
-    const h = holgura(obj);
-    const d1 = Math.max(1, obj - h.antes), d2 = obj + h.despues;
-    const u = ventanas[ventanas.length - 1];
-    if (u && d2 - u.desde <= 88) u.hasta = Math.max(u.hasta, d2);   /* 88 y no 90: margen de redondeo */
-    else ventanas.push({ desde: d1, hasta: d2 });
-  });
+  if (escalera) {
+    /* con la escalera en la mano, la ventana de cada plazo es su propio vencimiento: se pide la
+       cadena de ese día suelto. Se agrupan los que caen a menos de 88 días unos de otros para no
+       gastar una llamada por fecha. */
+    const objetivosOrd = dtesObjetivo.slice().sort((a, b) => a - b);
+    const dias0 = (v) => Math.round((Date.parse(v + "T00:00:00Z") - hoy.getTime()) / 86400000);
+    const quiero = [];
+    const yaPedido = new Set();
+    objetivosOrd.forEach((obj) => {
+      const h = holgura(obj);
+      escalera
+        .filter((v) => { const d = dias0(v); return d >= obj - h.antes && d <= obj + h.despues; })
+        .sort((a, b) => Math.abs(dias0(a) - obj) - Math.abs(dias0(b) - obj))
+        .slice(0, obj > 90 ? 2 : 1)
+        .forEach((v) => { if (!yaPedido.has(v)) { yaPedido.add(v); quiero.push(dias0(v)); } });
+    });
+    quiero.sort((a, b) => a - b).forEach((d) => {
+      const u = ventanas[ventanas.length - 1];
+      if (u && d - u.desde <= 88) u.hasta = Math.max(u.hasta, d);
+      else ventanas.push({ desde: d, hasta: d });
+    });
+  } else {
+    const objetivos = dtesObjetivo.slice().sort((a, b) => a - b);
+    objetivos.forEach((obj) => {
+      const h = holgura(obj);
+      const d1 = Math.max(1, obj - h.antes), d2 = obj + h.despues;
+      const u = ventanas[ventanas.length - 1];
+      if (u && d2 - u.desde <= 88) u.hasta = Math.max(u.hasta, d2);   /* 88 y no 90: margen de redondeo */
+      else ventanas.push({ desde: d1, hasta: d2 });
+    });
+  }
+
   const contratos = [];
   const vistos = new Set();
   for (const w of ventanas) {
-    const cad = await puenteFetch(cfg, "/cadena", { codigo: cod,
-      desde: iso(new Date(hoy.getTime() + w.desde * 86400000)),
-      hasta: iso(new Date(hoy.getTime() + w.hasta * 86400000)) });
+    const cad = await puenteFetch(cfg, "/cadena", { codigo: cod, desde: fecha(w.desde), hasta: fecha(w.hasta) });
     if (!cad || !cad.ok) return { error: (cad && cad.error) || "El servidor no contestó al pedir la cadena." };
     (cad.contratos || []).forEach((c) => contratos.push(c));
     (cad.vencimientos || []).forEach((v) => vistos.add(v));
