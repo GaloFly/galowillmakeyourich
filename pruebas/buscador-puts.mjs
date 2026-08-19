@@ -388,6 +388,73 @@ ok(Math.abs(pctCabecera - Math.max(...roisFila)) < 0.02,
   "la cabecera (" + pctCabecera + "%) es el mejor ROI de sus filas (" + Math.max(...roisFila) + "%), no una cifra en otra escala");
 ok(pctCabecera > 0.5, "y no es un número cien veces más pequeño de lo que debe (" + pctCabecera + "%)");
 
+/* ---------------------------------------------------------------------------
+   LA PREVIA: LA DESCRIPCIÓN A TODO EL ANCHO (v5.08)
+
+   Victor: *"antes de saltar al comparador el cuadro se descuadra igual, hay que meter una línea
+   más para la descripción"*. Iba metida en la columna de la izquierda, peleando por el ancho con
+   el bloque grande del Annualized ROI: le quedaban ~140 px y "JUN 17 '27" se partía por la mitad.
+
+   Se mide, no se opina: la descripción tiene que ocupar CASI TODO el ancho de su tarjeta. Y con
+   el ticker más largo y la fecha más larga, que es cuando se rompía.
+--------------------------------------------------------------------------- */
+console.log("\n=== la previa, con la descripción a su anchura ===");
+{
+  const c = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
+  for (const [re, h] of rutas) await c.route(re, h);
+  const p = await c.newPage();
+  const errsP = [];
+  p.on("pageerror", (e) => errsP.push(e.message));
+  await p.addInitScript(SEMILLA);
+  await p.goto(URL_APP, { waitUntil: "load" });
+  await p.waitForTimeout(2400);
+  for (const paso of PASOS("RDDT")) { await p.evaluate(paso.f, paso.arg); await p.waitForTimeout(paso.ms); }
+  /* el grupo largo —el de JUN 17 '27, la fecha que se partía—. Primero se PLIEGA el que viene
+     abierto, o la fila que se abra después sería la suya y no la de la fecha larga. */
+  await p.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => /^▾/.test((x.innerText || "").trim()));
+    if (b) b.click();
+  });
+  await p.waitForTimeout(400);
+  await p.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => /302 días/.test(x.innerText || ""));
+    if (b) b.click();
+  });
+  await p.waitForTimeout(500);
+  await p.evaluate(() => {
+    const f = Array.from(document.querySelectorAll("button")).find((x) => /% fuera/.test(x.innerText || ""));
+    if (f) { f.click(); f.scrollIntoView({ block: "center" }); }
+  });
+  await p.waitForTimeout(600);
+  const m = await p.evaluate(() => {
+    const d = document.querySelector("[data-previa-desc]");
+    if (!d) return null;
+    const caja = d.parentElement.parentElement;      /* la tarjeta de la previa */
+    /* las líneas se cuentan por ALTURA. getClientRects() sobre un bloque devuelve una sola caja
+       —no una por línea—, así que contarlas así decía siempre "1" aunque el texto cayera en
+       cuatro. Alto entre alto-de-línea sí es un número de verdad. */
+    const alto = parseFloat(getComputedStyle(d).lineHeight) || 19;
+    return { desc: d.getBoundingClientRect().width, tarjeta: caja.getBoundingClientRect().width,
+             texto: (d.innerText || "").replace(/\n/g, " ⏎ "),
+             lineas: Math.round(d.getBoundingClientRect().height / alto) };
+  });
+  console.log("  descripción:", m && m.texto);
+  ok(!!m, "la previa se abre y tiene su línea de descripción");
+  if (m) {
+    console.log("  ancho: " + Math.round(m.desc) + " px de " + Math.round(m.tarjeta) + " px de tarjeta");
+    ok(m.desc > m.tarjeta * 0.8, "y ocupa casi toda la tarjeta (" + Math.round(m.desc) + " de " + Math.round(m.tarjeta) + " px), no una columna estrecha");
+    ok(/JUN 17 '27/.test(m.texto), "con la fecha entera y sin partir (" + m.texto + ")");
+    /* NO se comprueba el "·" colgando leyendo el texto: innerText no refleja los saltos por
+       ajuste de línea, así que esa comprobación pasaría siempre. Que no cuelgue lo garantiza la
+       construcción (el separador va dentro del `nowrap` de lo que introduce). Lo que sí se puede
+       medir es en cuántas líneas cae: dos como mucho, o vuelve a ser un bloque estrecho. */
+    ok(m.lineas <= 2, "y cabe en dos líneas como mucho (" + m.lineas + ")");
+  }
+  ok(!errsP.length, "sin errores de JS " + JSON.stringify(errsP.slice(0, 2)));
+  await p.screenshot({ path: D + "/puts-previa.png" });
+  await c.close();
+}
+
 /* v5.00 se fue entera en desbordes horizontales, y la cabecera nueva mete cuatro cosas en una
    línea. En el iPhone más estrecho que usa nadie (320) no se puede salir NI UN pixel. Contexto
    aparte y no setViewportSize: la app re-ancla el viewport al arrancar y mediría el de antes. */
