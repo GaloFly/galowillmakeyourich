@@ -67,7 +67,7 @@ mirándola**. No cambia ningún veredicto del flujo.
 
 Bloques v4.97 — La ficha de ticker completa: ROI, flujo por horizontes y Valora profunda
 
-**Pendiente de que Victor vea el diff antes de publicarse**, como pide el encargo.
+*(Publicada tras revisar el diff, como pedía el encargo.)*
 
 ## De dónde sale esto
 El encargo del servidor del 18-ago: *"escribo un ticker y la app saca de golpe Valora, Flujo,
