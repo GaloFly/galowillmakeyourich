@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.07"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.08"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -8393,22 +8393,34 @@ function PreviaPut({ c, base }) {
     /* padding 12 y no 16 como en el comparador: aquí la tarjeta va anidada dentro de la fila, que ya
        tiene el suyo, y con tres niveles de margen la cabecera se partía en cuatro líneas. */
     <div style={{ background: T.card, borderRadius: 16, padding: 12, boxShadow: T.raise }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
-          <span style={{ background: vbg, color: vcol, borderRadius: 10, padding: "5px 9px", fontSize: 12, fontWeight: 800, letterSpacing: 0.5, whiteSpace: "nowrap" }}>{c.status}</span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4, color: T.ink, lineHeight: 1.1 }}>{c.tkr}</div>
-            <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 1 }}>
-              ${c.strike} PUT{c.expiry ? " · " + ibkrDate(c.expiry) : ""}
-            </div>
-            <div style={{ fontSize: 11, color: T.sub, fontWeight: 600, marginTop: 1 }}>
-              {c.dte}d{isFinite(n(c.delta)) ? " · Δ " + Math.abs(n(c.delta)).toFixed(2) : ""}{c.pop ? " · POP " + c.pop + "%" : ""}
-            </div>
+      {/* v5.08 (Victor: "el cuadro se descuadra, hay que meter una línea más para la descripción").
+          La descripción iba METIDA en la columna de la izquierda, junto al sello y al ticker, y
+          peleando por el ancho con el bloque grande de la derecha. Le quedaban unos 140 px: con
+          RDDT $130 PUT JUN 17 '27 la fecha se partía por la mitad —"JUN" arriba y "17 '27"
+          abajo—, que es lo que descuadraba el cuadro entero.
+          Ahora la cabecera es SOLO sello + ticker + la cifra grande, y la descripción baja a su
+          propia línea con el ancho completo. Y cada trozo va en `nowrap`: pueden partirse ENTRE
+          ellos, nunca por dentro. Una fecha cortada a la mitad no es una línea más, es un error
+          de lectura. */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+            <span style={{ background: vbg, color: vcol, borderRadius: 10, padding: "5px 9px", fontSize: 12, fontWeight: 800, letterSpacing: 0.5, whiteSpace: "nowrap" }}>{c.status}</span>
+            <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4, color: T.ink, lineHeight: 1.1, minWidth: 0 }}>{c.tkr}</div>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: T.green, letterSpacing: -0.5 }}>{signPct(c.annRoi, 2)}</div>
+            <div style={{ fontSize: 12, color: T.sub, fontWeight: 500 }}>Annualized ROI</div>
           </div>
         </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: T.green, letterSpacing: -0.5 }}>{signPct(c.annRoi, 2)}</div>
-          <div style={{ fontSize: 12, color: T.sub, fontWeight: 500 }}>Annualized ROI</div>
+        {/* el "·" va PEGADO a lo que introduce, no a lo que deja atrás: si va detrás, al partirse
+            la línea se queda un punto suelto colgando al final. */}
+        <div data-previa-desc style={{ fontSize: 12.5, color: T.sub, fontWeight: 600, marginTop: 7, lineHeight: 1.5 }}>
+          <span style={{ whiteSpace: "nowrap" }}>${c.strike} PUT</span>
+          {c.expiry ? <> <span style={{ whiteSpace: "nowrap" }}>{"· " + ibkrDate(c.expiry)}</span></> : null}
+          {" "}<span style={{ whiteSpace: "nowrap" }}>{"· " + c.dte + "d"}</span>
+          {isFinite(n(c.delta)) ? <> <span style={{ whiteSpace: "nowrap" }}>{"· Δ " + Math.abs(n(c.delta)).toFixed(2)}</span></> : null}
+          {c.pop ? <> <span style={{ whiteSpace: "nowrap" }}>{"· POP " + c.pop + "%"}</span></> : null}
         </div>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>

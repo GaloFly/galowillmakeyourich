@@ -1,5 +1,57 @@
 # CHANGELOG — Bloques
 
+Bloques v5.08 — La descripción de la previa, en su propia línea
+
+## El síntoma
+Victor, ya con el buscador funcionando: *"antes de saltar al comparador el cuadro se descuadra
+igual, hay que meter una línea más para la descripción"*.
+
+En la tarjeta de vista previa se leía así:
+
+```
+CAUTION   RDDT              +23.09%
+          $130 PUT · JUN    Annualized ROI
+          17 '27
+          302d · Δ 0.26 ·
+          POP 73.9%
+```
+
+**`JUN 17 '27` partido por la mitad.** Eso no es una línea de más: es un error de lectura.
+
+## La causa
+La descripción iba metida DENTRO de la columna izquierda, junto al sello y al ticker, peleando por
+el ancho con el bloque grande del Annualized ROI —que no encoge. Le quedaban unos **140 px**. Con
+un vencimiento corto (`SEP 18 '26`) cabía por los pelos; con el de un año, no.
+
+Es la misma historia que la v5.00: cabía hasta que dejó de caber, y lo que lo destapó fue un dato
+más largo de lo normal. El plazo de 360 días es nuevo desde esta mañana.
+
+## El arreglo
+La cabecera pasa a ser **solo sello + ticker + la cifra grande**, y la descripción baja a su propia
+línea **con el ancho completo de la tarjeta**: de 140 px a 286.
+
+Y cada trozo va en `nowrap`: pueden partirse ENTRE ellos, nunca por dentro. El `·` va pegado a lo
+que introduce y no a lo que deja atrás, para que al partirse no quede un punto colgando al final.
+
+## Verificación, y dos comprobaciones que hubo que tirar
+La prueba abre el grupo de 302 días —el de la fecha larga, que es donde se rompía—, despliega una
+fila y **mide**: la descripción tiene que ocupar más del 80% del ancho de su tarjeta y caber en dos
+líneas. Con el layout viejo salen 140 px de 310 y cuatro líneas: las dos comprobaciones caen.
+
+Por el camino se escribieron dos comprobaciones **que no podían fallar nunca**, y se cambiaron:
+- mirar si el texto tenía un `·` al final de una línea — `innerText` **no refleja los saltos por
+  ajuste de línea**, así que pasaba siempre. Que no cuelgue lo garantiza la construcción, no un test.
+- contar líneas con `getClientRects().length` — sobre un bloque devuelve **una** caja, no una por
+  línea. Decía "1 línea" incluso con el texto estrujado en cuatro. Ahora se cuenta alto entre
+  alto-de-línea, que sí es un número.
+
+Es la lección del día por tercera vez, ahora aplicada a mí mismo: **una comprobación que no puede
+fallar no comprueba nada**. Las dos se probaron rompiendo el layout a propósito antes de darlas por
+buenas.
+
+Sin regresiones: `npm run prueba` (18/18) y cero elementos fuera de pantalla a 320 px.
+
+
 Bloques v5.07 — Se pregunta la escalera en vez de adivinarla
 
 ## La pregunta de Victor
