@@ -52,37 +52,51 @@ const servidor = createServer((req, res) => {
 await new Promise((r) => servidor.listen(PUERTO, r));
 const URL_APP = "http://localhost:" + PUERTO + "/index.html";
 
-const SPOT = 215.73;
 const dentroDe = (d) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
-/* un vencimiento pegado a cada plazo pedido, y algunos más por el camino */
-const DTES = [8, 15, 29, 36, 43, 57, 64, 92, 120, 178, 211, 360];
-const VTOS = DTES.map(dentroDe);
-const STRIKES = [];
-for (let k = 130; k <= 220; k += 5) STRIKES.push(k);
 
-const cod = (k, v) => "US.MRVL" + v.slice(2).replace(/-/g, "") + "P" + k * 1000;
-const contratos = [];
-VTOS.forEach((v) => STRIKES.forEach((k) => contratos.push({ codigo: cod(k, v), tipo: "PUT", strike: k, vencimiento: v })));
-const opciones = {};
-contratos.forEach((c) => {
-  const dte = DTES[VTOS.indexOf(c.vencimiento)];
-  const otm = (SPOT - c.strike) / SPOT;
-  /* delta que se hace menos negativa cuanto más lejos está el strike, y prima que crece con el plazo */
-  const delta = -Math.max(0.02, 0.5 - otm * 2.2);
-  const px = Math.max(0.2, SPOT * 0.09 * Math.sqrt(dte / 365) * Math.exp(-3.4 * otm));
-  opciones[c.codigo] = { codigo: c.codigo, ultimo: px, medio: px, bid: px - 0.1, ask: px + 0.1,
-    volumen: 120, interes_abierto: 3400, iv: 83.7, delta,
-    gamma: 0.01, theta: -0.05, vega: 0.2, fecha_dato: "2026-08-19 18:10:00" };
+/* DOS tickers, porque la escalera de vencimientos no es igual en todos y ahí estuvo el fallo:
+     · MRVL — la escalera COMPLETA, con uno pegado a cada plazo pedido, hasta el año.
+     · RDDT — la escalera REAL de la mayoría: semanales cerca, mensuales unos meses, y NADA
+       a un año. Es el caso de las capturas de Victor del 19-ago-2026. */
+const MUNDOS = {
+  MRVL: { spot: 215.73, k0: 130, k1: 220, paso: 5,
+          dtes: [8, 15, 29, 36, 43, 57, 64, 92, 120, 178, 211, 360] },
+  RDDT: { spot: 158.25, k0: 95, k1: 160, paso: 5,
+          dtes: [9, 16, 23, 30, 37, 44, 58, 93, 149, 212] },
+};
+const contratos = {}, opciones = {}, VTOS = {};
+Object.entries(MUNDOS).forEach(([tkr, m]) => {
+  VTOS[tkr] = m.dtes.map(dentroDe);
+  contratos[tkr] = [];
+  VTOS[tkr].forEach((v, i) => {
+    for (let k = m.k0; k <= m.k1; k += m.paso) {
+      const codigo = "US." + tkr + v.slice(2).replace(/-/g, "") + "P" + k * 1000;
+      contratos[tkr].push({ codigo, tipo: "PUT", strike: k, vencimiento: v });
+      const otm = (m.spot - k) / m.spot;
+      /* delta que se hace menos negativa cuanto más lejos está el strike, y prima que crece con el plazo */
+      const delta = -Math.max(0.02, 0.5 - otm * 2.2);
+      const px = Math.max(0.2, m.spot * 0.09 * Math.sqrt(m.dtes[i] / 365) * Math.exp(-3.4 * otm));
+      opciones[codigo] = { codigo, ultimo: px, medio: px, bid: px - 0.1, ask: px + 0.1,
+        volumen: 120, interes_abierto: 3400, iv: 83.7, delta,
+        gamma: 0.01, theta: -0.05, vega: 0.2, fecha_dato: "2026-08-19 18:10:00" };
+    }
+  });
 });
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
-const cadenas = [];
-const finnhub = (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: SPOT, dp: 0, pc: SPOT, h: SPOT }) });
+let cadenas = [];
+const deCodigo = (c) => String(c || "").replace("US.", "").split(",")[0];
+const finnhub = (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: 100, dp: 0, pc: 100, h: 100 }) });
 const puente = (route) => {
   const u = new URL(route.request().url());
   const J = (o) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(o) });
-  if (u.pathname === "/cotiza") return J({ ok: true, cotizaciones: { "US.MRVL": { ultimo: SPOT, cierre_anterior: 211.4 } } });
-  if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US.MRVL", nombre: "Marvell", iv: 83.71, hv_30d: 89.74, iv_rank: 57.2 } });
+  const tkr = deCodigo(u.searchParams.get("codigo") || u.searchParams.get("codigos"));
+  const m = MUNDOS[tkr];
+  if (u.pathname === "/cotiza") {
+    if (!m) return J({ ok: true, cotizaciones: {} });
+    return J({ ok: true, cotizaciones: { ["US." + tkr]: { ultimo: m.spot, cierre_anterior: m.spot * 0.98 } } });
+  }
+  if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US." + tkr, nombre: tkr, iv: 83.71, hv_30d: 89.74, iv_rank: 57.2 } });
   if (u.pathname === "/cadena") {
     const desde = u.searchParams.get("desde"), hasta = u.searchParams.get("hasta");
     const dias = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86400000);
@@ -90,9 +104,9 @@ const puente = (route) => {
     /* EL PUENTE FALSO, TAN ESTRICTO COMO EL DE VERDAD: más de 90 días se rechaza */
     if (dias > 90) return route.fulfill({ status: 400, contentType: "application/json",
       body: JSON.stringify({ ok: false, error: "El rango es demasiado largo: como mucho 90 días." }) });
-    const dentro = VTOS.filter((v) => v >= desde && v <= hasta);
-    return J({ ok: true, contratos: contratos.filter((c) => dentro.includes(c.vencimiento)),
-               total: contratos.length, vencimientos: dentro });
+    const dentro = (VTOS[tkr] || []).filter((v) => v >= desde && v <= hasta);
+    return J({ ok: true, contratos: (contratos[tkr] || []).filter((c) => dentro.includes(c.vencimiento)),
+               total: (contratos[tkr] || []).length, vencimientos: dentro });
   }
   if (u.pathname === "/opciones") return J({ ok: true, opciones, pedidos: 0, de_cache: 0, sin_datos: [] });
   return J({ ok: true });
@@ -106,13 +120,16 @@ const SEMILLA = () => {
   localStorage.setItem("bloques_view_v1", "comparador");
   localStorage.setItem("bloques_puente_v1", JSON.stringify({ url: "https://puente.alphavext.com", token: "clave" }));
 };
-/* los mismos pasos en las dos anchuras: cerrar el aviso, pestaña Puts, teclear MRVL, Buscar */
-const PASOS = [
+/* los mismos pasos en las dos anchuras: cerrar el aviso, pestaña Puts, teclear el ticker, Buscar */
+const PASOS = (tkr) => [
   { ms: 300, f: () => { const b = Array.from(document.querySelectorAll("button, div")).find((e) => (e.textContent || "").trim() === "Todo OK"); if (b) b.click(); } },
   { ms: 600, f: () => { const b = Array.from(document.querySelectorAll("button, div")).find((x) => (x.innerText || "").trim() === "Puts"); if (b) b.click(); } },
-  { ms: 300, f: () => { const i = Array.from(document.querySelectorAll("input")).find((x) => /NVDA|Ticker/.test(x.placeholder || "")); if (i) { const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set; s.call(i, "MRVL"); i.dispatchEvent(new Event("input", { bubbles: true })); } } },
+  { ms: 300, arg: tkr, f: (t) => { const i = Array.from(document.querySelectorAll("input")).find((x) => /NVDA|Ticker/.test(x.placeholder || "")); if (i) { const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set; s.call(i, t); i.dispatchEvent(new Event("input", { bubbles: true })); } } },
   { ms: 3500, f: () => { const b = Array.from(document.querySelectorAll("button")).find((x) => /Buscar/.test(x.textContent || "") && x.offsetParent !== null); if (b) b.click(); } },
 ];
+const cabecerasDe = (p) => p.evaluate(() => Array.from(document.querySelectorAll("button"))
+  .filter((b) => /^[▾▸]/.test((b.innerText || "").trim()))
+  .map((b) => (b.innerText || "").replace(/\n/g, " ").trim()));
 
 const ctx = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
 for (const [re, h] of rutas) await ctx.route(re, h);
@@ -122,7 +139,7 @@ page.on("pageerror", (e) => errores.push(e.message));
 await page.addInitScript(SEMILLA);
 await page.goto(URL_APP, { waitUntil: "load" });
 await page.waitForTimeout(2400);
-for (const paso of PASOS) { await page.evaluate(paso.f); await page.waitForTimeout(paso.ms); }
+for (const paso of PASOS("MRVL")) { await page.evaluate(paso.f, paso.arg); await page.waitForTimeout(paso.ms); }
 
 let fallos = 0;
 const ok = (v, t) => { if (!v) fallos++; console.log((v ? "  ✓ " : "  ✗ ") + t); };
@@ -134,9 +151,7 @@ ok(Math.max(...cadenas) > 60, "la primera agrupa varios plazos en vez de pedir u
 
 /* los plazos se leen de las CABECERAS, no del texto de la pantalla: la propia tarjeta explica
    en su descripción a qué plazos busca, y ese "60 días" contaría como si fuera un grupo */
-const cabeceras = await page.evaluate(() => Array.from(document.querySelectorAll("button"))
-  .filter((b) => /^[▾▸]/.test((b.innerText || "").trim()))
-  .map((b) => (b.innerText || "").replace(/\n/g, " ").trim()));
+const cabeceras = await cabecerasDe(page);
 
 console.log("\n=== los seis plazos ===");
 const dtesEnPantalla = cabeceras.map((c) => parseInt((c.match(/(\d+) días/) || [0, "0"])[1], 10));
@@ -187,6 +202,44 @@ await page.waitForTimeout(400);
 await page.screenshot({ path: D + "/puts-plazos.png" });
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
 
+/* ---------------------------------------------------------------------------
+   EL CASO DE LAS CAPTURAS DEL 19-AGO-2026 (v5.01, arreglado en la v5.02)
+
+   Victor: *"no están saliendo las de 360 y en RDDT no más de 90"*. RDDT tiene semanales cerca,
+   mensuales unos meses y NADA a un año — que es la escalera normal, no una rareza.
+
+   La v5.01 hacía dos cosas mal con eso, y la segunda era la grave:
+     1. buscaba el de 360 solo entre los días 348 y 375, donde casi nunca hay vencimiento;
+     2. y como no encontraba, RELLENABA ese hueco con el vencimiento libre más cercano — que era
+        el de 23 días. En pantalla salían seis grupos, parecían los seis plazos pedidos, y dos de
+        ellos eran vencimientos cortos disfrazados. Ese es el fallo que hay que no repetir jamás:
+        una lista corta y honesta es mejor que una completa y falsa.
+--------------------------------------------------------------------------- */
+console.log("\n=== RDDT: sin vencimientos a un año ===");
+cadenas = [];
+const ctxR = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
+for (const [re, h] of rutas) await ctxR.route(re, h);
+const pr = await ctxR.newPage();
+const erroresR = [];
+pr.on("pageerror", (e) => erroresR.push(e.message));
+await pr.addInitScript(SEMILLA);
+await pr.goto(URL_APP, { waitUntil: "load" });
+await pr.waitForTimeout(2400);
+for (const paso of PASOS("RDDT")) { await pr.evaluate(paso.f, paso.arg); await pr.waitForTimeout(paso.ms); }
+const cabR = await cabecerasDe(pr);
+cabR.forEach((c) => console.log("   ·", c));
+const dtesR = cabR.map((c) => parseInt((c.match(/(\d+) días/) || [0, "0"])[1], 10));
+ok(cadenas.length === 3, "sigue costando TRES cadenas aunque falte un plazo (" + cadenas.length + ")");
+ok(dtesR.length === 5, "salen CINCO grupos, no seis: el de 360 no existe y no se inventa (" + dtesR.length + ")");
+ok(!dtesR.some((d) => d < 25), "y NINGÚN vencimiento corto ocupa el sitio del que falta (" + dtesR.join(" · ") + ")");
+ok(dtesR.some((d) => Math.abs(d - 180) <= 44), "el de 180 SÍ sale ahora, con la holgura ancha (" + dtesR.join(" · ") + ")");
+const textoR = await pr.evaluate(() => document.body.innerText);
+ok(/no tiene vencimientos cerca de 360 días/.test(textoR), "y se DICE en pantalla cuál falta, en vez de que desaparezca en silencio");
+ok(!erroresR.length, "sin errores de JS " + JSON.stringify(erroresR.slice(0, 2)));
+await pr.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => /^[▾▸]/.test((x.innerText || "").trim())); if (b) b.scrollIntoView({ block: "center" }); });
+await pr.waitForTimeout(300);
+await pr.screenshot({ path: D + "/puts-rddt.png" });
+
 /* v5.00 se fue entera en desbordes horizontales, y la cabecera nueva mete cuatro cosas en una
    línea. En el iPhone más estrecho que usa nadie (320) no se puede salir NI UN pixel. Contexto
    aparte y no setViewportSize: la app re-ancla el viewport al arrancar y mediría el de antes. */
@@ -198,7 +251,7 @@ const p2 = await ctx2.newPage();
 await p2.addInitScript(SEMILLA);
 await p2.goto(URL_APP, { waitUntil: "load" });
 await p2.waitForTimeout(2400);
-for (const paso of PASOS) { await p2.evaluate(paso.f); await p2.waitForTimeout(paso.ms); }
+for (const paso of PASOS("MRVL")) { await p2.evaluate(paso.f, paso.arg); await p2.waitForTimeout(paso.ms); }
 const fuera = await p2.evaluate(() => {
   const w = document.documentElement.clientWidth;
   /* los carruseles que se deslizan a propósito no cuentan: ahí salirse es la gracia */
