@@ -1,5 +1,43 @@
 # CHANGELOG — Bloques
 
+Bloques v5.03 — La cifra de la cabecera estaba dividida por cien
+
+## El síntoma
+Victor, mirando RDDT: *"RDDT solo da a 149 días, ¿que es el 0.03% que sale a la derecha?"*.
+
+No era el plazo: era **la cifra**. Un ROI del 3% se estaba enseñando como `0.03%`.
+
+## La causa
+`roi`, `rom`, `annRoi` y `annRom` se guardan como **fracción** (0,03 = 3%). Toda la app los pinta
+con `pct`, que multiplica por cien. La cabecera de vencimiento que se estrenó en la v5.01 usaba
+`money2`, que no lo hace, y le pegaba un `%` detrás. Resultado: **todas** las cabeceras salían cien
+veces más pequeñas, en los seis plazos y con cualquier criterio.
+
+El arreglo es un formateador —`valorTxt`— escrito **pegado a `valor`**, la función que elige la
+cifra, y con los mismos decimales por criterio que usa el número grande del Comparador. Van juntos
+a propósito: son la misma decisión partida en dos (cuál es el número y cómo se escribe), y
+separarlas es lo que permitió que una se quedara atrás.
+
+## Por qué no lo cazó la prueba
+La prueba de la v5.01 comprobaba que la cabecera **tuviera un `%`** — y lo tenía. Comprobaba que
+hubiera un número, no que el número fuera el correcto.
+
+Ahora se comprueba el valor, y contra la única referencia que no puede mentir: **la otra pantalla
+que ya enseña ese mismo número**. Se pone el criterio en ROI, se abre un vencimiento y se exige que
+la cifra de la cabecera sea el mejor ROI de sus propias filas. Si la cabecera y la fila del mismo
+contrato no dicen lo mismo, una de las dos miente.
+
+Comprobado que caza: devolviendo el formateador de la v5.01, la cabecera vuelve a salir con
+**0.02%** frente a las filas con **2.07%**, y se caen dos comprobaciones.
+
+## Lección, que ya es la segunda de esta serie
+Una prueba que solo mira que *haya* algo no comprueba nada — igual que en la v5.01 el hueco de un
+plazo se rellenaba con otro vencimiento y "había seis grupos". Cuando un número se pinta en dos
+sitios, la comprobación que vale es **cruzarlos**, no mirarlos por separado.
+
+Sin regresiones: `npm run prueba` (18/18 idénticas) y cero elementos fuera de pantalla a 320 px.
+
+
 Bloques v5.02 — Los plazos largos no salían, y el hueco lo tapaba un vencimiento corto
 
 ## El síntoma
