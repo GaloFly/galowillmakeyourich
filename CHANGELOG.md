@@ -1,5 +1,45 @@
 # CHANGELOG — Bloques
 
+Bloques v5.09 — La llamada nueva no puede llevarse por delante la búsqueda
+
+## El síntoma
+Victor, buscando ASTS media hora después de publicar la v5.07: *"al meter un ticker sale esto"* —
+**"El servidor no contestó en 10 segundos. ¿Está encendido y el túnel en marcha?"**.
+
+El servidor estaba encendido y el túnel en marcha. El fallo lo metí yo esta misma tarde.
+
+## Dos causas, las dos mías
+**1. `/vencimientos` gastaba del cupo de CADENAS, y no es una cadena.** Al escribir la ruta la metí
+en el cubo `"chain"` por prudencia. Pero `get_option_expiration_date` no es `get_option_chain` y no
+comparte su límite. Resultado: cada búsqueda pasó a gastar **4 de los 5 turnos** de cadena por
+ventana de 30 segundos en vez de 3, y dos búsquedas seguidas dejaban a la sexta llamada esperando
+media hora de reloj... que desde el móvil se ve como *"no contestó en 10 segundos"*.
+Ahora tiene su propio cubo (`vtos`, 10 cada 30 s), conservador igualmente porque la máquina es
+compartida y su límite documentado no se conoce.
+
+**2. Diez segundos de paciencia para todo.** Valía mientras cada búsqueda hacía tres llamadas. El
+puente **serializa** todo lo que va a OpenD con un candado y además espera turno si el cupo está
+pillado (duerme hasta 5 s de golpe): una llamada lenta empuja a la siguiente contra el reloj, y la
+que salta es la que no tenía nada de malo. Ahora la paciencia se fija por llamada:
+- lo **opcional** se rinde pronto (6 s) y tira por el camino alternativo;
+- lo **imprescindible** espera más (25 s), porque esperar por el cupo compartido es normal, no una
+  avería.
+
+Y el mensaje ya no acusa al túnel: nombra también el cupo ocupado y sugiere reintentar en medio
+minuto, que es lo que de verdad pasaba.
+
+## La regla que faltaba
+`/vencimientos` es una mejora **opcional** — hay un camino alternativo que funciona. Que algo
+opcional pueda tumbar la búsqueda entera es un error de diseño, no de red.
+
+Prueba nueva: el puente falso **ni contesta ni falla en `/vencimientos`, se queda colgado**, y se
+exige que salgan los seis plazos igual y que **no se enseñe ningún error**. Es el caso peor y es
+justo el que se vio con ASTS.
+
+Sin regresiones: `npm run prueba` (18/18) y todo lo del buscador sigue verde, incluido el puente
+viejo que no conoce la ruta.
+
+
 Bloques v5.08 — La descripción de la previa, en su propia línea
 
 ## El síntoma

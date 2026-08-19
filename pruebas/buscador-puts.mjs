@@ -103,6 +103,7 @@ Object.entries(MUNDOS).forEach(([tkr, m]) => {
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 let cadenas = [];
 let RUTA_NUEVA = true;   /* el puente conoce /vencimientos */
+let VTOS_COLGADO = false;
 let pidioVencimientos = 0;
 const deCodigo = (c) => String(c || "").replace("US.", "").split(",")[0];
 const finnhub = (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: 100, dp: 0, pc: 100, h: 100 }) });
@@ -117,6 +118,9 @@ const puente = (route) => {
   }
   if (u.pathname === "/subyacente") return J({ ok: true, subyacente: { codigo: "US." + tkr, nombre: tkr, iv: 83.71, hv_30d: 89.74, iv_rank: 57.2 } });
   if (u.pathname === "/vencimientos") {
+    /* un servidor que ni contesta ni falla: se queda colgado. Es el caso peor y el que se vio el
+       19-ago-2026 con ASTS — la llamada nueva se atascó y arrastró a la búsqueda entera. */
+    if (VTOS_COLGADO) return;
     /* un puente ANTERIOR a la v5.07 no conoce esta ruta: contesta 501 y la app tiene que
        seguir funcionando por el camino de las ventanas, no quedarse sin buscador */
     if (!RUTA_NUEVA) return route.fulfill({ status: 501, contentType: "application/json",
@@ -232,7 +236,7 @@ await page.screenshot({ path: D + "/puts-plazos.png" });
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
 
 /* una búsqueda entera en un contexto limpio, que es lo que hacen los tres escenarios de abajo */
-const buscar = async (tkr, extra) => {
+const buscar = async (tkr, extra, margen) => {
   cadenas = [];
   const c = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
   for (const [re, h] of rutas) await c.route(re, h);
@@ -244,6 +248,7 @@ const buscar = async (tkr, extra) => {
   await p.goto(URL_APP, { waitUntil: "load" });
   await p.waitForTimeout(2400);
   for (const paso of PASOS(tkr)) { await p.evaluate(paso.f, paso.arg); await p.waitForTimeout(paso.ms); }
+  if (margen) await p.waitForTimeout(margen);   /* cuando se espera a que algo agote su tiempo */
   const cab = await cabecerasDe(p);
   cab.forEach((x) => console.log("   ·", x));
   return { p, errs, cab, dtes: cab.map((x) => parseInt((x.match(/(\d+) días/) || [0, "0"])[1], 10)),
@@ -266,6 +271,25 @@ ok(V.dtes.length === 6, "salen los seis plazos igual (" + V.dtes.length + ")");
 ok(V.dtes.includes(302), "incluido el de 302 días (" + V.dtes.join(" · ") + ")");
 ok(V.cadenas.length === 3, "por el camino de antes: tres ventanas de cadena (" + V.cadenas.length + ")");
 ok(!V.errs.length, "sin errores de JS " + JSON.stringify(V.errs.slice(0, 2)));
+
+/* ---------------------------------------------------------------------------
+   SI LA LLAMADA OPCIONAL SE CUELGA, LA BÚSQUEDA SALE IGUAL (v5.09)
+
+   Victor, con ASTS: *"al meter un ticker sale esto"* — "el servidor no contestó en 10 segundos".
+   La llamada de /vencimientos es NUEVA y es opcional: si tarda o no contesta, hay un camino
+   alternativo. Lo que no puede es llevarse por delante la búsqueda entera.
+
+   Aquí el puente falso ni contesta ni falla: se queda colgado. La búsqueda tiene que rendirse
+   con esa y salir por el camino de las ventanas.
+--------------------------------------------------------------------------- */
+console.log("\n=== con la llamada nueva colgada ===");
+VTOS_COLGADO = true;
+const C = await buscar("RDDT", null, 7000);   /* 6 s de corte + margen */
+VTOS_COLGADO = false;
+ok(C.dtes.length === 6, "salen los seis plazos igual (" + C.dtes.length + ")");
+ok(C.dtes.includes(302), "incluido el largo (" + C.dtes.join(" · ") + ")");
+ok(!/no contestó/.test(C.texto), "y NO se enseña el error de tiempo agotado: había otro camino");
+ok(!C.errs.length, "sin errores de JS " + JSON.stringify(C.errs.slice(0, 2)));
 
 /* ---------------------------------------------------------------------------
    EL BORDE DE LA VENTANA NO PUEDE DEPENDER DE LA HORA (v5.06)

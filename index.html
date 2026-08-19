@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.08"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.09"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1798,13 +1798,23 @@ function puenteUrl(url) {
   if (!/^https?:\/\//i.test(u)) u = "https://" + u; /* pegará "puente.midominio.com" a secas */
   return u.replace(/\/+$/, "");
 }
-async function puenteFetch(cfg, ruta, params) {
+/* v5.09 — la paciencia se puede fijar por llamada, y no es un capricho.
+   Diez segundos para todo estaba bien mientras cada búsqueda hacía tres llamadas. Ahora hay una
+   más, y el puente SERIALIZA todo lo que va a OpenD con un candado y además espera turno si el
+   cupo compartido está pillado (duerme hasta 5 s de golpe). O sea: una llamada lenta empuja a la
+   siguiente contra el reloj, y lo que se ve en el móvil es "el servidor no contestó en 10
+   segundos" en una llamada que no tenía nada de malo.
+     · lo OPCIONAL se rinde pronto (6 s) y se sigue por el camino alternativo;
+     · lo IMPRESCINDIBLE espera más (25 s), porque esperar por el cupo es normal, no una avería. */
+const ESPERA_MS = 10000;
+async function puenteFetch(cfg, ruta, params, espera) {
   const base = puenteUrl(cfg && cfg.url);
   if (!base) return { ok: false, error: "Falta la dirección del servidor." };
   if (!(cfg && cfg.token)) return { ok: false, error: "Falta la clave del servidor." };
+  const ms = espera && espera > 0 ? espera : ESPERA_MS;
   const qs = new URLSearchParams(params || {}).toString();
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const reloj = ctrl ? setTimeout(() => ctrl.abort(), 10000) : null;
+  const reloj = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
   try {
     const r = await fetch(base + ruta + (qs ? "?" + qs : ""), {
       headers: { "X-Bloques-Token": cfg.token },
@@ -1833,7 +1843,7 @@ async function puenteFetch(cfg, ruta, params) {
   } catch (e) {
     if (reloj) clearTimeout(reloj);
     const msg = e && e.message ? e.message : "";
-    if (e && e.name === "AbortError") return { ok: false, error: "El servidor no contestó en 10 segundos. ¿Está encendido y el túnel en marcha?" };
+    if (e && e.name === "AbortError") return { ok: false, error: "El servidor no contestó en " + Math.round(ms / 1000) + " segundos. Puede estar apagado, el túnel caído, o el cupo de consultas ocupado por otra tarea de la máquina — prueba otra vez en medio minuto." };
     /* Un fallo de red aquí casi siempre es una de tres: dirección mal escrita, túnel caído, o
        CORS (el puente no tiene tu dominio en la lista de permitidos). El navegador no dice cuál
        — por seguridad —, así que se nombran las tres en vez de adivinar. */
@@ -1958,7 +1968,7 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
      a nadie sin buscador por no haber actualizado el servidor. */
   let escalera = null;
   try {
-    const lista = await puenteFetch(cfg, "/vencimientos", { codigo: cod });
+    const lista = await puenteFetch(cfg, "/vencimientos", { codigo: cod }, 6000);
     if (lista && lista.ok && Array.isArray(lista.vencimientos) && lista.vencimientos.length) {
       escalera = lista.vencimientos.slice().sort();
     }
@@ -2000,7 +2010,7 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   const contratos = [];
   const vistos = new Set();
   for (const w of ventanas) {
-    const cad = await puenteFetch(cfg, "/cadena", { codigo: cod, desde: fecha(w.desde), hasta: fecha(w.hasta) });
+    const cad = await puenteFetch(cfg, "/cadena", { codigo: cod, desde: fecha(w.desde), hasta: fecha(w.hasta) }, 25000);
     if (!cad || !cad.ok) return { error: (cad && cad.error) || "El servidor no contestó al pedir la cadena." };
     (cad.contratos || []).forEach((c) => contratos.push(c));
     (cad.vencimientos || []).forEach((v) => vistos.add(v));
