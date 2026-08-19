@@ -82,3 +82,42 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------------------------
+      # AVISAR A CLOUDFLARE (19-ago-2026)
+      #
+      # La app se publica en DOS sitios desde este mismo commit: la rama gh-pages (arriba) y
+      # Cloudflare Pages, que sirve app.alphavext.com — la dirección que usa Victor.
+      #
+      # Cloudflare tiene su propia conexión con GitHub y debería enterarse solo. Esa noche dejó de
+      # hacerlo: creaba despliegues de las OTRAS ramas (unos saltados, otros fallidos) pero para
+      # `main` no creaba ninguno. Victor se quedó tres versiones atrás sin un solo aviso, mientras
+      # la dirección vieja se actualizaba con normalidad — que es lo que hace este fallo tan
+      # difícil de ver: no se rompe nada, simplemente deja de pasar algo.
+      #
+      # Con esto ya no dependemos de que se entere: cuando la publicación de arriba termina bien,
+      # GitHub le dice explícitamente "despliega main". El hook es una dirección secreta que solo
+      # sirve para DISPARAR un despliegue de esa rama; no lee nada ni da acceso a nada más, y vive
+      # en los secretos del repositorio (nunca en el código ni en el chat).
+      #
+      # Va DESPUÉS de publicar y con `if: success()`: si el compilado falló, no se avisa a nadie.
+      # Y si el secreto no está puesto, se dice y se sigue — quedarse sin la dirección vieja por no
+      # tener configurada la nueva sería cambiar un problema por otro peor.
+      - name: Avisar a Cloudflare para que despliegue main
+        if: success()
+        env:
+          HOOK: ${{ secrets.CF_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::No hay CF_DEPLOY_HOOK configurado: app.alphavext.com no se actualizará hasta que Cloudflare se entere por su cuenta. Se crea en Cloudflare (Settings → Deploy Hooks, rama main) y se guarda como secreto del repositorio."
+            exit 0
+          fi
+          codigo=$(curl -s -o /tmp/cf.txt -w '%{http_code}' -X POST "$HOOK")
+          echo "Cloudflare respondió HTTP $codigo"
+          [ -f /tmp/cf.txt ] && { head -c 300 /tmp/cf.txt; echo; }   # si curl ni salió, no hay fichero
+          case "$codigo" in
+            2*) echo "Despliegue de main pedido a Cloudflare." ;;
+            # No se tumba la entrega por esto: en gh-pages YA está publicado y funcionando. Se avisa
+            # fuerte para que se vea en la lista de ejecuciones, y se sigue.
+            *)  echo "::warning::Cloudflare no aceptó el aviso (HTTP $codigo). La app está publicada en gh-pages; app.alphavext.com puede quedarse atrás." ;;
+          esac
