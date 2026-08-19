@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.01"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.02"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1921,10 +1921,18 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
      pedidos se reparten en las MENOS ventanas posibles de 90 días — con 30/45/60/90/180/360 salen
      tres: una para los cuatro cortos, otra para el de 180 y otra para el de 360. Pedir una sola
      ventana de 372 días es lo que hacía la v4.97 en la otra pantalla, y el puente la rechazaba. */
+  /* v5.02 — LA HOLGURA CRECE CON EL PLAZO, porque los vencimientos se separan con él.
+     Cerca del dinero hay uno cada semana; pasado medio año solo quedan los trimestrales y los de
+     enero, con meses vacíos de por medio. Buscar ±2 semanas alrededor de los 360 días es buscar
+     donde casi nunca hay nada: en la v5.01 a RDDT no le salió NI el de 180 NI el de 360, y a ASTS
+     no le salió el de 360. Cerca se deja como estaba (±2 semanas basta y sobra) y lejos se abre
+     a ±44 días, que es lo máximo que cabe en una llamada de 90. */
+  const holgura = (obj) => (obj <= 90 ? { antes: 12, despues: 15 } : { antes: 44, despues: 44 });
   const objetivos = dtesObjetivo.slice().sort((a, b) => a - b);
   const ventanas = [];
   objetivos.forEach((obj) => {
-    const d1 = Math.max(1, obj - 12), d2 = obj + 15;
+    const h = holgura(obj);
+    const d1 = Math.max(1, obj - h.antes), d2 = obj + h.despues;
     const u = ventanas[ventanas.length - 1];
     if (u && d2 - u.desde <= 88) u.hasta = Math.max(u.hasta, d2);   /* 88 y no 90: margen de redondeo */
     else ventanas.push({ desde: d1, hasta: d2 });
@@ -1942,18 +1950,30 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   const vtos = Array.from(vistos).sort();
   if (!vtos.length) return { error: "No hay vencimientos de " + tkr + " en esa ventana de fechas." };
 
-  /* 3. el vencimiento más cercano a cada DTE pedido, sin repetir */
+  /* 3. el vencimiento más cercano a cada DTE pedido, sin repetir.
+     v5.02 — Y SOLO DENTRO DE SU PROPIA VENTANA. Antes valía cualquiera que quedara suelto: si no
+     había nada a un año, el hueco de los 360 días lo tapaba el vencimiento libre más cercano...
+     que podía ser el de 23 días. RDDT salió con 23 y 37 días ocupando los sitios de 180 y 360, y
+     nada en pantalla decía que aquello no era lo pedido. Un plazo sin vencimiento se queda VACÍO
+     y se dice cuál es: una lista corta y honesta es mejor que una completa y falsa. */
   const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
   const elegidos = [];
+  const sinVencimiento = [];
   dtesObjetivo.forEach((obj) => {
+    const h = holgura(obj);
     let mejor = null, dif = Infinity;
     vtos.forEach((v) => {
       if (elegidos.includes(v)) return;
-      const d = Math.abs(dias(v) - obj);
-      if (d < dif) { dif = d; mejor = v; }
+      const d = dias(v);
+      if (d < obj - h.antes || d > obj + h.despues) return;
+      if (Math.abs(d - obj) < dif) { dif = Math.abs(d - obj); mejor = v; }
     });
-    if (mejor) elegidos.push(mejor);
+    if (mejor) elegidos.push(mejor); else sinVencimiento.push(obj);
   });
+  if (!elegidos.length) {
+    return { error: "No hay vencimientos de " + tkr + " cerca de los plazos pedidos (" +
+      dtesObjetivo.join(", ") + " días)." };
+  }
 
   /* 4. los strikes. Se piden MÁS de los que se van a enseñar (v4.61): el filtro de verdad es la
      DELTA —Victor: "los deltas están muy agresivos, deberían estar 0.3 para abajo"— y la delta no
@@ -2035,7 +2055,7 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
     if (sv && sv.ok && sv.subyacente) vol = sv.subyacente;
   } catch (e) { vol = null; }
   return { spot, filas: finales, vencimientos: elegidos, pedidos: candidatas.length,
-           miradas: filas.length, fueraDeTope, sinDelta, tope, errores, vol };
+           miradas: filas.length, fueraDeTope, sinDelta, tope, errores, vol, sinVencimiento };
 }
 /* ---------- v4.62: buscador de Double Calendar / Double Diagonal ----------
    Reglas sacadas del manual de OptionsKit que pasó Victor (14-ago-2026):
@@ -13560,6 +13580,17 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                 <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, padding: "0 3px" }}>
                   {conMetricas.length} con Δ ≤ {n(halladas.tope).toFixed(2)}{halladas.fueraDeTope ? " · " + halladas.fueraDeTope + " descartadas por delta" : ""} · mejor por {nombreCrit}
                 </div>
+                {/* v5.02 — un plazo sin vencimiento se DICE. Antes su hueco lo tapaba en silencio
+                    otro vencimiento cualquiera, así que la lista parecía completa y no lo era.
+                    Va como dato, no como fallo: que ASTS no tenga opciones a un año es información
+                    sobre ASTS. Opcional a propósito: las búsquedas guardadas de antes no lo traen
+                    y tienen que seguir pintándose igual. */}
+                {(halladas.sinVencimiento || []).length > 0 && (
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 3px" }}>
+                    {tkGuard} no tiene vencimientos cerca de {halladas.sinVencimiento.join(" ni ")} días,
+                    así que ese plazo no sale. Pasado medio año solo quedan los trimestrales y los de enero.
+                  </div>
+                )}
                 {/* v5.01 — desde que la búsqueda llega a 360 días, el criterio elegido decide algo que
                     antes casi no decidía. Un ROI o un ROM SIN anualizar es la prima entera de la
                     operación: a un año siempre sale mayor que a un mes, por construcción y no porque

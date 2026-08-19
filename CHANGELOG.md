@@ -1,5 +1,54 @@
 # CHANGELOG — Bloques
 
+Bloques v5.02 — Los plazos largos no salían, y el hueco lo tapaba un vencimiento corto
+
+## El síntoma
+Victor, un día después de la v5.01, con dos capturas: *"no están saliendo las de 360 y en RDDT no
+más de 90"*. En ASTS el grupo más lejano era el de 184 días; en RDDT, el de 93.
+
+## La causa: dos fallos, y el segundo mucho peor que el primero
+
+**1. La ventana de búsqueda era igual de estrecha para 30 días que para 360.** Se buscaba ±2
+semanas alrededor de cada plazo. Cerca del dinero eso sobra —hay vencimientos todas las semanas—,
+pero **pasado medio año la escalera se vacía**: solo quedan los trimestrales y los de enero, con
+meses enteros sin nada. Buscar el de 360 días entre el 348 y el 375 es buscar donde casi nunca hay
+nada. A RDDT no le salía ni el de 180: sus vencimientos de esa zona son enero (149 días) y marzo
+(212), y la ventana iba del 168 al 195, justo en medio de los dos.
+
+**2. Y cuando no encontraba, RELLENABA el hueco con otro vencimiento cualquiera.** Esto es lo grave.
+El código cogía "el más cercano que quede libre", sin límite: el sitio de los 360 días lo acababa
+ocupando el vencimiento de 23 días. En pantalla salían **seis grupos, con pinta de ser los seis
+plazos pedidos**, y dos de ellos eran vencimientos cortos disfrazados de largos. RDDT salió con
+23 · 30 · 37 · 44 · 58 · 93 días, y nada avisaba de que aquello no era lo que se había pedido.
+
+## El arreglo
+- **La holgura crece con el plazo.** Hasta 90 días se queda como estaba (±2 semanas, que basta y
+  sobra); a partir de ahí se abre a **±44 días**, que es lo máximo que cabe en una llamada de 90.
+  Sigue costando **tres** llamadas de cadena, las mismas que antes.
+- **Cada plazo solo puede quedarse con un vencimiento de SU ventana.** Si no hay ninguno, ese plazo
+  se queda vacío — y **se dice cuál es**, con el motivo: *"RDDT no tiene vencimientos cerca de 360
+  días, así que ese plazo no sale. Pasado medio año solo quedan los trimestrales y los de enero."*
+
+Que un ticker no tenga opciones a un año es **información sobre ese ticker**, no una avería. Lo que
+no puede pasar es que se rellene el hueco y parezca que sí las tiene: **una lista corta y honesta es
+mejor que una completa y falsa**.
+
+## Verificación
+`pruebas/buscador-puts.mjs` pasa a tener **dos tickers**, porque el fallo estaba justamente en dar
+por hecho que todos tienen la misma escalera:
+- **MRVL**, la escalera completa, con un vencimiento pegado a cada plazo hasta el año.
+- **RDDT**, la escalera normal: semanales cerca, mensuales unos meses y **nada a un año**.
+
+Con RDDT se comprueba que salen **cinco** grupos y no seis, que **ningún vencimiento corto ocupa el
+sitio del que falta**, que el de 180 sí aparece ahora, y que la pantalla lo dice.
+
+Comprobado que la prueba caza el fallo: devolviendo el código a como estaba en la v5.01, RDDT
+vuelve a salir con **23 · 30 · 37 · 44 · 58 · 93 días** — exactamente los seis grupos de la captura
+de Victor — y cuatro comprobaciones se caen.
+
+Sin regresiones: `npm run prueba` (18/18 idénticas) y nada se sale de la pantalla a 320 px.
+
+
 Bloques v5.01 — El buscador de puts llega hasta el año, y cada plazo viene plegado
 
 ## Lo que pidió
