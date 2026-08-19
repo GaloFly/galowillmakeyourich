@@ -1,5 +1,69 @@
 # CHANGELOG — Bloques
 
+Bloques v5.01 — El buscador de puts llega hasta el año, y cada plazo viene plegado
+
+## Lo que pidió
+Victor: *"en la herramienta de buscador de puts que aparezcan los diferentes DTE colapsados y que
+saque también a 90 DTE, 180, 360"*.
+
+Son dos cosas, y la segunda hace falta por culpa de la primera: con tres plazos (30/45/60) la lista
+entera cabía de un vistazo; con seis, no. Seis grupos abiertos son treinta filas seguidas.
+
+## 1. Seis plazos, y tres llamadas al servidor en vez de seis
+Ahora busca los vencimientos más cercanos a **30, 45, 60, 90, 180 y 360 días**.
+
+El problema no era pedir más, era **cómo** pedirlo. El puente sirve como mucho **90 días de cadena
+por llamada** (Futu manda 30 y el puente agrupa tres), así que pedir de golpe los 360 lo rechaza —
+es exactamente el fallo que se publicó en la v4.97 y que se vio en pantalla como *"el rango es
+demasiado largo"*. Y pedir una cadena por plazo serían seis llamadas contra un cupo que **es de la
+cuenta entera**, compartido con los otros dos sistemas de la máquina.
+
+Solución: se calculan las **ventanas mínimas de 90 días** que cubren los seis plazos y se juntan las
+que caben en la misma. Para los seis salen **tres** llamadas (87, 27 y 27 días), no seis, y ninguna
+se pasa del límite.
+
+## 2. Plegados — pero con la cifra fuera
+Cada vencimiento es ahora una cabecera que se abre y se cierra. Llega **abierto el primero y
+plegados los otros cinco**: entrar y encontrarse seis títulos sin un solo número tampoco sirve de nada.
+
+La decisión que importa: **la cabecera enseña la mejor cifra de ese plazo aunque esté plegado**, con
+su strike. Si no la enseñara habría que abrir los seis para compararlos, y plegarlos no habría
+servido para nada. Lo que se compara entre vencimientos es si compensa irse más lejos, y eso se
+decide con un número:
+
+```
+▸ 92 días · NOV 19 '26 · 5 puts        1.36%  P190
+▸ 178 días · FEB 13 '27 · 5 puts       0.98%  P190
+▸ 360 días · AUG 14 '27 · 5 puts       0.69%  P190
+```
+
+## 3. Un aviso que antes no hacía falta
+Con la búsqueda llegando al año, **el criterio elegido decide algo que antes casi no decidía**. Un
+ROI o un ROM **sin anualizar** es la prima entera de la operación: a 360 días siempre sale mayor que
+a 30, por construcción y no porque compense. Marcar "la mejor" con eso haría ganar SIEMPRE al
+vencimiento más lejano — el mismo error que el ratio de la herramienta de dobles en la v4.62.
+
+No se le cambia el criterio a sus espaldas: si tiene elegido uno sin anualizar, sale un aviso en
+ámbar diciendo por qué ese número no compara plazos y que arriba puede elegir uno anualizado. Por
+defecto ya está el ROM anualizado, que sí compara.
+
+También se corrigió el pie de la tarjeta de IV/HV, que decía que comparar la histórica de un mes con
+opciones "a 30-60 días es aproximado": con las de 180 y 360 lo es mucho más, y ahora lo dice.
+
+## Verificación
+Prueba nueva, `pruebas/buscador-puts.mjs`, con un puente falso **tan estricto como el de verdad**
+(rechaza cualquier cadena de más de 90 días). Comprueba las tres llamadas, que ninguna se pase del
+límite, que salgan los seis grupos, que solo uno venga abierto, que las seis cabeceras enseñen su
+cifra y su strike, que al tocar una plegada se abra, y que **a 320 px no se salga nada de la pantalla**.
+
+Que la prueba sirve de verdad está comprobado: dejando que las ventanas se junten sin límite, la
+búsqueda vuelve a pedir 357 días de una vez y **la prueba se cae con la búsqueda entera vacía** —
+que es justo lo que le pasó a Victor con la v4.97.
+
+Sin regresiones: `npm run prueba` (las 18 cifras del usuario sin servidor, idénticas),
+`pruebas/analisis.mjs` y `pruebas/analisis-ancho.mjs` (cero elementos fuera en 320, 375 y 390).
+
+
 Bloques v5.00 — Todo cabía menos la pantalla, y el gráfico no se leía
 
 ## Los dos síntomas
