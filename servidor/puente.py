@@ -108,6 +108,12 @@ CADUCA_SUSCRIPCION = int(os.environ.get("BLOQUES_SUB_TTL", "900"))  # 15 min sin
 RITMO = {
     "quote": (30, 30.0),   # get_stock_quote — el límite de snapshot es 60/30 s
     "chain": (5, 30.0),    # get_option_chain — el límite es 10/30 s
+    # get_option_expiration_date NO es get_option_chain y no comparte su cupo. Metida en "chain"
+    # (como salió en la v5.07) cada búsqueda de puts gastaba 4 de los 5 turnos de cadena en vez
+    # de 3, y dos búsquedas seguidas hacían esperar treinta segundos a la sexta llamada — que
+    # desde el móvil se ve como "el servidor no contestó en 10 segundos". Cubo aparte y ritmo
+    # conservador igualmente: no se conoce su límite documentado y la máquina es compartida.
+    "vtos": (10, 30.0),
 }
 
 # Franjas en las que root está capturando y no se le molesta (hora de Madrid).
@@ -707,7 +713,7 @@ def vencimientos():
                 fechas.add(str(f)[:10])
         return {"ok": True, "vencimientos": sorted(fechas), "total": len(fechas)}, 200
 
-    payload, http = con_cache(f"vencimientos:{subyacente}", TTL_CADENA, "chain", traer)
+    payload, http = con_cache(f"vencimientos:{subyacente}", TTL_CADENA, "vtos", traer)
     return jsonify(payload), http
 
 
