@@ -241,6 +241,46 @@ const buscar = async (tkr, extra) => {
 };
 
 /* ---------------------------------------------------------------------------
+   EL BORDE DE LA VENTANA NO PUEDE DEPENDER DE LA HORA (v5.06)
+
+   El 17-jun-27 de RDDT cae a 302 días EXACTOS. Contando los días desde "ahora" en vez de desde
+   medianoche, mide 301,5 por la mañana y 301,2 por la tarde: redondea a 302 o a 301 según cuándo
+   busques, y con la ventana empezando ahí, el mismo contrato entraba o no entraba según la hora.
+
+   Se busca a tres horas muy distintas del mismo día y se exige EL MISMO resultado. Sin reloj
+   congelado esto no se puede comprobar: se le cambia la hora al navegador.
+--------------------------------------------------------------------------- */
+console.log("\n=== el mismo resultado a cualquier hora ===");
+const aLaHora = async (hhmm) => {
+  const c = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 },
+    serviceWorkers: "block", timezoneId: "Europe/Madrid" });
+  for (const [re, h] of rutas) await c.route(re, h);
+  const p = await c.newPage();
+  await p.addInitScript(SEMILLA);
+  /* se adelanta el reloj del navegador a esa hora de HOY, sin tocar el día */
+  await p.addInitScript((hm) => {
+    const R = Date;
+    const base = new R();
+    const fijo = new R(R.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), hm[0], hm[1])).getTime();
+    const F = function (...a) { return a.length ? new R(...a) : new R(fijo); };
+    F.now = () => fijo; F.parse = R.parse; F.UTC = R.UTC; F.prototype = R.prototype;
+    window.Date = F;
+  }, hhmm);
+  await p.goto(URL_APP, { waitUntil: "load" });
+  await p.waitForTimeout(2400);
+  for (const paso of PASOS("RDDT")) { await p.evaluate(paso.f, paso.arg); await p.waitForTimeout(paso.ms); }
+  const cab = await cabecerasDe(p);
+  await c.close();
+  return cab.map((x) => parseInt((x.match(/(\d+) días/) || [0, "0"])[1], 10)).join(" · ");
+};
+const aLas = {};
+for (const hm of [[1, 0], [12, 30], [23, 30]]) aLas[hm[0]] = await aLaHora(hm);
+Object.entries(aLas).forEach(([h, v]) => console.log("   a las " + h + "h:", v));
+const distintos = new Set(Object.values(aLas));
+ok(distintos.size === 1, "los mismos plazos a la 1h, a las 12:30 y a las 23:30 (" + distintos.size + " resultados distintos)");
+ok(Object.values(aLas).every((v) => v.includes("302")), "y el de 302 días entra A LAS TRES HORAS, no según el redondeo");
+
+/* ---------------------------------------------------------------------------
    EL CASO DE LAS CAPTURAS DEL 19-AGO-2026, EN DOS ACTOS
 
    Acto 1 (v5.01): *"no están saliendo las de 360 y en RDDT no más de 90"*. Se buscaba el plazo

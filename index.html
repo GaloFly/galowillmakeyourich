@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.05"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.06"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1907,7 +1907,13 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   const tkr = String(ticker || "").trim().toUpperCase();
   if (!tkr) return { error: "Escribe un ticker." };
   const cod = "US." + tkr;
-  const hoy = new Date();
+  /* v5.06 — los días se cuentan desde MEDIANOCHE, no desde la hora que sea.
+     Contándolos desde "ahora", un vencimiento a 302 días exactos mide 301,5 por la mañana y
+     301,2 por la tarde: redondea a 302 o a 301 según CUÁNDO busques. Con la ventana empezando en
+     el día 302, eso decidía si el 17-jun-27 de RDDT entraba o no — el mismo contrato, el mismo
+     día, dos resultados según la hora. Y de paso el JAN 15 '27 salía como "148 días" y son 149. */
+  const ahora = new Date();
+  const hoy = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), ahora.getUTCDate()));
 
   /* 1. el precio del subyacente: sin él no se puede ni filtrar strikes ni estimar margen */
   const q = await puenteFetch(cfg, "/cotiza", { codigos: cod });
@@ -1931,9 +1937,13 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
      394 días (17-sep-27) **con la IV en blanco, sin una sola cotización**. Los dos existen; solo
      uno sirve. Cuanto más lejos, menos líquido, así que desde un objetivo el vencimiento útil
      está casi siempre ANTES y no después. Con ±44 la ventana era 316-404: se comía el muerto y
-     dejaba fuera el bueno por catorce días. Con −58/+30 la ventana es 302-390 y coge el de junio.
-     Sigue midiendo 88 días, que es lo que cabe en una llamada. */
-  const holgura = (obj) => (obj <= 90 ? { antes: 12, despues: 15 } : { antes: 58, despues: 30 });
+     dejaba fuera el bueno por catorce días. Sigue midiendo 88 días, que es lo que cabe en una
+     llamada.
+
+     v5.06 — −60/+28 y no −58/+30, POR DOS DÍAS DE MARGEN. Con −58 la ventana empezaba en el día
+     302 y el 17-jun-27 de RDDT cae EXACTAMENTE en el día 302: justo en el borde, donde el
+     redondeo decide. Un vencimiento no puede entrar o no según la hora a la que busques. */
+  const holgura = (obj) => (obj <= 90 ? { antes: 12, despues: 15 } : { antes: 60, despues: 28 });
   const objetivos = dtesObjetivo.slice().sort((a, b) => a - b);
   const ventanas = [];
   objetivos.forEach((obj) => {
@@ -1967,7 +1977,9 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
      y no tiene ni una cotización. Apostando por uno solo, ese plazo se quedaba vacío sin más.
      Traerse el siguiente NO cuesta ni una llamada más —todas las marcas van en la misma— y el
      que se enseña es el más cercano al objetivo QUE TENGA DATOS. */
-  const dias = (v) => Math.round((Date.parse(v + "T00:00:00") - hoy.getTime()) / 86400000);
+  /* y la fecha del vencimiento también en UTC: con "T00:00:00" a secas se lee en la hora del
+     teléfono, y entonces el día cero de la cuenta no es el mismo en los dos lados de la resta */
+  const dias = (v) => Math.round((Date.parse(v + "T00:00:00Z") - hoy.getTime()) / 86400000);
   const planes = [];
   const usados = new Set();
   const sinVencimiento = [];
