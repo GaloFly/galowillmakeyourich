@@ -80,7 +80,13 @@ dirección vieja deja de abrir. Los datos no se pierden (viven en cada iPhone) p
 Backup vive DENTRO de la app**: si no abre, no hay forma de sacarlos. De ahí `MudanzaAviso` (v4.50),
 que solo se pinta si `location.hostname` acaba en `github.io` y no se puede descartar.
 
-Dos trampas ya pisadas, para no repetirlas:
+**Cloudflare compila `gh-pages` como Preview, y eso hay que apagarlo** (19-ago-2026). Esa rama es el
+resultado YA compilado —no hay nada que compilar ahí— y además la escribe el propio despliegue de
+GitHub, así que cada entrega dispara **tres** compilaciones en Cloudflare: la buena de `main`, una
+inútil de `gh-pages`, y otra de la rama de trabajo. En el plan gratuito hay tope mensual. Se apaga en
+Settings → Builds → Branch control: producción `main`, preview **None**.
+
+Tres trampas ya pisadas, para no repetirlas:
 
 - **Cloudflare empuja al asistente de Workers, no al de Pages.** Se distinguen por un campo: Workers
   pide *Deploy command* + *API token*; **Pages pide "Build output directory"**. Si ese campo no está
@@ -91,6 +97,17 @@ Dos trampas ya pisadas, para no repetirlas:
   nuevo se queda congelado en silencio mientras el viejo sí se actualiza. Se arregla en
   Settings → Build → Git repository → **Manage** (que abre GitHub y re-concede el acceso al repo).
   **Nunca `Disconnect`**: eso desengancha el repo del proyecto y hay que rehacerlo con dominio y todo.
+- **Producción parada mientras los previews SÍ compilan** (19-ago-2026). Victor seguía en la 4.96 con
+  la 4.98 publicada. En Deployments se veía `Production · main ef95f0d · v4.96` y, encima, previews
+  recientes de `gh-pages` y de la rama de trabajo. O sea: Cloudflare recibía los avisos y compilaba
+  — pero para los dos últimos cambios de `main` **no llegó a crear ni una fila de Production**. No es
+  el desenganche del punto anterior (ahí no compila NADA) ni un fallo de compilación.
+  Antes de tocar el panel, la comprobación que descarta el código en dos minutos y sin credenciales:
+  clonar `main` en limpio y correr `npm install && npm run build`. El 19-ago salió verde con la 4.98
+  dentro, así que el problema estaba del lado de Cloudflare, no del repo.
+  **Desde el repositorio no hay forma de forzar un despliegue**: la única palanca es empujar a `main`
+  y esperar a que Cloudflare reaccione. El botón está en su panel — Deployments → ⋯ → *Create
+  deployment* → rama `main`.
 
 Comprobación de que la tubería está entera: subir a `main` y ver aparecer **una fila nueva** en
 Deployments con ese commit. Si solo está la vieja, está cortada — el ✓ verde de una entrega anterior
