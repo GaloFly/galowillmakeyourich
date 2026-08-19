@@ -1,5 +1,64 @@
 # CHANGELOG — Bloques
 
+Bloques v5.00 — Todo cabía menos la pantalla, y el gráfico no se leía
+
+## Los dos síntomas
+Victor, con MRVL de verdad en la mano: *"está descuadrado y el gráfico no se lee, se pisa todo. Que
+se pueda hacer zoom o moverlo o de alguna manera verlo más claro"*.
+
+## 1. Descuadrado: una rejilla sin columnas declaradas
+La pestaña entera salía cortada por la derecha — los textos, las fichas y hasta las etiquetas del
+gráfico. El culpable: **`display: grid` sin `gridTemplateColumns`**. Una rejilla así tiene UNA
+columna `auto`, que se ensancha hasta el texto más largo que no pueda partirse y arrastra con ella
+toda la pantalla.
+
+Medido: la fila del ticker ocupaba **458 px en un móvil de 390**, y las siete tarjetas de debajo se
+salían con ella. Había **trece** rejillas así en esta pantalla, empezando por la raíz y por la
+tarjeta base de la que cuelgan todas las demás.
+
+Esto ya estaba escrito en las notas del proyecto desde que pasó en Ajustes. La pestaña nació con el
+mismo fallo en la v4.93 y ha tardado siete versiones en verse, porque **con datos cortos cabía por
+los pelos**: strikes de dos cifras, precios de un dígito, capitalizaciones de seis. Con MRVL —precios
+de tres cifras con decimales, primas de dos dígitos, 189.165 millones de capitalización— dejó de caber.
+
+### Por eso hay una prueba nueva, y por eso tiene los datos feos
+`pruebas/analisis-ancho.mjs` monta la pantalla con datos con la FORMA de los de verdad y no comprueba
+ni un número: solo mide quién se sale, en **320, 375 y 390 px**. Cabiendo en la más estrecha, cabe en
+cualquier iPhone.
+
+Dos cosas que aprendió esa prueba antes de servir para algo:
+- **`scrollWidth` no vale para esto.** Algo de la app recorta el desbordamiento, así que la página
+  mide siempre lo que la pantalla mientras el contenido se sale igual. La primera versión daba verde
+  con **283 elementos fuera**. Lo que vale es contar quién se pasa del borde.
+- **Una ventana nueva por cada ancho**, y no cambiarle el tamaño a la misma: la app reancla el
+  viewport al arrancar, así que redimensionar no reordena nada y medía tres veces lo mismo.
+
+Resultado: de 289 elementos fuera a **cero** en los tres anchos.
+
+## 2. El gráfico: diez referencias son ninguna
+Llegaban a caber **diez líneas horizontales con su etiqueta** en 150 px de alto: tres soportes, tres
+resistencias y cuatro muros de gamma. Los números se amontonaban unos encima de otros.
+
+- **Seis como mucho**: los dos soportes y las dos resistencias más cercanas al precio, y **un muro
+  por lado** —el de más gamma, que es el que de verdad frena—. La ficha sigue listando los dos de
+  cada lado; el gráfico dibuja el que importa.
+- **Las etiquetas no se pisan**: se colocan por orden de cercanía al precio, y la que caiga a menos
+  de 11 px de una ya puesta se queda sin etiqueta. La línea se pinta igual.
+- **Más alto**: de 150 a 200 px.
+
+## 3. El zoom que pidió
+**Tres encuadres** en vez de dos: 3 meses, 9 meses y 3 años. En un móvil, dos toques son mejor zoom
+que un gesto de pellizco — son encuadres elegidos, sin arrastres ni escalas raras. Y no cuestan ni
+una llamada: los tres salen de las mismas velas ya descargadas.
+
+## Verificación
+- `pruebas/analisis-ancho.mjs` (nueva): **0 elementos fuera** en 320, 375 y 390 px.
+- `pruebas/analisis.mjs`: 82 de 82, ahora comprobando también que el gráfico no pasa de seis líneas
+  de nivel y que dibuja un muro por lado mientras la ficha lista dos.
+- `npm run prueba` — OK, 18 retratos idénticos.
+
+---
+
 Bloques v4.99 — La pestaña Análisis no funcionaba con NINGÚN ticker
 
 ## El síntoma

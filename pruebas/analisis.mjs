@@ -406,7 +406,7 @@ const grafico = await page.evaluate(() => {
 });
 console.log("  gráfico:", grafico);
 ok(!!grafico && grafico.lineas === 4, "el gráfico dibuja precio + TRES medias (21, 50 y 200)");
-ok(!!grafico && grafico.niveles >= 6, "y al menos seis líneas horizontales: soportes, resistencias y los cuatro muros ("
+ok(!!grafico && grafico.niveles >= 3, "y sus líneas de nivel dibujadas ("
   + (grafico ? grafico.niveles : 0) + ")");
 
 console.log("\n=== v4.94: de dónde viene el dinero ===");
@@ -457,6 +457,60 @@ ok(/calls[\s\S]{0,40}\$700k/.test(plano) && /puts[\s\S]{0,40}\$112k/.test(plano)
 ok(/no se sabe quién fue el agresor/.test(t), "con el aviso de que no se sabe quién fue el agresor");
 ok(/sesión de HOY[^\n]*cierre de AYER/.test(t), "y el de la mezcla temporal, que es lo que hace dudosa una apertura");
 
+/* ---- v5.00: NADA puede ser más ancho que la pantalla ----
+   Victor con datos reales: "está descuadrado". Toda la pestaña salía cortada por la derecha —los
+   textos, las fichas y hasta las etiquetas del gráfico—, que es el síntoma de UN elemento más ancho
+   que el móvil: empuja la página entera y el resto se sale con él.
+   Ya pasó en Ajustes con una rejilla de columna `auto`. Se mide, no se opina. */
+console.log("\n=== v5.00: desbordamiento horizontal ===");
+const desborde = await page.evaluate(() => {
+  const w = document.documentElement.clientWidth;
+  const malos = [];
+  document.querySelectorAll("body *").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    if (r.right > w + 1 || r.left < -1) {
+      /* el que desborda de verdad es el ANTECESOR más pequeño: los padres heredan el problema */
+      if (!el.querySelector("*") || el.scrollWidth > el.clientWidth + 1) {
+        malos.push({ tag: el.tagName, cls: (el.className || "").toString().slice(0, 20),
+                     ancho: Math.round(r.width), derecha: Math.round(r.right),
+                     txt: (el.innerText || el.textContent || "").trim().slice(0, 45) });
+      }
+    }
+  });
+  return { pantalla: w, scroll: document.documentElement.scrollWidth, malos: malos.slice(0, 8) };
+});
+console.log("  pantalla:", desborde.pantalla, "· ancho real de la página:", desborde.scroll);
+desborde.malos.forEach((m) => console.log("   ·", m.tag, "ancho", m.ancho, "acaba en", m.derecha, "|", m.txt));
+ok(desborde.scroll <= desborde.pantalla + 1,
+  "la página NO es más ancha que la pantalla (" + desborde.scroll + " vs " + desborde.pantalla + ")");
+
+/* y lo mismo en la pantalla más ESTRECHA que se vende: si cabe en 320, cabe en cualquier iPhone.
+   Medir solo en el ancho cómodo es como probar el coche en el garaje. */
+await page.setViewportSize({ width: 320, height: 900 });
+await page.waitForTimeout(500);
+const estrecho = await page.evaluate(() => {
+  const w = document.documentElement.clientWidth;
+  const malos = [];
+  document.querySelectorAll("body *").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    if (r.right > w + 1) {
+      const p = el.parentElement;
+      const enCarrusel = el.closest(".no-scrollbar") || (p && getComputedStyle(p).overflowX === "auto");
+      if (!enCarrusel) malos.push({ tag: el.tagName, ancho: Math.round(r.width), derecha: Math.round(r.right),
+                                    txt: (el.innerText || el.textContent || "").trim().slice(0, 40) });
+    }
+  });
+  return { pantalla: w, scroll: document.documentElement.scrollWidth, malos: malos.slice(0, 10) };
+});
+console.log("  a 320 px — página:", estrecho.scroll, "· pantalla:", estrecho.pantalla);
+estrecho.malos.forEach((m) => console.log("   ·", m.tag, "ancho", m.ancho, "acaba en", m.derecha, "|", m.txt));
+ok(estrecho.scroll <= estrecho.pantalla + 1,
+  "y tampoco en la pantalla más estrecha (" + estrecho.scroll + " vs " + estrecho.pantalla + ")");
+await page.setViewportSize({ width: 390, height: 844 });
+await page.waitForTimeout(300);
+
 console.log("\n=== v4.98: los tres dibujos nuevos ===");
 const svgs = await page.evaluate(() => Array.from(document.querySelectorAll("svg"))
   .map((x) => ({ etiqueta: x.getAttribute("aria-label") || "", rects: x.querySelectorAll("rect").length,
@@ -493,12 +547,26 @@ ok(/barato contra\s+su PROPIA historia/.test(plano) || /barato contra su PROPIA 
   "con la leyenda de que el verde y el rojo son contra SU historia, no contra otras empresas");
 
 console.log("\n=== v4.97: gráfico y muros ===");
-ok(/Diario · 9 meses/.test(t) && /Semanal · 3 años/.test(t), "las dos pestañas del gráfico");
+ok(/3 meses/.test(t) && /9 meses/.test(t) && /3 años/.test(t),
+  "TRES encuadres del gráfico —3 meses, 9 meses y 3 años—, que en un móvil son mejor zoom que un pellizco");
+/* seis líneas horizontales como mucho: dos soportes, dos resistencias y UN muro por lado. Con las
+   diez de antes (tres y tres más cuatro muros) el gráfico no tenía ninguna referencia, tenía diez. */
+const horiz = await page.evaluate(() => {
+  const s = Array.from(document.querySelectorAll("svg")).find((x) => (x.getAttribute("aria-label") || "").indexOf("Precio con sus niveles") === 0);
+  if (!s) return null;
+  return { lineas: s.querySelectorAll("line").length, etiquetas: s.querySelectorAll("text").length };
+});
+console.log("  gráfico:", horiz);
+ok(!!horiz && horiz.lineas <= 6, "y como mucho SEIS líneas de nivel (" + (horiz ? horiz.lineas : 0) + ")");
 ok(/EMA 200/.test(t), "y la EMA 200, que faltaba");
 const mur = (t.match(/MUROS CALL[\s\S]{0,80}/i) || [""])[0];
 console.log("  " + mur.replace(/\n/g, " "));
 ok(/muros call/i.test(t) && /muros put/i.test(t), "las dos fichas de muros");
-ok((t.match(/▌/g) || []).length >= 4, "y CUATRO muros dibujados: dos por lado (" + (t.match(/▌/g) || []).length + ")");
+/* la FICHA lista dos muros por lado; el GRÁFICO dibuja uno, el de más gamma. Es a propósito: en
+   150 px de alto, cuatro muros más cuatro niveles eran diez referencias, o sea ninguna. */
+ok((t.match(/▌/g) || []).length === 2, "el gráfico dibuja UN muro por lado, el de más gamma ("
+  + (t.match(/▌/g) || []).length + ")");
+ok(/\$220[\s\S]{0,30}\$210/.test(mur), "y la ficha sigue listando los dos de cada lado");
 ok(/muros de gamma a trazo continuo/.test(t), "dibujados sobre las velas y distinguidos de los soportes");
 
 console.log("\n=== v4.97: Valora profunda ===");

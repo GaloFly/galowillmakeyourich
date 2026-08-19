@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "4.99"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.00"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -9795,7 +9795,7 @@ function Referencias({ spot, filas }) {
   const pad = (hi - lo) * 0.18 || 1;
   const pos = (v) => ((v - (lo - pad)) / ((hi + pad) - (lo - pad))) * 100;
   return (
-    <div style={{ display: "grid", gap: 7 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 7 }}>
       {usa.map((f) => {
         const pct = ((n(f.v) - spot) / spot) * 100;
         return (
@@ -9828,12 +9828,22 @@ function GraficoNiveles({ niveles, spot, serie, sesiones, muros }) {
   const e21 = emaSerie(cierres, 21).slice(-vs.length);
   const e50 = emaSerie(cierres, 50).slice(-vs.length);
   const e200 = emaSerie(cierres, 200).slice(-vs.length);
+  /* v5.00 — MENOS LÍNEAS Y MÁS SITIO. Victor, con MRVL: *"el gráfico no se lee, se pisa todo"*.
+     Llegaban a caber DIEZ horizontales con su etiqueta cada una, en 150 px de alto: tres soportes,
+     tres resistencias y cuatro muros. Un gráfico con diez referencias no tiene ninguna.
+     Ahora: los DOS soportes y las DOS resistencias más cercanas al precio, y UN muro por lado —el
+     de más gamma, que es el que de verdad frena—. Seis como mucho, y el alto sube de 150 a 200. */
+  const muroCall = (muros || []).filter((m) => m.call).slice(0, 1);
+  const muroPut = (muros || []).filter((m) => !m.call).slice(0, 1);
   const lineas = [...niveles.soportes.slice(0, 2).map((z) => ({ ...z, sop: true })),
                   ...niveles.resistencias.slice(0, 2).map((z) => ({ ...z, sop: false })),
                   /* v4.97: los muros de gamma, sobre las velas. Ahí es donde significan algo:
                      un muro es un precio, y un precio se lee contra el gráfico, no en una lista. */
-                  ...(muros || []).map((m) => ({ px: m.px, sop: !m.call, muro: true }))];
-  const W = 320, H = 150, ML = 4, MR = 42, MT = 8, MB = 16;
+                  ...[...muroCall, ...muroPut].map((m) => ({ px: m.px, sop: !m.call, muro: true }))]
+    .filter((l) => isFinite(n(l.px)) && n(l.px) > 0)
+    /* de más cercana al precio a más lejana: si dos etiquetas chocan, se queda la que importa */
+    .sort((a, b) => Math.abs(a.px - spot) - Math.abs(b.px - spot));
+  const W = 320, H = 200, ML = 4, MR = 46, MT = 10, MB = 16;
   const lo = Math.min(spot, ...vs.map((v) => n(v.l) || n(v.c)), ...lineas.map((l) => l.px));
   const hi = Math.max(spot, ...vs.map((v) => n(v.h) || n(v.c)), ...lineas.map((l) => l.px));
   const pad = (hi - lo) * 0.06 || 1;
@@ -9843,17 +9853,29 @@ function GraficoNiveles({ niveles, spot, serie, sesiones, muros }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} aria-label="Precio con sus niveles">
-        {lineas.map((l, i) => (
+        {(() => {
+          /* las etiquetas se colocan por orden de cercanía al precio, y la que caiga a menos de
+             11 px de una ya puesta se queda SIN etiqueta —la línea sí se pinta—. Antes se
+             amontonaban cuatro números ilegibles en el mismo sitio, que es no decir ninguno. */
+          const puestas = [];
+          return lineas.map((l, i) => {
+            const y = py(l.px);
+            const cabe = !puestas.some((p) => Math.abs(p - y) < 11);
+            if (cabe) puestas.push(y);
+            return (
           <g key={i}>
             {/* los muros van a trazo continuo y más gruesos: no son lo mismo que un soporte de
                 pivotes, y si se pintaran igual parecerían la misma clase de dato */}
-            <line x1={ML} y1={py(l.px)} x2={W - MR} y2={py(l.px)} stroke={l.sop ? T.green : T.red}
+            <line x1={ML} y1={y} x2={W - MR} y2={y} stroke={l.sop ? T.green : T.red}
               strokeWidth={l.muro ? 2.2 : 1.4} strokeDasharray={l.muro ? "" : "4 3"} opacity={l.muro ? 0.55 : 0.85} />
-            <text x={W - MR + 3} y={py(l.px) + 3.5} fill={l.sop ? T.green : T.red} fontSize="9" fontWeight="800">
-              {(l.muro ? "▌" : "") + money2(l.px)}
-            </text>
-          </g>
-        ))}
+            {cabe && (
+              <text x={W - MR + 3} y={y + 3.5} fill={l.sop ? T.green : T.red} fontSize="9" fontWeight="800">
+                {(l.muro ? "▌" : "") + money2(l.px)}
+              </text>
+            )}
+          </g>);
+          });
+        })()}
         <polyline points={linea(e200)} fill="none" stroke={T.sub} strokeWidth="1.6" opacity="0.75" />
         <polyline points={linea(e50)} fill="none" stroke={T.gold} strokeWidth="1.6" opacity="0.9" />
         <polyline points={linea(e21)} fill="none" stroke={T.purple} strokeWidth="1.6" opacity="0.9" />
@@ -10142,7 +10164,7 @@ function AnalisisContent({ puente }) {
     </div>
   );
   const Ficha = ({ titulo, nota, children }) => (
-    <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 10 }}>
+    <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
       <div>
         <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{titulo}</div>
         {nota ? <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, marginTop: 3 }}>{nota}</div> : null}
@@ -10166,8 +10188,14 @@ function AnalisisContent({ puente }) {
     </div>
   );
 
+  /* gridTemplateColumns "minmax(0, 1fr)" NO se puede quitar de la rejilla de abajo. Una rejilla sin
+     columnas declaradas tiene UNA columna `auto`, que se ensancha hasta el texto más largo que no
+     pueda partirse — y arrastra con ella toda la pantalla. Aquí la fila del ticker medía 458 px en
+     un móvil de 390 y cortaba por la derecha las siete tarjetas de debajo. Ya había pasado en
+     Ajustes; esta pestaña nació con el mismo fallo en la v4.93 y tardó siete versiones en verse,
+     porque con datos cortos —los de la prueba— cabía por los pelos. */
   return (
-    <div style={{ display: "grid", gap: 12, padding: "0 2px 24px" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, padding: "0 2px 24px" }}>
       <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <WizInput label="Ticker" value={tkr} onChange={setTkr} upper placeholder="MRVL" />
@@ -10197,7 +10225,7 @@ function AnalisisContent({ puente }) {
         const ivhv = isFinite(n(v.iv)) && isFinite(n(v.hv_30d)) && n(v.hv_30d) > 0 ? n(v.iv) / n(v.hv_30d) : NaN;
         return (<>
           {/* ---------- cabecera ---------- */}
-          <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gap: 10 }}>
+          <div style={{ background: T.card, borderRadius: 20, padding: 14, boxShadow: T.shadow, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 22, fontWeight: 800, color: T.ink, letterSpacing: -0.6 }}>{datos.tkr}</span>
               <span style={{ fontSize: 18, fontWeight: 800, color: T.ink, fontVariantNumeric: "tabular-nums" }}>${money2(datos.spot)}</span>
@@ -10336,7 +10364,7 @@ function AnalisisContent({ puente }) {
                     <Tile l="Dividendo TTM" x={isFinite(n(V.dividendo_ttm_pct)) && n(V.dividendo_ttm_pct) > 0 ? money2(n(V.dividendo_ttm_pct)) + "%" : "no paga"} />
                   </div>
                   {hayRango && (
-                    <div style={{ display: "grid", gap: 5 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
                       <div style={{ position: "relative", height: 10, borderRadius: 5, background: T.tile, boxShadow: T.inset }}>
                         <div style={{ position: "absolute", left: "calc(" + (pos * 100).toFixed(1) + "% - 4px)", top: -2,
                           width: 8, height: 14, borderRadius: 4, background: T.purple }} />
@@ -10414,7 +10442,7 @@ function AnalisisContent({ puente }) {
                     const med = Math.max(0, Math.min(1, (n(h.mediana) - n(h.min)) / (n(h.max) - n(h.min))));
                     const caro = alRevés ? pos < med : pos > med;
                     return (
-                      <div style={{ display: "grid", gap: 4 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 4 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
                           <span>{etiqueta}</span>
                           <span style={{ color: caro ? T.gold : T.green, fontWeight: 800 }}>
@@ -10447,7 +10475,7 @@ function AnalisisContent({ puente }) {
                     </div>
 
                     {per.length > 0 && isFinite(n((fin.revenue || [])[0])) && (
-                      <div style={{ display: "grid", gap: 5 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
                         <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>
                           {/* "4 son 1 años" quedaba mal escrito y es de las cosas que le hacen
                               dudar de todo lo demás de la pantalla */}
@@ -10578,7 +10606,11 @@ function AnalisisContent({ puente }) {
                 {/* v4.97: diario y semanal. El semanal se agrega en la app desde las MISMAS velas
                     diarias, así que cambiar de pestaña no cuesta ni una llamada. */}
                 <div style={{ display: "flex", gap: 6 }}>
-                  {[["diario", "Diario · 9 meses"], ["semanal", "Semanal · 3 años"]].map(([id, et]) => (
+                  {/* v5.00: TRES vistas, no dos. Victor: *"que se pueda hacer zoom o moverlo"*. En un
+                      móvil, dos toques son mejor zoom que un gesto de pellizco: tres encuadres fijos
+                      y elegidos, sin arrastres ni escalas raras. Y no cuesta ni una llamada — las
+                      tres salen de las MISMAS velas que ya están descargadas. */}
+                  {[["cerca", "3 meses"], ["diario", "9 meses"], ["semanal", "3 años"]].map(([id, et]) => (
                     <button key={id} type="button" onClick={() => setVista(id)}
                       style={{ border: "none", borderRadius: 999, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer",
                         background: vista === id ? T.dark : T.tile, color: vista === id ? "#fff" : T.sub,
@@ -10587,7 +10619,7 @@ function AnalisisContent({ puente }) {
                 </div>
                 <GraficoNiveles niveles={N} spot={datos.spot} muros={muros}
                   serie={vista === "semanal" ? datos.semanal : datos.velas}
-                  sesiones={vista === "semanal" ? 156 : 190} />
+                  sesiones={vista === "semanal" ? 156 : vista === "cerca" ? 63 : 190} />
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
                   <div style={{ background: T.tileRed, borderRadius: 14, padding: "10px 11px" }}>
                     <div style={{ fontSize: 10, fontWeight: 800, color: T.red, textTransform: "uppercase", letterSpacing: 0.5 }}>Resistencias</div>
@@ -10685,7 +10717,7 @@ function AnalisisContent({ puente }) {
           {/* ---------- interés abierto ---------- */}
           <Ficha titulo="Interés abierto por strike"
             nota="Contratos vivos al cierre de ayer. El volumen de hoy va en la ficha de abajo: son cosas distintas y mezclarlas engaña.">
-            <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 4 }}>
               {datos.filas.filter((f) => f.callOi + f.putOi > 0)
                 .slice().sort((a, b) => (b.callOi + b.putOi) - (a.callOi + a.putOi)).slice(0, 10)
                 .sort((a, b) => b.k - a.k).map((f) => (
@@ -10708,7 +10740,7 @@ function AnalisisContent({ puente }) {
             <Ficha titulo="Qué se abrió y qué se cerró"
               nota="Cambio del interés abierto respecto a la foto anterior. Si sube, ahí se abrió posición nueva; si baja, se cerró. No dice comprado o vendido, pero abrir o cerrar sí, y esa es la mitad honesta del dato.">
               {datos.oi.desde ? (<>
-                <div style={{ display: "grid", gap: 5 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
                   {datos.oi.filas.map((f, i) => (
                     <div key={i} style={{ background: T.tile, borderRadius: 10, padding: "7px 9px", boxShadow: T.inset,
                       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -10753,7 +10785,7 @@ function AnalisisContent({ puente }) {
                 const col = R.veredicto === "ALCISTA" ? T.green : R.veredicto === "BAJISTA" ? T.red : T.sub;
                 const fondo = R.veredicto === "ALCISTA" ? T.tileGreen : R.veredicto === "BAJISTA" ? T.tileRed : T.tile;
                 return (
-                  <div key={h.id} style={{ background: fondo, borderRadius: 14, padding: "11px 12px", display: "grid", gap: 8,
+                  <div key={h.id} style={{ background: fondo, borderRadius: 14, padding: "11px 12px", display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8,
                     boxShadow: R.veredicto === "NEUTRAL" ? T.inset : "none" }}>
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>
@@ -10766,7 +10798,7 @@ function AnalisisContent({ puente }) {
                     </div>
                     {/* los CUATRO votos, uno a uno. Un semáforo que no dice quién votó qué no se
                         puede discutir, y este va a decidir dinero. */}
-                    <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 3 }}>
                       {R.votos.map((x) => (
                         <div key={x.nombre} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 600, color: T.sub }}>
                           <span style={{ flex: "none", width: 15, textAlign: "center", fontWeight: 800,
@@ -10783,7 +10815,7 @@ function AnalisisContent({ puente }) {
                     {(R.primaC > 0 || R.primaP > 0) && (() => {
                       const mx = Math.max(R.primaC, R.primaP, 1);
                       return (
-                        <div style={{ display: "grid", gap: 3 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 3 }}>
                           {[["calls", R.primaC, T.green], ["puts", R.primaP, T.red]].map(([et, v, c]) => (
                             <div key={et} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span style={{ flex: "none", width: 30, fontSize: 9.5, fontWeight: 700, color: T.sub }}>{et}</span>
@@ -10799,7 +10831,7 @@ function AnalisisContent({ puente }) {
                       );
                     })()}
                     {R.tops.length > 0 && (
-                      <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 3 }}>
                         {R.tops.map((x, i) => (
                           <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, fontSize: 10.5, fontWeight: 700 }}>
                             <span style={{ color: x.esCall ? T.green : T.red, minWidth: 0 }}>
@@ -10858,7 +10890,7 @@ function AnalisisContent({ puente }) {
                   <Tile l="Neto de órdenes grandes" x={(grandes >= 0 ? "+" : "−") + "$" + millones(Math.abs(grandes))} col={grandes >= 0 ? T.green : T.red} />
                   <Tile l="Neto de órdenes pequeñas" x={(chicas >= 0 ? "+" : "−") + "$" + millones(Math.abs(chicas))} col={chicas >= 0 ? T.green : T.red} />
                 </div>
-                <div style={{ display: "grid", gap: 5 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
                   {tramos.map((x) => (
                     <div key={x.k} style={{ display: "flex", alignItems: "center", gap: 7 }}>
                       <span style={{ flex: "none", width: 96, fontSize: 10.5, fontWeight: 700, color: T.sub }}>{x.l}</span>
