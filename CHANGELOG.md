@@ -1,5 +1,69 @@
 # CHANGELOG — Bloques
 
+Bloques v5.10 — PMCC: recomprar la corta hoy y vender la siguiente cuando toque
+
+## Lo que pidió
+Victor: *"que en un PMCC esté la opción de recomprar la corta y volver a vender una corta más
+adelante, por si se separan los trades"*.
+
+## Por qué faltaba, si ya había tres botones
+La pieza que faltaba era pequeña y muy concreta:
+
+| lo que había | qué hace | por qué no valía |
+|---|---|---|
+| **Rolar** | recompra + venta nueva | en el MISMO acto: te obliga a saber ya el strike y la prima de la siguiente |
+| **Expirar corta** | deja la posición sin corta | apunta **$0** — solo es cierto si expiró sin valor |
+| **Vender call** | vende una nueva sobre la long | solo aparecía si la corta había EXPIRADO |
+
+O sea: si pagabas por cerrarla un martes y vendías la siguiente el jueves, no había camino. O te
+inventabas la venta nueva para poder usar Rolar, o apuntabas un cierre gratis que no fue gratis.
+
+## El botón nuevo: **Recomprar corta**
+Pide lo que pagas por acción, la comisión y la fecha. La long comprada sigue viva y la posición se
+queda sin call vendida hasta que vendas la siguiente — con el botón "Vender call" que ya existía.
+
+Los dos botones dicen ahora en qué se diferencian, porque confundirlos falsea la cuenta:
+- **Recomprar corta** — *"Pagas por cerrarla · la long sigue viva · luego vendes otra cuando quieras"*
+- **Expirar corta** — *"Expira sin valor, no pagas nada · la long sigue viva"*
+
+## Cómo se apunta, y por qué así
+Recomprar es **la mitad de un roll**, así que se guarda como tal: una pata más de la cadena, con su
+`buybackCost` y sin `newCredit`. Misma forma que todas las demás, así que la prima acumulada, el
+MTM, Movimientos y el BEP salen solos **sin tocar una línea de esos cálculos** — que es justo de
+donde salen los bugs silenciosos. Campo nuevo (`soloRecompra`) y opcional: nada de lo guardado
+cambia de forma.
+
+Lo único que sí hubo que tratar aparte es **cómo se pinta**: por el camino genérico habría salido
+una **VENTA de $0** detrás de la compra — una operación que no ha ocurrido. Es exactamente el fallo
+que la v3.46 arregló para la expiración, y aquí se habría repetido solo.
+
+## Verificación
+`pruebas/pmcc-recompra.mjs` monta un PMCC con números redondos —long $20 a 12,00 y corta $40 a
+2,50— recompra a 0,80 con $1 de comisión, y comprueba **la cuenta hecha a mano**:
+
+```
+venta inicial   2,50 × 100 − 1 = +$249
+recompra       −0,80 × 100 − 1 =  −$81
+                                 ------
+prima acumulada                  +$168      comisiones $2
+```
+
+Y además: que la corta desaparece pero la long no; que el crédito vivo baja exactamente lo pagado
+(2,50 → 1,70); que la pata vieja no se pierde (queda su strike y su fecha); que la ficha del
+movimiento se llama *Recompra call* y lleva **una sola pata**; y que después se puede vender otra
+(1,20 → crédito vivo 2,90), que es el punto de todo esto.
+
+Comprobado que caza: quitando la marca que distingue una recompra de un roll, la ficha vuelve a
+salir como *"Roll"* con una **VENTA de +$0** detrás, y se caen cuatro comprobaciones.
+
+Por el camino se corrigió una comprobación **que no saltaba con el fallo delante** (buscaba
+«VENTA … $0» en la misma línea, y `innerText` mete un salto entre el rótulo y la cifra). Ahora
+busca el importe y se ha verificado que salta. Van dos versiones seguidas con lo mismo: **una
+comprobación no vale hasta que se la ha visto fallar**.
+
+Sin regresiones: `npm run prueba` (18/18) y el buscador de puts entero en verde.
+
+
 Bloques v5.09 — La llamada nueva no puede llevarse por delante la búsqueda
 
 ## El síntoma

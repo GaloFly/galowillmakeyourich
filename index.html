@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.09"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.10"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -5122,6 +5122,20 @@ function RollChainTable({ p }) {
       if (r.note) rows.push(<div key={"n" + idx} style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", margin: "0 0 6px 4px", lineHeight: 1.4 }}>💬 {r.note}</div>);
       return;
     }
+    /* v5.10: recompra SUELTA de la corta de un PMCC — se pagó por cerrarla y todavía no se ha
+       vendido otra. Solo la fila de COMPRA: pintar además una VENTA de $0 sería inventarse una
+       operación que no ha pasado, exactamente lo que se arregló en la v3.46 para la expiración.
+       El BEP sí se enseña aquí, porque esta fila ya es el estado final: recomprar SUBE el débito
+       neto del PMCC, y verlo subir es la mitad de la decisión de cuándo vender la siguiente. */
+    if (r.soloRecompra) {
+      const buyAmt = n(r.buybackCost) * q;
+      if (pmcc) bepRun += n(r.buybackCost);
+      if (credBep) primaAcc -= n(r.buybackCost);
+      rows.push(<LegRow key={"b" + idx} date={r.date} actionLabel={"RECOMPRA " + rightLabel} strike={r.prevStrike} expiry={r.prevExpiry} perShare={n(r.buybackCost)} amount={buyAmt} fee={n(r.comision)} isBuy={shortSide} bepAfter={credBep ? (n(r.prevStrike) - primaAcc) : pmcc ? bepRun : undefined} />);
+      acc(shortSide, buyAmt, r.comision, false);
+      if (r.note) rows.push(<div key={"n" + idx} style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", margin: "0 0 6px 4px", lineHeight: 1.4 }}>💬 {r.note}</div>);
+      return;
+    }
     const buyAmt = n(r.buybackCost) * q, sellAmt = n(r.newCredit) * q;
     rows.push(<LegRow key={"b" + idx} date={r.date} action={shortSide ? "COMPRA" : "VENTA"} strike={r.prevStrike} expiry={r.prevExpiry} perShare={n(r.buybackCost)} amount={buyAmt} fee={n(r.comision)} isBuy={shortSide} />);
     acc(shortSide, buyAmt, r.comision, false);
@@ -6893,6 +6907,22 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
           const cashSell = n(r.newCredit) * qty - fee;
           primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta call", cash: cashSell, fee, strike: strikeAfterRoll(p, idx), right: p.right, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
             { side: "V", label: strikeStr(strikeAfterRoll(p, idx)) + (p.right || "") + (expiryAfterRoll(p, idx) ? " " + ibkrDate(expiryAfterRoll(p, idx)) : ""), perShare: n(r.newCredit), cash: n(r.newCredit) * qty },
+          ] });
+          return;
+        }
+        /* v5.10: recompra SUELTA de la corta de un PMCC. En Primas es un pago con UNA sola pata
+           —la de compra—, no un roll: la pata de venta a $0 del camino de abajo sería una
+           operación inventada. En MTM sí se realiza la pata que se cierra, exactamente igual que
+           en cualquier roll, porque cerrarla ES realizarla. */
+        if (r.soloRecompra) {
+          const legBefore0 = idx === 0 ? openingPrimaPerShare(p) : n(chain[idx - 1].newCredit);
+          const etiqueta = strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : "");
+          primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Recompra call", cash: -n(r.buybackCost) * qty - fee, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+            { side: "C", label: etiqueta, perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
+          ] });
+          mtmEvents.push({ id: p.id + "-rollmtm" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Recompra short", cash: dirSign(p) * (n(r.buybackCost) - legBefore0) * qty - fee, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+            { side: "V", label: etiqueta, perShare: legBefore0, cash: legBefore0 * qty },
+            { side: "C", label: "recompra", perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
           ] });
           return;
         }
@@ -14945,6 +14975,11 @@ function App() {
   const [sheetConfirmDel, setSheetConfirmDel] = useState(false);
   const [expPmccOpen, setExpPmccOpen] = useState(false); // v3.57: revela el campo de nota antes de confirmar "Expirar corta"
   const [expPmccNote, setExpPmccNote] = useState("");
+  const [recPmccOpen, setRecPmccOpen] = useState(false); // v5.10: recomprar la corta del PMCC sin vender otra todavía
+  const [recPmccPrice, setRecPmccPrice] = useState("");
+  const [recPmccFee, setRecPmccFee] = useState("");
+  const [recPmccDate, setRecPmccDate] = useState("");
+  const [recPmccNote, setRecPmccNote] = useState("");
   const [pendingAction, setPendingAction] = useState(null); // { id, action: 'roll'|'close' }
   const [editChainId, setEditChainId] = useState(null); // id de la posición cuya cadena (aperturas/rolls/cierre) se edita
   const editChainPos = editChainId ? positions.find((x) => x.id === editChainId) : null;
@@ -14965,7 +15000,7 @@ function App() {
      pero el banner de vencidas de Vencimientos le pasaba el id suelto — `p.id` salía undefined y el
      menú no se abría, sin error ni aviso. Se arregla el llamador y, para que no vuelva a pasar en
      silencio, aquí se acepta indistintamente la posición o su id. */
-  const openSheet = (p) => { setSheetPosId(p && typeof p === "object" ? p.id : p); setSheetConfirmDel(false); setExpPmccOpen(false); setExpPmccNote(""); };
+  const openSheet = (p) => { setSheetPosId(p && typeof p === "object" ? p.id : p); setSheetConfirmDel(false); setExpPmccOpen(false); setExpPmccNote(""); setRecPmccOpen(false); setRecPmccPrice(""); setRecPmccFee(""); setRecPmccNote(""); };
   /* v4.36: saltar a la pestaña del bloque de una posición, SIN pasar por selectTab cuando ya estamos
      en ella. Ese atajo tiene un re-tap deliberado ("volver a tocar la pestaña activa cierra todas las
      ediciones abiertas") que aquí sería justo lo contrario de lo que queremos: cerraría la edición que
@@ -15263,6 +15298,32 @@ function App() {
       const d = p.expiry && p.expiry <= today ? p.expiry : today;
       const leg = { date: d, prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima, buybackCost: 0, newCredit: 0, comision: 0, ivr: "", note: (note || "").trim(), expiredShort: true };
       return { ...p, rollChain: [...(p.rollChain || []), leg], strike: "", expiry: "", noShort: true };
+    }));
+  };
+  /* v5.10 (Victor: "que en un PMCC esté la opción de recomprar la corta y volver a vender una corta
+     más adelante, por si se separan los trades"). Faltaba justo eso y solo eso.
+
+     Lo que ya había: "Rolar" recompra y vende en el MISMO acto —te obliga a saber ya el strike y la
+     prima de la nueva—, y "Expirar corta" deja la posición sin corta pero apuntando $0, que solo
+     vale si expiró sin valor. Si pagas por cerrarla hoy y vendes la siguiente el jueves, no había
+     camino: o te inventabas la venta nueva, o apuntabas un cierre gratis que no fue gratis.
+
+     Recomprar es la MITAD de un roll, así que se apunta como tal: una pata de la cadena con su
+     `buybackCost` y sin `newCredit`. Misma forma que las demás, así que la prima acumulada, el MTM,
+     Movimientos y el BEP salen solos sin tocar una línea de esos cálculos — que es de donde salen
+     los bugs silenciosos. Y como en el roll, el crédito vivo (`p.prima`) baja por lo pagado: es lo
+     que sostiene el débito neto del PMCC.
+     Después, la posición queda `noShort` y el botón "Vender call" que ya existía hace la otra mitad
+     cuando toque. */
+  const recomprarPmccShort = (id, { date, price, comision, note }) => {
+    setPositions((ps) => ps.map((p) => {
+      if (p.id !== id || !isPMCC(p) || p.closed || p.noShort) return p;
+      const d = date || new Date().toISOString().slice(0, 10);
+      const leg = { date: d, prevStrike: p.strike, prevExpiry: p.expiry, prevPrima: p.prima,
+        buybackCost: n(price), newCredit: 0, comision: n(comision), ivr: "", note: (note || "").trim(),
+        soloRecompra: true };
+      return { ...p, rollChain: [...(p.rollChain || []), leg], strike: "", expiry: "", noShort: true,
+        prima: String(n(p.prima) - n(price)) };
     }));
   };
   /* v3.52: ciclo por pata de los verticales (Credit Spread). Cerrar (o la parte de cierre de un roll)
@@ -16582,7 +16643,34 @@ function App() {
                 {!p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar cualquier campo de la posición" onClick={() => sheetDo("edit")} />}
                 {canRollP && !(isPMCC(p) && p.noShort) && <ActionBtn icon="roll" label="Rolar" sub={"Recompra + nueva venta · " + (p.rollChain || []).length + " roll" + ((p.rollChain || []).length === 1 ? "" : "s") + " hasta ahora"} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
                 {!p.closed && isPMCC(p) && p.noShort && <ActionBtn icon="roll" label="Vender call" sub="Nueva call corta sobre la long comprada" color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("roll")} />}
-                {!p.closed && isPMCC(p) && !p.noShort && !expPmccOpen && <ActionBtn icon="close" label="Expirar corta" sub="La call vendida expira sin valor · la long sigue viva" color={T.gold} tint={T.tileAmber} onClick={() => setExpPmccOpen(true)} />}
+                {/* v5.10 — recomprar SIN vender otra todavía. Va antes de "Expirar corta" porque es
+                    lo que más se hace, y las dos dicen en su subtítulo en qué se diferencian:
+                    aquí PAGAS por cerrarla, allí expira sin valor. Confundirlas apunta un cierre
+                    gratis que no fue gratis. */}
+                {!p.closed && isPMCC(p) && !p.noShort && !recPmccOpen && !expPmccOpen && <ActionBtn icon="close" label="Recomprar corta" sub="Pagas por cerrarla · la long sigue viva · luego vendes otra cuando quieras" color={T.purple} tint={T.tilePurple} onClick={() => { setRecPmccOpen(true); setRecPmccDate(new Date().toISOString().slice(0, 10)); }} />}
+                {!p.closed && isPMCC(p) && !p.noShort && recPmccOpen && (
+                  <div style={{ background: T.tilePurple, borderRadius: 14, padding: "12px 14px", display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: T.purple }}>
+                      Recomprar la call vendida{p.strike ? " $" + p.strike : ""}{p.expiry ? " · " + ibkrDate(p.expiry) : ""}
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
+                      Lo que PAGAS por acción para cerrarla. La long comprada sigue viva y la posición
+                      se queda sin call vendida hasta que vendas la siguiente.
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <WizInput label="Recompra $/acc" value={recPmccPrice} onChange={setRecPmccPrice} placeholder="$" inputMode="decimal" />
+                      <WizInput label="Comisión $" value={recPmccFee} onChange={setRecPmccFee} placeholder="$" inputMode="decimal" />
+                    </div>
+                    <WizInput label="Fecha" value={recPmccDate} onChange={setRecPmccDate} type="date" />
+                    <WizInput label="Nota (opc.)" value={recPmccNote} onChange={setRecPmccNote} placeholder="Ej. la subí de strike, vendo la nueva el jueves" />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => { setRecPmccOpen(false); setRecPmccPrice(""); setRecPmccFee(""); setRecPmccNote(""); }} style={{ flex: 1, background: T.tile, border: "none", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, color: T.ink, cursor: "pointer" }}>Cancelar</button>
+                      <button disabled={!recPmccPrice} onClick={() => { recomprarPmccShort(p.id, { date: recPmccDate, price: recPmccPrice, comision: recPmccFee, note: recPmccNote }); setRecPmccOpen(false); setRecPmccPrice(""); setRecPmccFee(""); setRecPmccNote(""); setSheetPosId(null); }}
+                        style={{ flex: 1, background: recPmccPrice ? T.purple : T.tile, border: "none", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, color: recPmccPrice ? "#fff" : T.sub, cursor: recPmccPrice ? "pointer" : "default" }}>Confirmar</button>
+                    </div>
+                  </div>
+                )}
+                {!p.closed && isPMCC(p) && !p.noShort && !recPmccOpen && !expPmccOpen && <ActionBtn icon="close" label="Expirar corta" sub="Expira sin valor, no pagas nada · la long sigue viva" color={T.gold} tint={T.tileAmber} onClick={() => setExpPmccOpen(true)} />}
                 {!p.closed && isPMCC(p) && !p.noShort && expPmccOpen && (
                   <div style={{ background: T.tileAmber, borderRadius: 14, padding: "12px 14px", display: "grid", gap: 8 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 800, color: T.gold }}>La call vendida expira sin valor · $0, sin comisión</div>
