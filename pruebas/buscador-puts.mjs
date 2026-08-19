@@ -314,6 +314,40 @@ ok(Math.abs(pctCabecera - Math.max(...roisFila)) < 0.02,
   "la cabecera (" + pctCabecera + "%) es el mejor ROI de sus filas (" + Math.max(...roisFila) + "%), no una cifra en otra escala");
 ok(pctCabecera > 0.5, "y no es un número cien veces más pequeño de lo que debe (" + pctCabecera + "%)");
 
+/* ---------------------------------------------------------------------------
+   LA CIFRA DE LA CABECERA TIENE QUE SER LA MISMA QUE LA DE LA FILA (v5.03)
+
+   Victor: *"RDDT solo da a 149 días que es el 0.03% que sale a la derecha?"*. No era el plazo:
+   era la cifra. El ROI se guarda como FRACCIÓN (0,03 = 3%) y la cabecera de la v5.01 lo pintaba
+   con un formateador que no multiplica por cien, así que TODAS las cabeceras salían divididas
+   por 100. Un 3% se leía como 0,03%.
+
+   La prueba de la v5.01 no lo cazó porque solo miraba que hubiera un "%" — y lo había. Se
+   comprueba el VALOR, y contra la otra pantalla que ya enseña ese mismo número: si la cabecera y
+   la fila del mismo contrato no dicen lo mismo, una de las dos miente.
+--------------------------------------------------------------------------- */
+console.log("\n=== la cabecera dice lo mismo que la fila ===");
+const ctxB = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
+for (const [re, h] of rutas) await ctxB.route(re, h);
+const pb = await ctxB.newPage();
+await pb.addInitScript(SEMILLA);
+await pb.addInitScript(() => localStorage.setItem("bloques_comp_basis_v2", "roi"));
+await pb.goto(URL_APP, { waitUntil: "load" });
+await pb.waitForTimeout(2400);
+for (const paso of PASOS("MRVL")) { await pb.evaluate(paso.f, paso.arg); await pb.waitForTimeout(paso.ms); }
+const cabB = await cabecerasDe(pb);
+const textoB = await pb.evaluate(() => document.body.innerText);
+/* solo el grupo abierto tiene filas en pantalla, así que estos ROI son los suyos */
+const roisFila = (textoB.match(/ROI \+?([\d.]+)%/g) || []).map((s) => parseFloat(s.replace(/[^\d.]/g, "")));
+const cabAbierta = cabB.find((c) => c.startsWith("▾")) || "";
+const pctCabecera = parseFloat((cabAbierta.match(/([\d.]+)%/) || [0, "0"])[1]);
+console.log("  criterio ROI · cabecera abierta:", cabAbierta);
+console.log("  ROI de sus filas:", roisFila.join(" · "));
+ok(roisFila.length > 0, "el grupo abierto enseña el ROI de sus filas");
+ok(Math.abs(pctCabecera - Math.max(...roisFila)) < 0.02,
+  "la cabecera (" + pctCabecera + "%) es el mejor ROI de sus filas (" + Math.max(...roisFila) + "%), no una cifra en otra escala");
+ok(pctCabecera > 0.5, "y no es un número cien veces más pequeño de lo que debe (" + pctCabecera + "%)");
+
 /* v5.00 se fue entera en desbordes horizontales, y la cabecera nueva mete cuatro cosas en una
    línea. En el iPhone más estrecho que usa nadie (320) no se puede salir NI UN pixel. Contexto
    aparte y no setViewportSize: la app re-ancla el viewport al arrancar y mediría el de antes. */
