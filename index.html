@@ -247,7 +247,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.03"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.04"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1903,6 +1903,29 @@ const MARGEN_REGT = (spot, strike) => {
   return Math.max(a, b, 0) * 100;
 };
 const iso = (d) => d.toISOString().slice(0, 10);
+/* v5.04 — EL PLAZO LARGO NO ES "360 DÍAS", ES EL LEAP DE ENERO.
+   Victor: *"no es verdad, RDDT sí tiene LEAPS"*. Y la tiene: enero de 2027 y enero de 2028. Lo que
+   no tiene —ni ella ni casi nadie— es un vencimiento a 360 días. Pasado el año las opciones no
+   están repartidas por el calendario: se concentran en el TERCER VIERNES DE ENERO, que es lo que
+   son las LEAPS. Desde agosto de 2026 eso cae a 520 días, no a 360; buscar alrededor de 360 caía
+   entre julio y septiembre de 2027, justo en el hueco entre los dos eneros, y salía vacío SIEMPRE.
+   Se calcula la fecha en vez de suponer un número de días, y sigue costando las mismas tres
+   llamadas de cadena: esta ventana sustituye a la de 360, no se suma a ella. */
+const tercerViernesEnero = (anio) => {
+  const uno = new Date(Date.UTC(anio, 0, 1));
+  const primerViernes = 1 + ((5 - uno.getUTCDay() + 7) % 7);
+  return new Date(Date.UTC(anio, 0, primerViernes + 14));
+};
+const DTE_LEAP = () => {
+  const hoy = new Date();
+  for (let i = 0; i < 3; i++) {
+    const d = Math.round((tercerViernesEnero(hoy.getUTCFullYear() + i).getTime() - hoy.getTime()) / 86400000);
+    /* el primer enero que esté de verdad lejos: el de dentro de tres meses ya lo cubre el plazo
+       de 180, y contarlo dos veces dejaría el hueco largo sin mirar */
+    if (d > 300) return d;
+  }
+  return 365;
+};
 async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
   const tkr = String(ticker || "").trim().toUpperCase();
   if (!tkr) return { error: "Escribe un ticker." };
@@ -13300,7 +13323,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
        Cuesta TRES peticiones de cadena en vez de una —el puente sirve 90 días por llamada—, y por
        eso los resultados salen plegados por vencimiento: treinta filas de golpe no se leen.
        La cadena se cachea 6 h en el puente, así que repetir el mismo ticker sale gratis. */
-    const r = await buscarPuts(puente, tkr, [30, 45, 60, 90, 180, 360], 5, n(buscaDelta) || 0.30);
+    const r = await buscarPuts(puente, tkr, [30, 45, 60, 90, 180, DTE_LEAP()], 5, n(buscaDelta) || 0.30);
     setBuscando(false);
     if (r.error) { setBuscaErr(r.error); return; }
     grabaPuts({ ...guardadas, [tkr]: { ...r, tkr, cuando: Date.now() } });
@@ -13530,7 +13553,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
             </button>
           </div>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>
-            Ticker y <b>delta máxima</b>. Mira los vencimientos más cercanos a 30, 45, 60, 90, 180 y 360 días y trae las 5 puts que más pagan sin pasarse de esa delta. Cada plazo llega plegado, con su mejor cifra a la vista.
+            Ticker y <b>delta máxima</b>. Mira los vencimientos más cercanos a 30, 45, 60, 90 y 180 días, más el <b>LEAP de enero</b>, y trae las 5 puts que más pagan sin pasarse de esa delta. Cada plazo llega plegado, con su mejor cifra a la vista.
           </div>
           {buscaErr && <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.tileAmber, borderRadius: 10, padding: "8px 10px", lineHeight: 1.45 }}>{buscaErr}</div>}
           {Object.keys(guardadas).sort((a, b) => (guardadas[b].cuando || 0) - (guardadas[a].cuando || 0)).map((tkGuard) => {
@@ -13595,12 +13618,18 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                     Va como dato, no como fallo: que ASTS no tenga opciones a un año es información
                     sobre ASTS. Opcional a propósito: las búsquedas guardadas de antes no lo traen
                     y tienen que seguir pintándose igual. */}
-                {(halladas.sinVencimiento || []).length > 0 && (
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 3px" }}>
-                    {tkGuard} no tiene vencimientos cerca de {halladas.sinVencimiento.join(" ni ")} días,
-                    así que ese plazo no sale. Pasado medio año solo quedan los trimestrales y los de enero.
-                  </div>
-                )}
+                {(halladas.sinVencimiento || []).length > 0 && (() => {
+                  /* v5.04 — el plazo largo se nombra por lo que ES, no por su número de días. Decir
+                     "no tiene vencimientos cerca de 520 días" es exacto y no significa nada; lo que
+                     se ha buscado ahí es el LEAP de enero. */
+                  const falta = halladas.sinVencimiento.map((d) => (d > 300 ? "el LEAP de enero" : "vencimientos cerca de " + d + " días"));
+                  return (
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: T.sub, lineHeight: 1.45, padding: "0 3px" }}>
+                      {tkGuard} no tiene {falta.join(" ni ")}, así que {falta.length > 1 ? "esos plazos no salen" : "ese plazo no sale"}.
+                      Pasado medio año solo quedan los trimestrales y los de enero, y no todos los valores los listan.
+                    </div>
+                  );
+                })()}
                 {/* v5.01 — desde que la búsqueda llega a 360 días, el criterio elegido decide algo que
                     antes casi no decidía. Un ROI o un ROM SIN anualizar es la prima entera de la
                     operación: a un año siempre sale mayor que a un mes, por construcción y no porque
@@ -13609,8 +13638,8 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                     cambia el criterio a sus espaldas: se avisa y él decide. */}
                 {(basis === "roi" || basis === "rom") && (
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45, padding: "0 3px" }}>
-                    Ojo: el {nombreCrit} no está anualizado, así que a 360 días siempre sale más alto que
-                    a 30 aunque no compense. Para comparar plazos entre sí, elige arriba un criterio anualizado.
+                    Ojo: el {nombreCrit} no está anualizado, así que en el LEAP siempre sale más alto que
+                    a 30 días aunque no compense. Para comparar plazos entre sí, elige arriba un criterio anualizado.
                   </div>
                 )}
                 {/* v4.87 (Victor: "que aparezca el IV/HV"). Va aquí, en la cabecera del ticker, y no
@@ -13641,7 +13670,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                       <span style={{ fontSize: 10, fontWeight: 600, color: T.sub, lineHeight: 1.4 }}>
                         Las dos son del subyacente, no de un contrato: la IV de cada candidata sale en su fila y es otra cosa.
                         La histórica es del último mes, así que compararla con opciones a 30-60 días ya es aproximado
-                        — y con las de 180 o 360, mucho más: un mes no dice casi nada de lo que hará un año.
+                        — y con las de 180 días o el LEAP, mucho más: un mes no dice casi nada de lo que hará un año.
                       </span>
                     </div>
                   );
