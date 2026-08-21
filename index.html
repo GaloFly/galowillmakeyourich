@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.12"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.13"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -762,11 +762,22 @@ function mtmSumOfPos(p) {
       s += (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision) - n(lg.comision); /* v3.60: réplica del derivador */
     }
   } else if ((natOf(p) === "ACC" || natOf(p) === "COLLAR") && p.closed && p.closePrice !== "" && p.closePrice != null) {
-    const fee = n(p.closeComision);
-    s += (natOf(p) === "ACC" && hasLots(p)) ? fifoRealized(p.lots, p.closePrice, fee) : (n(p.closePrice) - n(effBep(p))) * qty - fee;
+    /* v5.13 — EL CIERRE DE UNA CORTA IBA CON EL SIGNO AL REVÉS.
+       Victor: *"si abres un corto, para cerrarlo tienes que recomprarlo y la pérdida o ganancia
+       tienen que salir de esa lógica"*. Exacto, y no salían. El P&L MIENTRAS estaba abierta sí
+       llevaba `signoAcc` (v4.91), pero el realizado al cerrar usaba la fórmula de una larga:
+       una corta abierta a $50 y recomprada a $40 —mil dólares GANADOS— se apuntaba como −$1.000.
+       Y de ahí pasaba al Histórico, al MTM y al rendimiento.
+       La comisión NO lleva signo: se paga igual en los dos sentidos. */
+    const fee = n(p.closeComision), sg = signoAcc(p);
+    s += (natOf(p) === "ACC" && hasLots(p))
+      ? fifoRealized(p.lots, p.closePrice, 0) * sg - fee
+      : (n(p.closePrice) - n(effBep(p))) * qty * sg - fee;
   }
-  if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) p.soldLots.forEach((sl) => { s += (n(sl.price) - n(sl.cost)) * n(sl.qty) - n(sl.fee); });
-  if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d) => { s += n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
+  if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) p.soldLots.forEach((sl) => { s += (n(sl.price) - n(sl.cost)) * n(sl.qty) * signoAcc(p) - n(sl.fee); });
+  /* v5.13: si estás CORTO, el dividendo no lo cobras — lo PAGAS tú al que te prestó las acciones.
+     La retención y la comisión no cambian de signo: son costes en los dos sentidos. */
+  if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d) => { s += signoAcc(p) * n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
   return s;
 }
 const realizedOf = (p) => {
@@ -6381,7 +6392,9 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             </div>
             {isAutoPnl(p) ? (
               <div style={{ background: T.tile, borderRadius: 11, border: `1.5px solid ${T.line}`, padding: "9px 10px", fontSize: 14.5, fontWeight: 700, color: T.ink }}>
-                {signMoney(effPnl(p))} <span style={{ fontSize: 11, color: T.sub, fontWeight: 600 }}>= (Último − BEP) × Cantidad</span>
+                {/* v5.13: en una corta la resta va al revés, y decirlo mal es peor que no decirlo — el
+                    número sale bien pero la fórmula de al lado no cuadra con él y siembra la duda. */}
+                {signMoney(effPnl(p))} <span style={{ fontSize: 11, color: T.sub, fontWeight: 600 }}>{esAccCorta(p) ? "= (BEP − Último) × Cantidad" : "= (Último − BEP) × Cantidad"}</span>
               </div>
             ) : (
               <div style={{ position: "relative" }}>
@@ -7080,9 +7093,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
         ] });
       }
     } else if ((natOf(p) === "ACC" || natOf(p) === "COLLAR") && p.closed && p.closePrice !== "" && p.closePrice != null) {
-      const fee = n(p.closeComision);
+      /* v5.13: mismo signo que el derivador de arriba — una corta gana cuando recompra más barato */
+      const fee = n(p.closeComision), sgA = signoAcc(p);
       const useFifo = natOf(p) === "ACC" && hasLots(p);
-      const net = useFifo ? fifoRealized(p.lots, p.closePrice, fee) : (n(p.closePrice) - n(effBep(p))) * qty - fee;
+      const net = useFifo ? fifoRealized(p.lots, p.closePrice, 0) * sgA - fee : (n(p.closePrice) - n(effBep(p))) * qty * sgA - fee;
       mtmEvents.push({ id: p.id + "-closemtm", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: useFifo ? "Cierre FIFO" : "Cierre", cash: net, fee, strike: "", right: "", qty: qtyLabelOf(p), bep: n(effBep(p)), note: p.closeNote || "" });
     }
     /* ventas por lote (v5.24): cada venta parcial/total de acciones registra su P&L realizado en MTM,
@@ -7090,7 +7104,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) {
       p.soldLots.forEach((s, idx) => {
         const sfee = n(s.fee);
-        const realized = (n(s.price) - n(s.cost)) * n(s.qty) - sfee;
+        const realized = (n(s.price) - n(s.cost)) * n(s.qty) * signoAcc(p) - sfee;
         mtmEvents.push({ id: p.id + "-sold" + (s.id || idx), posId: p.id, date: s.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta lote", cash: realized, fee: sfee, strike: "", right: "", qty: n(s.qty) + " acc", bep: n(s.cost), note: "Venta " + n(s.qty) + " @ $" + money2(n(s.price)) + " (coste $" + money2(n(s.cost)) + ")" });
       });
     }
@@ -7100,7 +7114,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     if (natOf(p) === "ACC" && Array.isArray(p.dividends)) {
       p.dividends.forEach((d, idx) => {
         const dfee = n(d.fee), dret = n(d.ret);
-        const cash = n(d.amount) - dret - dfee;
+        const cash = signoAcc(p) * n(d.amount) - dret - dfee;   /* v5.13: en corto el dividendo se PAGA */
         const base = { posId: p.id, date: d.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Dividendo", cash, fee: dfee, strike: "", right: "", qty: "", note: "Dividendo" + (dret ? " · retención $" + money2(dret) : "") + (dfee ? " · comisión $" + money2(dfee) : "") };
         primaEvents.push({ ...base, id: p.id + "-div" + (d.id || idx) });
         mtmEvents.push({ ...base, id: p.id + "-divmtm" + (d.id || idx) });

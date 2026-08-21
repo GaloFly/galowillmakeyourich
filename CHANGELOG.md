@@ -1,5 +1,68 @@
 # CHANGELOG — Bloques
 
+Bloques v5.13 — El cierre de una acción corta iba con el signo al revés
+
+## Lo que pidió Victor
+*"Revísame la lógica de las posiciones cortas en acciones: si abres un corto, para cerrarlo tienes
+que recomprarlo, y la pérdida o ganancia tienen que salir de esa lógica."*
+
+Exacto. Y no salían.
+
+## El fallo
+La v4.91 metió las acciones cortas con un signo propio (`signoAcc`), pero **solo lo aplicó en dos
+sitios**: el P&L mientras la posición está abierta, y la delta de la cartera. El resultado
+**REALIZADO** —el que queda cuando cierras— usaba la fórmula de una larga:
+
+```
+corta abierta a $50, recomprada a $40   →   la app apuntaba  −$1.000
+                                             y son           +$1.000 GANADOS
+```
+
+Peor todavía: en pantalla, con la acción a $40, la posición abierta enseñaba **+$1.000**. Al
+cerrarla a ese mismo precio se convertía en **−$1.000**. El mismo dinero, dos signos, según
+estuviera abierta o cerrada.
+
+Y de ahí pasaba al MTM, al Histórico y al rendimiento de la cartera — que es lo caro: **un fallo
+que se apunta en el historial acaba cuadrando solo consigo mismo** y ya no se distingue de la
+realidad.
+
+## Los cuatro caminos, no uno
+Una acción realiza dinero por cuatro sitios distintos, y a los cuatro les faltaba el signo:
+
+| | antes (corta a $50 → $40) | ahora |
+|---|---|---|
+| Cerrar la posición | −$1.000 | **+$1.000** |
+| Cerrar con lotes (FIFO) | −$1.000 | **+$1.000** |
+| Venta parcial (50 acc.) | −$500 | **+$500** |
+| Dividendo de $30 | +$30 | **−$30** |
+
+El del dividendo es de concepto, no de signo mecánico: **estando corto el dividendo no lo cobras,
+lo pagas tú** al que te prestó las acciones.
+
+La comisión **no** cambia de signo: se paga en los dos sentidos. Con $5 de comisión, la corta gana
+$995 y la larga pierde $1.005.
+
+Y de paso, la etiqueta que explica el P&L en pantalla decía `= (Último − BEP) × Cantidad` también
+en las cortas. El número salía bien y la fórmula de al lado no cuadraba con él, que es la peor
+combinación: siembra la duda sobre un dato correcto. Ahora en una corta dice `(BEP − Último)`.
+
+## Verificación
+`pruebas/accion-corta.mjs` comprueba los cuatro caminos **en corto y en largo a la vez**, con los
+números hechos a mano. Ese contraste es lo importante: si algún día alguien aplicara el signo dos
+veces, las largas se romperían y la prueba lo diría. Se exige además **simetría exacta** — lo de la
+corta tiene que ser justo lo contrario de lo de la larga — y que el P&L abierto coincida con el
+realizado al cerrar a ese mismo precio, que era precisamente lo que no pasaba.
+
+Las funciones se leen del compilado en vez de copiarlas en la prueba: una copia se comprobaría
+contra sí misma y pasaría siempre.
+
+Comprobado que caza: quitando el signo del cierre, se caen tres comprobaciones.
+
+`npm run prueba` sigue en 18/18 — la cartera de los amigos no tiene ninguna corta, así que nada de
+lo suyo se mueve. Eso también quiere decir que la red de seguridad **no** cubre este caso; lo cubre
+la prueba nueva.
+
+
 Bloques v5.12 — El recargo del bróker va por VALOR, no por cuenta
 
 ## Lo que desmintió a la v5.11
