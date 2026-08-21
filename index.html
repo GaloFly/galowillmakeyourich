@@ -214,6 +214,10 @@ const GEMINI_MODEL = "gemini-2.5-flash"; // lector de capturas del Comparador (m
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const KEY_SNAP = "bloques_snapshots_v1";
 const KEY_BROKERS = "bloques_brokers_v1";
+/* v5.11: cuánto pide DE VERDAD cada bróker sobre el mínimo legal. Mapa {bróker: factor}, y si
+   falta, 1 — o sea, Reg-T puro y nada cambia para quien no lo toque. Va al backup porque es
+   configuración tuya, como las alertas. */
+const KEY_MARGEN_FACTOR = "bloques_margen_factor_v1";
 const KEY_TRADES = "bloques_trades_v2";
 const KEY_BASIS = "bloques_comp_basis_v2";
 const KEY_VIEW = "bloques_view_v1";
@@ -247,13 +251,13 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.10"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.11"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
 const KEY_MANUALBK = "bloques_manual_backups_v1"; // últimas copias JSON guardadas por el usuario (restaurables desde la lista)
 const KEY_FLOWS = "bloques_aportaciones_v1";
-const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, KEY_ERHIST, KEY_ERIDEAS, KEY_ALERTS, "bloques_show_pnl"];
+const BACKUP_KEYS = [KEY_ACC, KEY_POS, KEY_SNAP, KEY_BROKERS, KEY_TRADES, KEY_BASIS, KEY_VIEW, KEY_FINNHUB, KEY_GEMINI, KEY_FLOWS, KEY_RIESGO_OBJ, KEY_EARNCALC, KEY_ERHIST, KEY_ERIDEAS, KEY_ALERTS, KEY_MARGEN_FACTOR, "bloques_show_pnl"];
 const BASIS_KEYS = ["roi", "annRoi", "rom", "annRom", "impact"];
 
 /* ---------- persistencia ---------- */
@@ -1903,17 +1907,32 @@ async function puenteMarcas(cfg, codigos) {
      bróker. Se puede editar después como cualquier otro campo.
    · La POP sale de la delta (P(expira sin valor) ≈ 1 − |delta|), que es la aproximación de toda la
      vida. Si no hay delta —contrato raro—, se deja vacía en vez de inventarla. */
-const MARGEN_REGT = (spot, strike) => {
+const MARGEN_REGT = (spot, strike, factor) => {
   /* Reg-T para put vendida, por contrato: el mayor de
        20% del subyacente − lo que está fuera de dinero    ·    10% del strike
-     Es una ESTIMACIÓN: con margen de cartera IBKR pide bastante menos. */
+
+     v5.11 — EL COMENTARIO DE AQUÍ DECÍA LO CONTRARIO DE LA REALIDAD. Decía que "con margen de
+     cartera IBKR pide bastante menos". Victor mandó dos contratos con el margen REAL de su cuenta
+     y pide **más del doble**:
+
+        RDDT · put 135 · Oct 2 '26     Reg-T $1.448   IBKR $3.629    2,46×
+        MRVL · put 200 · Sep 17 '27    Reg-T $2.000   IBKR $3.940    1,97×
+
+     Reg-T es el MÍNIMO legal, no lo que bloquea un bróker: encima va su requisito de casa, que
+     sube con la volatilidad del valor y cambia de uno a otro. No se puede deducir del precio y el
+     strike, así que no se finge: se calcula el mínimo y se multiplica por un factor que el
+     usuario calibra con su propia cuenta. Sin factor, 1 — Reg-T puro, como hasta ahora.
+
+     Que la estimación se quedara a la MITAD es el peor sentido posible del error: hacía parecer
+     que cabían el doble de operaciones de las que caben. */
   const fuera = Math.max(0, n(spot) - n(strike));
   const a = 0.20 * n(spot) - fuera;
   const b = 0.10 * n(strike);
-  return Math.max(a, b, 0) * 100;
+  const f = isFinite(n(factor)) && n(factor) > 0 ? n(factor) : 1;
+  return Math.max(a, b, 0) * 100 * f;
 };
 const iso = (d) => d.toISOString().slice(0, 10);
-async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
+async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax, factorMargen) {
   const tkr = String(ticker || "").trim().toUpperCase();
   if (!tkr) return { error: "Escribe un ticker." };
   const cod = "US." + tkr;
@@ -2088,7 +2107,7 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
       underlying: String(Math.round(spot * 100) / 100),
       delta: isFinite(delta) ? String(Math.round(delta * 10000) / 10000) : "",
       pop: isFinite(delta) ? String(Math.round((1 - Math.abs(delta)) * 1000) / 10) : "",
-      margin: String(Math.round(MARGEN_REGT(spot, meta.strike))),
+      margin: String(Math.round(MARGEN_REGT(spot, meta.strike, factorMargen))),
       margenEstimado: true,
       iv: m.iv != null ? String(m.iv) : "",
       oi: m.interes_abierto != null ? String(m.interes_abierto) : "",
@@ -2141,7 +2160,7 @@ async function buscarPuts(cfg, ticker, dtesObjetivo, porVto, deltaMax) {
     const sv = await puenteFetch(cfg, "/subyacente", { codigo: cod });
     if (sv && sv.ok && sv.subyacente) vol = sv.subyacente;
   } catch (e) { vol = null; }
-  return { spot, filas: finales, vencimientos: vencUsados, pedidos: candidatas.length,
+  return { spot, filas: finales, vencimientos: vencUsados, pedidos: candidatas.length, factorMargen: n(factorMargen) > 0 ? n(factorMargen) : 1,
            miradas: filas.length, fueraDeTope, sinDelta, tope, errores, vol, sinVencimiento, sinCandidatas };
 }
 /* ---------- v4.62: buscador de Double Calendar / Double Diagonal ----------
@@ -9614,7 +9633,7 @@ function GlassSegmented({ items, value, onChange, renderIcon }) {
   );
 }
 
-function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, puente }) {
+function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, puente, factorMargen, factorDe }) {
   const [sub, setSub] = useState(() => { try { const v = localStorage.getItem(KEY_TOOLSUB); return v === "earnings" || v === "alerts" || v === "screener" ? v : "puts"; } catch (e) { return "puts"; } });
   const pick = (id) => { setSub(id); try { localStorage.setItem(KEY_TOOLSUB, id); } catch (e) {} };
   return (
@@ -9632,7 +9651,7 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
                 { id: "alerts", label: "Alertas", icon: "bolt" }]}
         value={sub} onChange={pick} renderIcon={(it) => <ActIcon name={it.icon} size={22} />} />
       {sub === "puts" ? (
-        <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} puente={puente} />
+        <ComparadorContent apiKey={apiKey} nlv={nlv} margin={margin} el={el} brokerLabel={brokerLabel} trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} onOpenPosition={onOpenPosition} puente={puente} factorMargen={factorMargen} factorDe={factorDe} />
       ) : sub === "alerts" ? (
         <AlertsToolContent apiKey={apiKey} />
       ) : sub === "analisis" ? (
@@ -13339,7 +13358,7 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     </div>
   );
 }
-function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, onOpenPosition, puente }) {
+function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTrades, basis, setBasis, onOpenPosition, puente, factorMargen, factorDe }) {
   const [editSet, setEditSet] = useState(() => new Set());
   const [blockPick, setBlockPick] = useState(null); /* v1.25: id de la operación que está eligiendo bloque (B1 o B2) */
   /* v1.26: spot del subyacente vía Finnhub (misma key que Portfolio) — el precio del subyacente alimenta
@@ -13429,7 +13448,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
        Cuesta TRES peticiones de cadena en vez de una —el puente sirve 90 días por llamada—, y por
        eso los resultados salen plegados por vencimiento: treinta filas de golpe no se leen.
        La cadena se cachea 6 h en el puente, así que repetir el mismo ticker sale gratis. */
-    const r = await buscarPuts(puente, tkr, [30, 45, 60, 90, 180, 360], 5, n(buscaDelta) || 0.30);
+    const r = await buscarPuts(puente, tkr, [30, 45, 60, 90, 180, 360], 5, n(buscaDelta) || 0.30, factorMargen);
     setBuscando(false);
     if (r.error) { setBuscaErr(r.error); return; }
     grabaPuts({ ...guardadas, [tkr]: { ...r, tkr, cuando: Date.now() } });
@@ -13885,7 +13904,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                                       isFinite(n(f.iv)) && n(f.iv) > 0 ? "IV " + n(f.iv).toFixed(1) : null,
                                      ].filter(Boolean).join(" · ") || "—"}
                                   </span>
-                                  <span style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, whiteSpace: "nowrap" }}>margen est. ${money(n(f.margin))}</span>
+                                  <span style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, whiteSpace: "nowrap" }}>margen est. ${money(n(f.margin))}{n(halladas.factorMargen) > 1 ? " · " + String(halladas.factorMargen).replace(".", ",") + "×" : ""}</span>
                                 </span>
                                 <span style={{ fontSize: 12, fontWeight: 800, color: T.sub, flexShrink: 0 }}>{abierta ? "▾" : "▸"}</span>
                               </div>
@@ -13906,7 +13925,16 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
                   );
                 })}
                 <div style={{ fontSize: 10.5, fontWeight: 600, color: T.gold, lineHeight: 1.45 }}>
-                  El margen es una ESTIMACIÓN (regla de Reg-T): OpenD no sabe lo que te bloquea tu bróker. Compáralo una vez con IBKR y ajústalo a mano si hace falta.
+                  {n(halladas.factorMargen) > 1 ? (
+                    <>El margen es una ESTIMACIÓN: Reg-T por {String(halladas.factorMargen).replace(".", ",")}×, el factor que has calibrado
+                    para {factorDe || "tu bróker"}. El requisito de casa cambia con cada valor, así que un solo factor no acierta
+                    en todos — si ves que se desvía mucho en alguno, ajústalo a mano en esa fila.</>
+                  ) : (
+                    <>El margen es una ESTIMACIÓN por la regla de Reg-T, que es el MÍNIMO legal — <b>no lo que bloquea tu
+                    cuenta</b>. Un bróker suele pedir bastante más (en IBKR se ha visto el doble), y quedarse corto aquí hace
+                    parecer que caben más operaciones de las que caben. Compara una venta con tu cuenta y pon el factor en
+                    Ajustes → Brokers.</>
+                  )}
                 </div>
               </div>
             );
@@ -14186,6 +14214,7 @@ function App() {
   const [manualBackups, setManualBackups] = useState([]); // copias JSON guardadas por el usuario (restaurables)
   const [confirmManualBk, setConfirmManualBk] = useState(null);
   const [brokers, setBrokers] = useState(SEED_BROKERS);
+  const [margenFactores, setMargenFactores] = useState({});   /* v5.11: {bróker: factor}; sin entrada = 1 */
   const [brokerModalOpen, setBrokerModalOpen] = useState(false);
   const [newBrokerName, setNewBrokerName] = useState("");
   const [removeTarget, setRemoveTarget] = useState({});
@@ -14250,6 +14279,7 @@ function App() {
     try { const pu = localStorage.getItem(KEY_PUENTE); if (pu) { const o = JSON.parse(pu); if (o && typeof o === "object") setPuente({ url: o.url || "", token: o.token || "" }); } } catch (e) {}
     try { const s = localStorage.getItem(KEY_SNAP); if (s) setSnapshots(JSON.parse(s)); } catch (e) {}
     try { const bk = localStorage.getItem(KEY_BROKERS); if (bk) { const arr = JSON.parse(bk); if (Array.isArray(arr) && arr.length) setBrokers(arr); } } catch (e) {}
+    try { const mf = localStorage.getItem(KEY_MARGEN_FACTOR); if (mf) { const o = JSON.parse(mf); if (o && typeof o === "object") setMargenFactores(o); } } catch (e) {}
     let haveTr = false;
     try { const tr = localStorage.getItem(KEY_TRADES); if (tr) { const arr = JSON.parse(tr); if (Array.isArray(arr)) { setTrades(arr); haveTr = true; } } } catch (e) {}
     if (!haveTr) { try { const trOld = localStorage.getItem(KEY_TR_OLD); if (trOld) { const arr = JSON.parse(trOld); if (Array.isArray(arr) && arr.length) { setTrades(arr); haveTr = true; } } } catch (e) {} }
@@ -14280,6 +14310,7 @@ function App() {
       try { const s = await idbGet(KEY_SNAP); if (s != null) { const arr = JSON.parse(s); if (Array.isArray(arr)) setSnapshots(arr); } } catch (e) {}
       try { const fl = await idbGet(KEY_FLOWS); if (fl != null) { const arr = JSON.parse(fl); if (Array.isArray(arr)) setFlows(arr); } } catch (e) {}
       try { const br = await idbGet(KEY_BROKERS); if (br != null) { const arr = JSON.parse(br); if (Array.isArray(arr) && arr.length) setBrokers(arr); } } catch (e) {}
+      try { const mf = await idbGet(KEY_MARGEN_FACTOR); if (mf != null) { const o = JSON.parse(mf); if (o && typeof o === "object") setMargenFactores(o); } } catch (e) {}
       /* v3.79: alertas — IDB es el respaldo. Si localStorage se ha vaciado (desalojo de Safari) y en IDB
          hay alertas, se devuelven a localStorage, que es de donde leen loadAlerts/evalAlerts/el backup. */
       try {
@@ -14363,6 +14394,7 @@ function App() {
   useEffect(() => { if (loaded) saveKV(KEY_SNAP, snapshots); }, [snapshots, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_FLOWS, flows); }, [flows, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_BROKERS, brokers); }, [brokers, loaded]);
+  useEffect(() => { if (loaded) saveKV(KEY_MARGEN_FACTOR, margenFactores); }, [margenFactores, loaded]);
   useEffect(() => { if (loaded) saveKV(KEY_TRADES, trades); }, [trades, loaded]);
   useEffect(() => { if (loaded) { try { localStorage.setItem(KEY_BASIS, basis); } catch (e) {} } }, [basis, loaded]);
   /* con un solo broker no existe "Todos": se selecciona directo y su cash/margin queda editable */
@@ -16127,6 +16159,13 @@ function App() {
 
         {view === "comparador" && (
           <HerramientasView apiKey={apiKey} geminiKey={geminiKey} onOpenPosition={openWizardPrefilled} nlv={nlv} margin={margin} el={el} brokerLabel={broker === "Todos" ? "consolidado " + brokers.join(" + ") : broker}
+            /* v5.11: en "Todos" no hay un bróker al que preguntarle, así que se coge el factor MÁS
+               ALTO de los que tengas. Quedarse corto en un margen es el error caro: hace parecer
+               que caben más operaciones de las que caben. */
+            factorMargen={broker === "Todos"
+              ? Math.max(1, ...brokers.map((b) => n(margenFactores[b]) || 1))
+              : (n(margenFactores[broker]) || 1)}
+            factorDe={broker === "Todos" ? "tu bróker más exigente" : broker}
             trades={trades} setTrades={setTrades} basis={basis} setBasis={setBasis} puente={puente} />
         )}
 
@@ -16434,6 +16473,25 @@ function App() {
                       ) : (
                         <span style={{ fontSize: 11, color: T.sub, fontWeight: 600 }}>único broker</span>
                       )}
+                    </div>
+                    {/* v5.11 — cuánto pide ESTE bróker sobre el mínimo legal.
+                        Reg-T es el suelo que marca la ley, no lo que bloquea tu cuenta: encima va
+                        el requisito de casa del bróker, que sube con la volatilidad del valor y no
+                        se puede deducir del precio ni del strike. Así que no se adivina: se pone
+                        el número que TÚ has visto en tu cuenta. Sin tocarlo, 1 — Reg-T puro y
+                        nadie ve cambiar sus cifras por una actualización. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.line}` }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: T.ink }}>Factor de margen</div>
+                        <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.4 }}>
+                          Cuántas veces lo legal bloquea {b}. Compara una venta en tu cuenta con lo que
+                          estima la app y divide. 1 = Reg-T pelado.
+                        </div>
+                      </div>
+                      <input value={margenFactores[b] == null ? "" : String(margenFactores[b])} placeholder="1" inputMode="decimal"
+                        onChange={(e) => { const v = e.target.value.replace(",", "."); setMargenFactores((o) => { const x = { ...o }; if (!v.trim()) delete x[b]; else x[b] = v; return x; }); }}
+                        style={{ flexShrink: 0, width: 62, boxSizing: "border-box", background: T.card, border: `1.5px solid ${T.line}`, borderRadius: 10, padding: "9px 8px", fontSize: 15, fontWeight: 800, color: T.ink, outline: "none", textAlign: "center", fontVariantNumeric: "tabular-nums", colorScheme: DARK ? "dark" : "light" }} />
+                      <span style={{ flexShrink: 0, fontSize: 14, fontWeight: 800, color: T.sub, marginLeft: -4 }}>×</span>
                     </div>
                     {count > 0 && brokers.length > 1 && (
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9 }}>

@@ -467,7 +467,11 @@ console.log("\n=== la previa, con la descripción a su anchura ===");
   if (m) {
     console.log("  ancho: " + Math.round(m.desc) + " px de " + Math.round(m.tarjeta) + " px de tarjeta");
     ok(m.desc > m.tarjeta * 0.8, "y ocupa casi toda la tarjeta (" + Math.round(m.desc) + " de " + Math.round(m.tarjeta) + " px), no una columna estrecha");
-    ok(/JUN 17 '27/.test(m.texto), "con la fecha entera y sin partir (" + m.texto + ")");
+    /* la fecha NO se fija a un día concreto: los vencimientos del fixture se cuentan desde HOY,
+       así que mañana caen en otro. Lo que se comprueba es que la fecha aparezca ENTERA —mes, día
+       y año juntos—, que es lo que se rompía. Fijar "JUN 17 '27" hacía que la prueba se pusiera
+       roja sola al cambiar de día, y una prueba que falla por el calendario se acaba ignorando. */
+    ok(/[A-Z]{3} \d{1,2} '\d{2}/.test(m.texto), "con la fecha entera y sin partir (" + m.texto + ")");
     /* NO se comprueba el "·" colgando leyendo el texto: innerText no refleja los saltos por
        ajuste de línea, así que esa comprobación pasaría siempre. Que no cuelgue lo garantiza la
        construcción (el separador va dentro del `nowrap` de lo que introduce). Lo que sí se puede

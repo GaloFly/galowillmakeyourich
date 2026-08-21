@@ -1,5 +1,70 @@
 # CHANGELOG — Bloques
 
+Bloques v5.11 — El margen estimado se quedaba a la mitad
+
+## El dato
+Victor mandó dos contratos con el margen **real** que le bloquea IBKR, al lado de lo que estimaba
+la app:
+
+| contrato | app (Reg-T) | IBKR real | factor |
+|---|---|---|---|
+| RDDT · put 135 · Oct 2 '26 | $1.448 | **$3.629** | 2,46× |
+| MRVL · put 200 · Sep 17 '27 | $2.000 | **$3.940** | 1,97× |
+
+La app se quedaba a **menos de la mitad**. Y ese es el peor sentido posible del error: un margen
+corto hace parecer que caben el doble de operaciones de las que caben.
+
+De paso, el comentario que había en el código decía justo lo contrario — *"con margen de cartera
+IBKR pide bastante menos"*. Llevaba ahí desde la v4.59 y nadie lo había contrastado con una cuenta
+de verdad.
+
+## Por qué pasaba, y por qué no se puede arreglar con una fórmula
+**Reg-T es el mínimo legal, no lo que bloquea un bróker.** Encima va el requisito de casa, que sube
+con la volatilidad del valor y cambia de un bróker a otro. No se puede deducir del precio ni del
+strike: con los dos contratos de arriba salen dos factores distintos (2,46 y 1,97), y no hay
+fórmula sencilla que dé los dos.
+
+Así que no se finge: se calcula el mínimo legal y se multiplica por un **factor que cada uno
+calibra con su propia cuenta**.
+
+## Cómo queda
+- **Ajustes → Brokers**: cada bróker tiene su casilla de factor. Vacío = **1**, o sea Reg-T pelado —
+  quien no lo toque no ve cambiar ni una cifra por esta actualización.
+- La cifra en pantalla **dice el factor**: `margen est. $3.186 · 2,2×`. Nunca se confunde con un dato
+  que venga del bróker.
+- El aviso de abajo cambia según el caso. Sin calibrar dice que Reg-T es el mínimo legal **y que un
+  bróker suele pedir bastante más**; calibrado dice con qué factor está hecho y avisa de que un solo
+  número no acierta en todos los valores.
+- En la vista consolidada ("Todos") se usa el factor **más alto** de tus brókers. Quedarse corto en
+  un margen es el error caro.
+- Va en el backup, como las alertas: si no, se perdería al cambiar de teléfono y las cifras
+  cambiarían en silencio.
+
+Con 2,2× de partida, el error pasa de **−60% y −49%** a **−12% y +12%**. No es exacto y no puede
+serlo con un número plano — pero deja de mentir en la dirección peligrosa.
+
+## Verificación
+`pruebas/margen-factor.mjs` usa **los dos contratos reales de Victor**, lee la fórmula del compilado
+(copiarla en la prueba sería comprobar mi copia contra sí misma) y comprueba que sin factor sale
+Reg-T exacto, que con factor multiplica al céntimo, que el error baja en los dos casos, y que el
+factor sobrevive a recargar y viaja en el backup.
+
+Dos cosas que hubo que corregir de las propias pruebas:
+- la persistencia se comprobaba escribiendo en `localStorage`, y en esta app **IndexedDB es la copia
+  autoritativa**: la carga siguiente lo pisaba. Daba rojo por una ruta que ningún usuario recorre.
+  Ahora el factor se pone **por la pantalla**, como lo pondría Victor.
+- una comprobación del buscador fijaba la fecha `JUN 17 '27`, y los vencimientos del fixture se
+  cuentan desde HOY: al cambiar de día se puso roja sola. Ahora exige que la fecha aparezca ENTERA,
+  que es lo que se quería comprobar. **Una prueba que falla por el calendario se acaba ignorando.**
+
+Sin regresiones: `npm run prueba` (18/18 — el factor por defecto es 1 y no mueve nada), buscador de
+puts y PMCC en verde.
+
+## Pendiente
+Victor va a mandar 4-5 pares más del **mismo** contrato en los dos sitios. Con ellos se puede ver si
+el factor depende de la volatilidad o del plazo, y si sale algo mejor que un número plano.
+
+
 Bloques v5.10 — PMCC: recomprar la corta hoy y vender la siguiente cuando toque
 
 ## Lo que pidió
