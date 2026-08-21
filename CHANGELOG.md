@@ -1,5 +1,64 @@
 # CHANGELOG — Bloques
 
+Bloques v5.12 — El recargo del bróker va por VALOR, no por cuenta
+
+## Lo que desmintió a la v5.11
+Con dos contratos parecía que IBKR pedía siempre el doble, y así salió la v5.11: un factor por
+bróker, 2,2×. Victor mandó cuatro más y el patrón se cayó:
+
+| contrato | Reg-T | IBKR | factor | IV |
+|---|---|---|---|---|
+| RDDT 135 · 42d | $1.448 | $3.629 | **2,51×** | 56% |
+| MRVL 200 · 391d | $2.000 | $3.940 | **1,97×** | 83% |
+| NVO 42,5 · 28d | $546 | $496 | 0,91× | 31% |
+| TSLA 315 · 42d | $3.760 | $4.324 | 1,15× | 39% |
+| META 515 · 42d | $7.804 | $6.399 | 0,82× | 35% |
+| META 490 · 300d | $5.304 | $5.758 | 1,09× | 35% |
+
+**Cuatro de los seis caen entre 0,82× y 1,15×** — o sea, Reg-T ya acierta ahí. Solo se disparan
+RDDT y MRVL, que son **los dos de IV alta**. El recargo de casa de IBKR no es un peaje sobre la
+cuenta: cae sobre valores concretos.
+
+Con el 2,2× de la v5.11, esos cuatro habrían salido con un error de **+91% a +168%** — mucho peor
+que no hacer nada. Y la prueba lo deja escrito: **ni el mejor factor plano posible** (1,23×) baja
+del 51% de error en el peor caso.
+
+## Cómo queda
+- **Factor por valor**, que manda sobre el del bróker. El del bróker sigue existiendo como
+  respaldo, y sin nada puesto sigue siendo **1** — Reg-T pelado, que es lo correcto para la mayoría.
+- **Se calibra donde miras el número.** En la vista previa de una candidata hay un botón
+  **Calibrar**: abres esa misma venta en tu bróker, miras lo que te bloquea, lo metes, y la app
+  deduce el factor de ese valor — y **rehace las demás candidatas del ticker**, no solo la que
+  tenías abierta.
+- La cifra dice de dónde sale: `Margen est. $3.629 · 2,51× de RDDT`.
+
+## Lo que NO hace, y conviene saberlo
+Un factor por valor tampoco clava siempre. Los dos META lo enseñan: 0,82× con el put de 42 días y
+1,09× con el de 300. Calibrando con uno, el otro se queda a un **−24%**. Sirve para dimensionar,
+no para cuadrar al céntimo — y la app lo dice en vez de aparentar precisión.
+
+Se probaron modelos alternativos con estos seis puntos (% del nocional, % del strike, Reg-T con la
+prima dentro) y ninguno los explica: con seis datos y un requisito que el bróker cambia por su
+cuenta, lo honesto es preguntar en vez de modelar.
+
+## Verificación
+`pruebas/margen-factor.mjs` usa **los seis contratos reales** y lee la fórmula del compilado.
+Comprueba que cada valor queda clavado con su propio factor (−0,1% a +0,4%), que el mejor factor
+único posible no baja del 51% de error, y que el 2,2× de la v5.11 dejaba cuatro de seis por encima
+del 90%.
+
+El Reg-T de cada caso **se recalcula con el mismo precio que vio IBKR**, no con el que mostró la
+app: cada búsqueda se hizo en un momento distinto, y comparar dos números sacados de precios
+distintos tuerce la calibración. Esa corrección sola movía los factores de NVO y TSLA.
+
+Y en `pruebas/buscador-puts.mjs`, el flujo entero: se abre una candidata, se pulsa Calibrar, se mete
+el margen real y se exige que la cifra pase a serlo, que el factor quede guardado **para ese valor**
+y que las otras cuatro candidatas se rehagan.
+
+Sin regresiones: `npm run prueba` 18/18 — con todo sin calibrar el resultado es Reg-T, igual que
+siempre.
+
+
 Bloques v5.11 — El margen estimado se quedaba a la mitad
 
 ## El dato

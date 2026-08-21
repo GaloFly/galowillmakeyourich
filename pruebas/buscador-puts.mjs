@@ -478,6 +478,42 @@ console.log("\n=== la previa, con la descripción a su anchura ===");
        medir es en cuántas líneas cae: dos como mucho, o vuelve a ser un bloque estrecho. */
     ok(m.lineas <= 2, "y cabe en dos líneas como mucho (" + m.lineas + ")");
   }
+  /* ---------- v5.12: calibrar el margen con lo que bloquea el bróker de verdad ----------
+     Seis contratos reales de Victor enseñaron que el recargo va por VALOR y no por cuenta, así
+     que aquí se mete el margen real de UN contrato y se comprueba que la app deduce el factor de
+     ese ticker y REHACE las demás candidatas. Si el resto no cambiara, calibrar no serviría de
+     nada más que para el contrato que estás mirando. */
+  const margenAntes = await p.evaluate(() => {
+    const d = document.querySelector("[data-previa-desc]");
+    const caja = d && d.parentElement.parentElement;
+    const m = caja && (caja.innerText || "").match(/Margen est\. \$([\d,]+)/);
+    return m ? Number(m[1].replace(/,/g, "")) : NaN;
+  });
+  const real = Math.round(margenAntes * 2);   /* el bróker bloquea el doble que Reg-T en este valor */
+  await p.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => (x.innerText || "").trim() === "Calibrar"); if (b) b.click(); });
+  await p.waitForTimeout(500);
+  await p.evaluate((v) => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const i = Array.from(document.querySelectorAll("input")).find((x) => /bloquea/.test(x.placeholder || ""));
+    if (i) { set.call(i, String(v)); i.dispatchEvent(new Event("input", { bubbles: true })); }
+  }, real);
+  await p.waitForTimeout(300);
+  await p.evaluate(() => { const b = Array.from(document.querySelectorAll("button")).find((x) => (x.innerText || "").trim() === "Guardar"); if (b) b.click(); });
+  await p.waitForTimeout(900);
+  const tras = await p.evaluate(() => {
+    const d = document.querySelector("[data-previa-desc]");
+    const caja = d && d.parentElement.parentElement;
+    const m = caja && (caja.innerText || "").match(/Margen est\. \$([\d,]+)/);
+    const guardado = (() => { try { return JSON.parse(localStorage.getItem("bloques_margen_ticker_v1") || "{}"); } catch (e) { return {}; } })();
+    const otras = (document.body.innerText.match(/margen est\. \$[\d,]+/g) || []).length;
+    return { margen: m ? Number(m[1].replace(/,/g, "")) : NaN, guardado, otras };
+  });
+  console.log("  margen: $" + margenAntes + " → metes $" + real + " → queda $" + tras.margen +
+    "  ·  factor guardado: " + JSON.stringify(tras.guardado));
+  ok(Math.abs(tras.margen - real) <= 2, "el margen pasa a ser el que bloquea tu bróker de verdad ($" + tras.margen + " vs $" + real + ")");
+  ok(Number(tras.guardado.RDDT) > 1.9 && Number(tras.guardado.RDDT) < 2.1, "y queda guardado el factor DE ESE VALOR (" + JSON.stringify(tras.guardado) + ")");
+  ok(tras.otras > 1, "con las demás candidatas rehechas, no solo la que estabas mirando (" + tras.otras + " filas)");
+
   ok(!errsP.length, "sin errores de JS " + JSON.stringify(errsP.slice(0, 2)));
   await p.screenshot({ path: D + "/puts-previa.png" });
   await c.close();
