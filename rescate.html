@@ -1,0 +1,43 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reparar la app</title></head>
+<body style="font:600 15px/1.55 -apple-system,system-ui,sans-serif;color:#1a1d24;background:#fff;margin:0">
+<div style="max-width:520px;margin:0 auto;padding:26px 22px">
+  <div style="font-size:20px;font-weight:800;margin-bottom:10px">Reparar la app</div>
+  <div style="color:#5b6472;margin-bottom:18px">Tus posiciones <b>siguen en el teléfono</b>. Esto solo cambia los archivos del programa: no toca tus datos ni tu copia de seguridad.</div>
+  <div id="estado" style="background:#f2f4f7;border-radius:12px;padding:12px 14px;margin-bottom:16px;font-size:13.5;color:#5b6472">Comprobando qué versión sirve el servidor…</div>
+  <button id="rep" style="width:100%;border:none;border-radius:12px;padding:14px 0;font:800 15px -apple-system,system-ui,sans-serif;background:#1BA34C;color:#fff;margin-bottom:9px">Reparar y abrir la app</button>
+  <a href="./" style="display:block;text-align:center;border-radius:12px;padding:14px 0;font:800 15px -apple-system,system-ui,sans-serif;background:#eceff3;color:#1a1d24;text-decoration:none">Solo abrir la app</a>
+  <div id="log" style="font:600 12px/1.5 ui-monospace,Menlo,monospace;color:#8A93A6;margin-top:16px;word-break:break-all"></div>
+</div>
+<script>
+var est = document.getElementById("estado"), log = document.getElementById("log");
+function di(t) { log.textContent += t + "\n"; }
+fetch("./index.html?nc=" + Date.now(), { cache: "no-store" }).then(function (r) {
+  return r.text().then(function (t) {
+    var m = t.match(/APP_VERSION = "([0-9.]+)"/);
+    est.textContent = r.ok
+      ? (m ? "El servidor está sirviendo la versión " + m[1] + ". Esta app espera la " + "5.13" + "."
+           : "El servidor contesta pero lo que manda no parece la app (" + t.length + " caracteres).")
+      : "El servidor contesta con un error " + r.status + ".";
+  });
+}).catch(function (e) { est.textContent = "No se ha podido hablar con el servidor: " + e.message; });
+document.getElementById("rep").onclick = function () {
+  var p = Promise.resolve();
+  if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+    p = navigator.serviceWorker.getRegistrations().then(function (rs) {
+      di("service workers encontrados: " + rs.length);
+      return Promise.all(rs.map(function (r) { return r.unregister(); }));
+    });
+  }
+  p.then(function () {
+    if (window.caches && caches.keys) return caches.keys().then(function (k) {
+      di("cachés borradas: " + k.length);
+      return Promise.all(k.map(function (x) { return caches.delete(x); }));
+    });
+  }).then(function () {
+    di("listo, abriendo la app…");
+    setTimeout(function () { location.href = "./?reparada=" + Date.now(); }, 700);
+  }).catch(function (e) { di("error: " + e.message); });
+};
+</script></body></html>

@@ -1,0 +1,5 @@
+# Cloudflare Pages redirige por su cuenta /algo.html -> /algo (301), y un service worker NO
+# puede devolver una respuesta redirigida: el navegador la rechaza y la app se queda en blanco.
+# Con 200 se sirve el contenido en su sitio, sin redirección de por medio.
+/index.html    /            200
+/rescate.html  /rescate     200
