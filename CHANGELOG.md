@@ -1,5 +1,58 @@
 # CHANGELOG — Bloques
 
+Bloques v5.14 — El spot de Earnings: el 429 de Finnhub, y el precio de otra empresa
+
+## El síntoma
+Victor: *"no puede leer el spot en herramientas earnings"*. En la captura, **«No pude leer el
+precio: HTTP 429»**.
+
+Pero en esa misma captura había algo peor que el error: el TICKER decía **NVDA** y el campo SPOT
+ponía **32,45**. Ese es el precio del ticker anterior, que se quedó ahí al fallar la lectura.
+
+De ese número cuelgan el movimiento esperado, las probabilidades y los strikes. O sea que **toda la
+tarjeta estaba calculando sobre el precio de otra empresa**, con toda la pinta de estar bien. El
+error se veía; esto no.
+
+## Tres arreglos
+
+**1. Con servidor propio, el precio se le pide a ÉL.** Victor tiene OpenD en su VPS dando precios
+sin tope de nadie, y esta herramienta iba directa a Finnhub — porque nació antes que el puente y
+nunca se revisó. Ahora se pregunta primero al puente y, si no hay o no contesta, se cae a Finnhub.
+El orden es el correcto también por cupo: cada consulta que no se le hace a Finnhub queda libre para
+el refresco de la cartera, que sí las gasta a puñados. Solo para consultas de UNA acción suelta — el
+refresco entero sigue por su camino, porque el cupo del puente es de la cuenta compartida.
+
+**2. «HTTP 429» pasa a decir qué es.** Es el tope del plan gratis de Finnhub (60 consultas por
+minuto). Ni es una avería ni hay nada que arreglar: se pasa esperando. Ahora lo dice, y si no hay
+servidor propio, apunta a montarlo.
+
+**3. Un spot que no es del ticker en pantalla ya no se queda callado.** La app recuerda **de qué
+ticker** es el precio que hay en el campo, y hay tres situaciones que no se tratan igual:
+
+| | qué hace |
+|---|---|
+| Sabe que es de otro ticker | lo **borra** y dice de quién era |
+| Hay uno pero no sabe de quién (escrito a mano) | **no lo toca** — escribirlo a mano es un uso legítimo — pero avisa de que no está comprobado |
+| Cambias de ticker sin volver a pedirlo | aviso en rojo: *"Ese spot de $182,50 es de NVDA, no de TSLA"* |
+
+Ese aviso en rojo es el que cubre el caso de la captura sin necesidad de que falle nada: basta con
+cambiar el ticker y no volver a pulsar «Obtener spot».
+
+## Verificación
+`pruebas/earnings-spot.mjs` monta la herramienta con un Finnhub que devuelve 429 y un puente falso,
+y comprueba los cuatro escenarios: con servidor (lee el precio bueno y no depende de Finnhub), sin
+servidor (el mensaje explica el tope y apunta al servidor), spot escrito a mano (no se borra, se
+avisa) y spot que se sabe de otro ticker (se borra y se dice).
+
+Comprobado que caza: devolviendo la llamada directa a Finnhub, se caen tres comprobaciones.
+
+Y la prueba encontró de paso un `$` duplicado en el aviso nuevo (`$$182.50`): dentro de esta
+herramienta hay un `money2` **local** que ya trae el símbolo puesto. Eso no se ve leyendo el código
+—la función se llama igual que la global— y en pantalla se habría quedado.
+
+Sin regresiones: `npm run prueba` 18/18.
+
+
 Bloques v5.13 — El cierre de una acción corta iba con el signo al revés
 
 ## Lo que pidió Victor
