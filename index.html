@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.13"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.14"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -2550,10 +2550,35 @@ const MERCADO_US = {
 };
 const mercadoEnCristiano = (s) => MERCADO_US[String(s || "").toUpperCase()] || "";
 
+/* v5.14 — SI TIENES SERVIDOR PROPIO, EL PRECIO SE LE PIDE A ÉL.
+   Victor, en Earnings: *"no puede leer el spot"* — HTTP 429, el tope de Finnhub. Y mientras tanto
+   tenía OpenD en su VPS dando precios de verdad, sin tope de nadie. La herramienta iba directa a
+   Finnhub porque nació antes que el puente y nunca se revisó.
+   Se pregunta primero al puente y, si no hay o no contesta, se cae a Finnhub — que es el orden
+   correcto también por cupo: cada consulta que no se le hace a Finnhub es una que queda para el
+   refresco de precios de la cartera, que sí las gasta a puñados.
+   Solo para consultas de UNA acción suelta: el refresco de la cartera entera sigue por su camino,
+   porque el cupo del puente es de la cuenta compartida y no se malgasta aquí. */
+async function spotDeUnaAccion(symbol, key, cfgPuente) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (puenteConfigurado(cfgPuente)) {
+    try {
+      const cod = "US." + sym;
+      const q = await puenteFetch(cfgPuente, "/cotiza", { codigos: cod });
+      const px = q && q.ok && q.cotizaciones && q.cotizaciones[cod] ? n(q.cotizaciones[cod].ultimo) : NaN;
+      if (isFinite(px) && px > 0) return { price: px, deServidor: true };
+    } catch (e) { /* el puente es un atajo, no una dependencia: si falla, se sigue por Finnhub */ }
+  }
+  if (!key) return { error: "Sin key de precios y sin servidor propio." };
+  return fetchQuote(sym, key);
+}
 async function fetchQuote(symbol, key) {
   try {
     const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${key}`);
     if (r.status === 401 || r.status === 403) return { error: `key inválida (HTTP ${r.status})` };
+    /* v5.14: "HTTP 429" no le dice nada a nadie. Es el tope del plan gratis de Finnhub —60 consultas
+       por minuto— y se pasa solo esperando; no es una avería ni hay nada que arreglar. */
+    if (r.status === 429) return { error: "Finnhub va al tope (60 consultas por minuto en el plan gratis). Espera un minuto y vuelve a intentarlo.", _429: true };
     if (!r.ok) return { error: `HTTP ${r.status}` };
     const j = await r.json();
     /* v1.48: Finnhub ya devuelve el cambio del día del subyacente (dp = % y pc = cierre anterior);
@@ -9715,7 +9740,7 @@ function HerramientasView({ apiKey, geminiKey, onOpenPosition, nlv, margin, el, 
       ) : sub === "screener" ? (
         <ScreenerToolContent apiKey={apiKey} onOpenEarnings={(jump) => { try { localStorage.setItem(KEY_ERJUMP, JSON.stringify(jump)); } catch (e) {} pick("earnings"); }} />
       ) : (
-        <EarningsToolContent apiKey={apiKey} geminiKey={geminiKey} onOpenPosition={onOpenPosition} />
+        <EarningsToolContent apiKey={apiKey} geminiKey={geminiKey} onOpenPosition={onOpenPosition} puente={puente} />
       )}
     </>
   );
@@ -11951,7 +11976,7 @@ function SnapCarousel({ children, bleed = 18, keys, activeKey, onActiveKey, maxF
     </div>
   );
 }
-function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
+function EarningsToolContent({ apiKey, geminiKey, onOpenPosition, puente }) {
   /* v1.29: histórico persistente por ticker (tabla Historical Earnings Data) */
   const [hist, setHist] = useState(loadErHist);
   const [tblBusy, setTblBusy] = useState(false);
@@ -12045,6 +12070,9 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
     return base;
   });
   const [spotMsg, setSpotMsg] = useState("");
+  /* v5.14: de QUÉ ticker es el precio que hay en el campo. Sin esto, un fallo de lectura deja el
+     spot del ticker anterior y toda la tarjeta calcula sobre el precio de otra empresa. */
+  const [spotDe, setSpotDe] = useState("");
   const [spotBusy, setSpotBusy] = useState(false);
   const [liqInfoOpen, setLiqInfoOpen] = useState(false); /* v1.91: desplegable de criterios */
   /* v2.00: cuadro resumen (para comparar con moomoo sin cambiar de pestaña) */
@@ -12273,12 +12301,31 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
   const getSpot = async () => {
     const sym = String(st.tkr || "").trim().toUpperCase();
     if (!sym) { setSpotMsg("Escribe un ticker primero."); return; }
-    if (!apiKey) { setSpotMsg("Sin key de precios — actívala en Ajustes → API keys → Precios."); return; }
+    if (!apiKey && !puenteConfigurado(puente)) { setSpotMsg("Sin key de precios — actívala en Ajustes → API keys → Precios."); return; }
     setSpotBusy(true); setSpotMsg("");
-    const q = await fetchQuote(sym, apiKey);
+    const q = await spotDeUnaAccion(sym, apiKey, puente);
     setSpotBusy(false);
-    if (q.price) { setMany({ tkr: sym, spot: String(q.price) }); setSpotMsg(""); }
-    else setSpotMsg("No pude leer el precio: " + (q.error || "error desconocido"));
+    if (q.price) { setMany({ tkr: sym, spot: String(q.price) }); setSpotDe(sym); setSpotMsg(""); }
+    else {
+      /* v5.14 — SI NO SE PUDO LEER, EL SPOT DE ANTES NO VALE.
+         En la captura de Victor la pantalla decía NVDA y el SPOT ponía 32,45: el precio del ticker
+         anterior, que se quedó ahí al fallar la lectura. Y de ese número cuelgan el movimiento
+         esperado, las probabilidades y los strikes — o sea, toda la tarjeta calculando sobre el
+         precio de otra empresa, sin que nada lo dijera. Se borra y se avisa. */
+      /* tres situaciones distintas y NO se tratan igual:
+           · el spot que hay es de OTRO ticker (lo sabemos) → se borra, porque calcular con él es
+             calcular sobre otra empresa;
+           · hay un spot pero no sabemos de quién es (escrito a mano, o de antes de la v5.14) → NO se
+             toca: escribirlo a mano es un uso legítimo y borrárselo a alguien sería peor. Se avisa;
+           · no hay spot → solo el error. */
+      const hay = n(st.spot) > 0;
+      const deOtro = hay && spotDe && spotDe !== sym;
+      if (deOtro) { setMany({ spot: "" }); setSpotDe(""); }
+      setSpotMsg("No pude leer el precio: " + (q.error || "error desconocido") +
+        (deOtro ? " · He borrado el spot que había, que era de " + spotDe + " y no de " + sym + "." : "") +
+        (hay && !deOtro ? " · Ojo: el spot que hay en el campo no se ha comprobado que sea de " + sym + "." : "") +
+        (q._429 && !puenteConfigurado(puente) ? " Si tienes servidor propio, configúralo en Ajustes y esto deja de depender de Finnhub." : ""));
+    }
     fetchNextEarnings(sym, apiKey).then((cal) => {
       if (!cal) { setErCal(null); return; } /* fallo de llamada: ni strip engañoso ni bloqueo */
       setErCal({ tkr: sym, ...cal });
@@ -12848,6 +12895,18 @@ function EarningsToolContent({ apiKey, geminiKey, onOpenPosition }) {
           <WizInput label="Expected move %" value={st.em} onChange={set("em")} inputMode="decimal" placeholder="5.39" />
         </div>
         {spotMsg && <div style={{ background: T.tileAmber, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.gold }}>{spotMsg}</div>}
+        {/* v5.14 — el aviso NO es solo para cuando falla la lectura. Basta con cambiar el ticker y no
+            volver a pulsar "Obtener spot": el precio de antes se queda ahí, y de él cuelgan el
+            movimiento esperado, las probabilidades y los strikes. Callarlo es dejar la tarjeta
+            calculando sobre otra empresa con toda la pinta de estar bien. */}
+        {!spotBusy && n(st.spot) > 0 && spotDe && spotDe !== String(st.tkr || "").trim().toUpperCase() && (
+          <div style={{ background: T.tileRed, borderRadius: 12, padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: T.red, lineHeight: 1.45 }}>
+            {/* ojo: aquí money2 es el LOCAL de esta herramienta, que ya trae el "$" puesto — un
+                dólar delante lo duplicaba. Lo cazó la prueba, no la vista. */}
+            Ese spot de {money2(n(st.spot))} es de <b>{spotDe}</b>, no de {String(st.tkr || "").trim().toUpperCase()}.
+            Pulsa «Obtener spot» o escribe el precio a mano.
+          </div>
+        )}
         {erCal && erCal.tkr === String(st.tkr || "").trim().toUpperCase() && (
           erCal.none ? (
             <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", fontSize: 11, fontWeight: 600, color: T.sub }}>
@@ -13424,7 +13483,7 @@ function ComparadorContent({ apiKey, nlv, margin, el, brokerLabel, trades, setTr
     if (!sym) { setSpotMsg((m) => ({ ...m, [tr.id]: "Escribe el ticker primero." })); return; }
     if (!apiKey) { setSpotMsg((m) => ({ ...m, [tr.id]: "Sin key de precios — actívala en Ajustes → API keys → Precios." })); return; }
     setSpotBusyId(tr.id); setSpotMsg((m) => ({ ...m, [tr.id]: "" }));
-    const q = await fetchQuote(sym, apiKey);
+    const q = await spotDeUnaAccion(sym, apiKey, puente);
     setSpotBusyId(null);
     if (q.price) setTrades((ts) => ts.map((t) => (t.id === tr.id ? { ...t, underlying: String(q.price) } : t)));
     else setSpotMsg((m) => ({ ...m, [tr.id]: "No pude leer el precio: " + (q.error || "error") }));
