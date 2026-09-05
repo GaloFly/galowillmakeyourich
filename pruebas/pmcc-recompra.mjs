@@ -197,9 +197,12 @@ texto = await page.evaluate(() => document.body.innerText);
 ok(/\+\$249/.test(texto), "el mes de la venta inicial suma +$249");
 ok(/-\$81/.test(texto), "y el de la recompra resta -$81 (0,80 × 100 + $1)");
 
-/* un nivel más: la operación en sí, que es donde se vería la venta fantasma */
+/* un nivel más: la operación en sí, que es donde se vería la venta fantasma.
+   El mes NO se escribe a mano: la recompra se apunta con la fecha de HOY, así que un mes fijo
+   hace que la prueba se ponga roja sola al cambiar el calendario — pasó, y durante semanas lo
+   que fallaba era la prueba, no la app. Se busca la caja de total que lleve el importe. */
 await page.evaluate(() => {
-  const t = Array.from(document.querySelectorAll("*")).filter((e) => /TOTAL AGO 2026/.test(e.textContent || "") && e.children.length < 8);
+  const t = Array.from(document.querySelectorAll("*")).filter((e) => /^TOTAL [A-ZÉ]{3} \d{4}/.test((e.innerText || "").trim()) && /-\$81/.test(e.textContent || "") && e.children.length < 8);
   const b = t[t.length - 1];
   if (b) b.click();
 });

@@ -1,5 +1,67 @@
 # CHANGELOG — Bloques
 
+Bloques v5.15 — Excluir un movimiento del Histórico: deja de contar en Primas Y en MTM
+
+## El síntoma
+Victor: *"haz que en el histórico de movimientos se pueda editar el movimiento para borrarlo y que
+no se cuente ni en MTM ni en primas"*.
+
+Hasta ahora, un movimiento apuntado por error solo se podía quitar deshaciendo la operación entera
+en la posición (el roll, la venta del lote, el dividendo). Y eso, además de ser un rodeo, pierde el
+dato: el roll ocurrió de verdad —el strike cambió— aunque su importe no deba contar.
+
+## La causa, que es lo que hacía esto delicado
+Los movimientos del Histórico **NO son registros guardados**: se derivan de la posición en cada
+pintado. Y se derivan **dos veces por dos caminos distintos**: las listas de Primas y MTM que ves en
+pantalla, y `primaSumOfPos` / `mtmSumOfPos`, la réplica autónoma que usan la ficha de cada posición
+y los resúmenes del Histórico. Si la exclusión llegara solo a uno de los dos, la lista y el total
+dirían cosas diferentes — el descuadre que se pedía arreglar, movido de sitio.
+
+## El arreglo
+Lo que se guarda es la **exclusión**, no el borrado: `p.omit`, una lista con la CLAVE del
+movimiento. Campo **nuevo y opcional**, como manda la regla de formato de datos: una posición sin
+`omit` se comporta exactamente igual que antes, y las carteras de los dos amigos no se enteran de
+nada.
+
+- **La clave es de la OPERACIÓN, no del renglón.** Por eso excluir un roll en Primas lo excluye
+  también en MTM aunque cada pestaña le ponga un importe distinto (en la prueba: $298 en Primas y
+  $198 en MTM, el mismo movimiento). Y por eso "close" tapa de una vez las tres filas con las que un
+  cierre de PMCC se enseña en MTM.
+- **La posición no se toca.** El roll sigue en la cadena con su strike, su fecha y sus precios: lo
+  único que cambia es que su importe vale cero. Devolverlo es quitar la clave, y ya.
+- **Un roll excluido sigue encadenado.** La pata siguiente arranca del mismo sitio que antes —
+  excluir un importe no reescribe la historia de la posición.
+- **Y no se esfuma.** Debajo del total acumulado aparece "1 movimiento excluido · no cuenta en el
+  total de arriba", con lo que suma tachado y un toque para verlo, en gris, y devolverlo. Un
+  movimiento que desapareciera sin dejar rastro no se distinguiría de una avería, y el día que los
+  números no cuadraran con el bróker no habría dónde mirar.
+
+En pantalla: al abrir un movimiento, debajo de "Editar este movimiento" hay ahora **"No contar este
+movimiento"**; en la lista de excluidos, **"Volver a contar este movimiento"**.
+
+## La verificación
+`pruebas/movimiento-excluido.mjs` — cartera con un short put rolado (apertura $299 · roll $298 en
+Primas y $198 en MTM) y una acción con dividendo ($50) y venta por lote ($1.200), todo hecho a mano:
+
+- los derivadores autónomos, leídos **del compilado** y no copiados en la prueba, descuentan el roll,
+  el dividendo o la venta por su importe exacto, y una clave que no corresponde a nada no descuenta
+  nada;
+- excluyendo el roll con los mismos toques que daría Victor: Primas baja **exactamente $298** y MTM
+  **exactamente $198**;
+- lo guardado es solo `omit: ["roll0"]`, con el roll intacto en la cadena;
+- el excluido no se ve en la lista normal, sí en la suya, y vuelve de un toque.
+
+Comprobado que la prueba **caza el fallo**: dejando la exclusión solo en la pestaña de Primas caen
+10 comprobaciones; quitando el candado del derivador autónomo de MTM, la que compara sus dos cifras.
+
+`npm run prueba` sigue en 18/18 sin mover un céntimo: la red de seguridad de los que no tienen
+servidor confirma que una cartera sin `omit` calcula igual que en la v5.14.
+
+## De paso
+`pruebas/pmcc-recompra.mjs` estaba **en rojo desde antes de este cambio** y no por la app: buscaba
+"TOTAL AGO 2026" a pelo, y la recompra se apunta con la fecha de HOY — al pasar a septiembre, la
+prueba se puso roja sola. Ahora busca el mes por su importe, sin calendario escrito a mano.
+
 Bloques v5.14 — El spot de Earnings: el 429 de Finnhub, y el precio de otra empresa
 
 ## El síntoma
