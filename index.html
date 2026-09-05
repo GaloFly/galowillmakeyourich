@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.14"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.15"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -575,7 +575,20 @@ const vHasLegData = (p) => isVertical(p) && (p.sK || p.lK || p.sP || p.lP);
 /* crédito neto de las patas actualmente VIVAS (no realizado, pendiente de cierre) — sustituye a p.prima
    para mostrar "cuánto crédito queda en juego" en una posición tocada por el ciclo de patas */
 const vPendingNet = (p) => (p.noShort ? 0 : n(p.sP)) - (p.noLong ? 0 : n(p.lP));
-const vBookedSum = (p) => (p.legOps || []).reduce((s, o) => s + (o.cash != null ? n(o.cash) : 0), 0);
+/* ---------- v5.15: movimientos EXCLUIDOS del Histórico ----------
+   Victor: *"que en el histórico de movimientos se pueda editar el movimiento para borrarlo y que no se
+   cuente ni en MTM ni en primas"*. Los movimientos del Histórico NO son registros guardados: se derivan
+   en cada pintado de la posición (la cadena de rolls, las ventas por lote, los dividendos, el cierre).
+   Borrar uno de verdad significaría reescribir la posición y perder el dato estructural (el roll ocurrió:
+   el strike cambió). Así que lo que se guarda es la EXCLUSIÓN: `p.omit`, una lista de claves de movimiento
+   —campo NUEVO y OPCIONAL, como manda la regla de formato: si falta, todo se comporta como antes—.
+   Un movimiento excluido vale CERO en los dos sitios a la vez (Primas y MTM): son la misma operación
+   vista desde dos columnas, y dejar que cuente en una sería exactamente el error que se pide arreglar.
+   La clave es de la OPERACIÓN, no del evento, por eso "close" tapa las tres filas de un cierre de PMCC.
+   Y no desaparece en silencio: se lista aparte, en gris, con un botón para volver a contarlo. */
+const omitidoMov = (p, mov) => Array.isArray(p.omit) && p.omit.indexOf(mov) >= 0;
+const vBookedSum = (p) => (p.legOps || []).reduce((s, o, idx) => s + (o.cash != null && !omitidoMov(p, "leg" + idx) ? n(o.cash) : 0), 0);
+const vBookedAlgo = (p) => (p.legOps || []).some((o, idx) => o.cash != null && !omitidoMov(p, "leg" + idx)); /* ¿hay ya alguna pata realizada que cuente? — decide si se imputa la fee de apertura */
 const vDisplayPrima = (p) => (vHasLegData(p) ? vPendingNet(p) : n(p.prima)); /* crédito de las patas vivas, o el p.prima manual en posiciones antiguas sin datos por pata */
 /* v3.54: "Spread" se muestra como "Credit Spread" / "Debit Spread" según el signo de vDisplayPrima —
    Victor: llamarlas así en vez de "Spread de crédito/débito", calculado igual (restar sP − lP) */
@@ -728,17 +741,18 @@ const _oStrike = (p) => { const c = p.rollChain || []; return c.length ? c[0].pr
 const _dirSign = (p) => (natOf(p) === "CRED" || isCreditSpread(p) ? -1 : 1);
 function primaSumOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
-  if (bepAutoStrat(p) === "CREDIT" && p.entryDate) s += _oPrimaPS(p) * qty - n(p.comision);
-  chain.forEach((r) => { s += (n(r.newCredit) - n(r.buybackCost)) * qty - n(r.comision); });
-  if (isVertical(p)) s += vBookedSum(p) - ((p.legOps || []).some((o) => o.cash != null) ? n(p.comision) : 0); /* v3.52 + v3.59: la fee de apertura del spread se imputa una vez, en cuanto hay algo realizado — réplica del derivador de Primas */
-  if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
+  const om = (k) => omitidoMov(p, k); /* v5.15 */
+  if (bepAutoStrat(p) === "CREDIT" && p.entryDate && !om("open")) s += _oPrimaPS(p) * qty - n(p.comision);
+  chain.forEach((r, idx) => { if (om("roll" + idx)) return; s += (n(r.newCredit) - n(r.buybackCost)) * qty - n(r.comision); });
+  if (isVertical(p)) s += vBookedSum(p) - (vBookedAlgo(p) ? n(p.comision) : 0); /* v3.52 + v3.59: la fee de apertura del spread se imputa una vez, en cuanto hay algo realizado — réplica del derivador de Primas */
+  if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p) && !om("close")) {
     const fee = n(p.closeComision), gd = isGenericDebitPos(p) || isLongCallPos(p);
     const openFee = (isCreditSpread(p) || gd) ? n(p.comision) : 0; /* v3.59: fee de apertura nunca restada en el modelo "neto al cierre" */
     s += isCreditSpread(p) ? (n(p.prima) - n(p.closePrice)) * qty - fee - openFee
       : gd ? (n(p.closePrice) - n(p.prima)) * qty - fee - openFee
         : _dirSign(p) * n(p.closePrice) * qty - fee;
   }
-  if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null) {
+  if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null && !om("close")) {
     const lg = p.long || {};
     s += (n(p.closeLongPrice) - n(lg.prima) - n(p.closePrice)) * qty - (n(p.closeComision) + n(p.closeLongComision) + n(lg.comision)); /* v3.60: réplica del derivador */
   }
@@ -746,22 +760,26 @@ function primaSumOfPos(p) {
 }
 function mtmSumOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
-  if (isVertical(p)) s += vBookedSum(p) - ((p.legOps || []).some((o) => o.cash != null) ? n(p.comision) : 0); /* v3.52 + v3.59: idéntico a Primas — un vertical no distingue prima acumulada de MTM; la fee de apertura se imputa una vez */
+  const om = (k) => omitidoMov(p, k); /* v5.15 */
+  if (isVertical(p)) s += vBookedSum(p) - (vBookedAlgo(p) ? n(p.comision) : 0); /* v3.52 + v3.59: idéntico a Primas — un vertical no distingue prima acumulada de MTM; la fee de apertura se imputa una vez */
   if (isOptionNat(p)) {
-    chain.forEach((r, idx) => { const legBefore = idx === 0 ? _oPrimaPS(p) : n(chain[idx - 1].newCredit); s += _dirSign(p) * (n(r.buybackCost) - legBefore) * qty - n(r.comision); });
-    if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p)) {
+    /* v5.15: un roll excluido no cuenta, pero SIGUE encadenado — el strike/prima que dejó atrás es un
+       hecho estructural, y la pata siguiente arranca de ahí igual. Por eso `legBefore` se calcula antes
+       de saltar: excluir el importe no reescribe la historia de la posición. */
+    chain.forEach((r, idx) => { const legBefore = idx === 0 ? _oPrimaPS(p) : n(chain[idx - 1].newCredit); if (om("roll" + idx)) return; s += _dirSign(p) * (n(r.buybackCost) - legBefore) * qty - n(r.comision); });
+    if (p.closed && p.closePrice !== "" && p.closePrice != null && !isPMCC(p) && !om("close")) {
       const fee = n(p.closeComision);
       const openFee = (isCreditSpread(p) || isGenericDebitPos(p) || isLongCallPos(p)) ? n(p.comision) : 0; /* v3.59: réplica del derivador */
       const legEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : _oPrimaPS(p);
       s += _dirSign(p) * (n(p.closePrice) - legEntry) * qty - fee - openFee;
     }
-    if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null) {
+    if (isPMCC(p) && p.closed && p.closePrice !== "" && p.closePrice != null && p.closeLongPrice !== "" && p.closeLongPrice != null && !om("close")) {
       const lg = p.long || {};
       const shortLegEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : _oPrimaPS(p);
       s += (shortLegEntry - n(p.closePrice)) * qty - n(p.closeComision);
       s += (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision) - n(lg.comision); /* v3.60: réplica del derivador */
     }
-  } else if ((natOf(p) === "ACC" || natOf(p) === "COLLAR") && p.closed && p.closePrice !== "" && p.closePrice != null) {
+  } else if ((natOf(p) === "ACC" || natOf(p) === "COLLAR") && p.closed && p.closePrice !== "" && p.closePrice != null && !om("close")) {
     /* v5.13 — EL CIERRE DE UNA CORTA IBA CON EL SIGNO AL REVÉS.
        Victor: *"si abres un corto, para cerrarlo tienes que recomprarlo y la pérdida o ganancia
        tienen que salir de esa lógica"*. Exacto, y no salían. El P&L MIENTRAS estaba abierta sí
@@ -774,10 +792,10 @@ function mtmSumOfPos(p) {
       ? fifoRealized(p.lots, p.closePrice, 0) * sg - fee
       : (n(p.closePrice) - n(effBep(p))) * qty * sg - fee;
   }
-  if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) p.soldLots.forEach((sl) => { s += (n(sl.price) - n(sl.cost)) * n(sl.qty) * signoAcc(p) - n(sl.fee); });
+  if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) p.soldLots.forEach((sl, idx) => { if (om("sold" + (sl.id || idx))) return; s += (n(sl.price) - n(sl.cost)) * n(sl.qty) * signoAcc(p) - n(sl.fee); });
   /* v5.13: si estás CORTO, el dividendo no lo cobras — lo PAGAS tú al que te prestó las acciones.
      La retención y la comisión no cambian de signo: son costes en los dos sentidos. */
-  if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d) => { s += signoAcc(p) * n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
+  if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d, idx) => { if (om("div" + (d.id || idx))) return; s += signoAcc(p) * n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
   return s;
 }
 const realizedOf = (p) => {
@@ -6884,7 +6902,7 @@ function SettingsRow({ icon, tint, iconColor, title, sub, right, onClick, danger
   );
 }
 
-function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, onRebuy, snapshots, flows, saveSnapshot, deleteSnapshot }) {
+function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, onEditDiv, onRebuy, onOmitMov, snapshots, flows, saveSnapshot, deleteSnapshot }) {
   const [sub, setSub] = useState("primas");
   const [blockFilter, setBlockFilter] = useState("all"); /* v3.31: filtro por bloque en Primas/MTM (Todos · Bn) */
   const [stratCat, setStratCat] = useState("Acciones");
@@ -6903,6 +6921,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const toggleExpand = (id) => setExpanded((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
   const [openMonths, setOpenMonths] = useState(new Set());
   const toggleMonth = (key) => setOpenMonths((s) => { const x = new Set(s); x.has(key) ? x.delete(key) : x.add(key); return x; });
+  const [verOmitidos, setVerOmitidos] = useState(false); /* v5.15: la lista de movimientos excluidos, plegada */
   const [openYears, setOpenYears] = useState(new Set());
   const toggleYear = (key) => setOpenYears((s) => { const x = new Set(s); x.has(key) ? x.delete(key) : x.add(key); return x; });
 
@@ -6948,7 +6967,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            hasta el cierre, donde materializa el neto. */
         const fee = n(p.comision);
         const cash = openingPrimaPerShare(p) * qty - fee;
-        primaEvents.push({ id: p.id + "-open", posId: p.id, date: p.entryDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Apertura", cash, fee, strike: openingStrike(p), right: p.right, qty: qtyLabelOf(p), expiry: openingExpiry(p), bep: n(openingStrike(p)) - n(openingPrimaPerShare(p)), note: p.entryNote || "", legs: [
+        primaEvents.push({ id: p.id + "-open", mov: "open", posId: p.id, date: p.entryDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Apertura", cash, fee, strike: openingStrike(p), right: p.right, qty: qtyLabelOf(p), expiry: openingExpiry(p), bep: n(openingStrike(p)) - n(openingPrimaPerShare(p)), note: p.entryNote || "", legs: [
           { side: "V", label: strikeStr(openingStrike(p)) + (p.right || "") + (openingExpiry(p) ? " " + ibkrDate(openingExpiry(p)) : ""), perShare: openingPrimaPerShare(p), cash: openingPrimaPerShare(p) * qty },
         ] });
       }
@@ -6958,7 +6977,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            así que no se pinta; el MTM sí realiza la pata (la prima de esa call queda ganada del todo). */
         if (r.expiredShort) {
           const legBefore0 = idx === 0 ? openingPrimaPerShare(p) : n(chain[idx - 1].newCredit);
-          mtmEvents.push({ id: p.id + "-rollmtm" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Expirada short", cash: dirSign(p) * (0 - legBefore0) * qty, fee: 0, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+          mtmEvents.push({ id: p.id + "-rollmtm" + idx, mov: "roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Expirada short", cash: dirSign(p) * (0 - legBefore0) * qty, fee: 0, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
             { side: "V", label: strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : ""), perShare: legBefore0, cash: legBefore0 * qty },
             { side: "C", label: "expira sin valor", perShare: 0, cash: 0 },
           ] });
@@ -6968,7 +6987,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            hay nada que realizar (no se cerró ninguna pata). */
         if (r.soldAfterExpiry) {
           const cashSell = n(r.newCredit) * qty - fee;
-          primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta call", cash: cashSell, fee, strike: strikeAfterRoll(p, idx), right: p.right, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
+          primaEvents.push({ id: p.id + "-roll" + idx, mov: "roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta call", cash: cashSell, fee, strike: strikeAfterRoll(p, idx), right: p.right, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
             { side: "V", label: strikeStr(strikeAfterRoll(p, idx)) + (p.right || "") + (expiryAfterRoll(p, idx) ? " " + ibkrDate(expiryAfterRoll(p, idx)) : ""), perShare: n(r.newCredit), cash: n(r.newCredit) * qty },
           ] });
           return;
@@ -6980,23 +6999,23 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
         if (r.soloRecompra) {
           const legBefore0 = idx === 0 ? openingPrimaPerShare(p) : n(chain[idx - 1].newCredit);
           const etiqueta = strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : "");
-          primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Recompra call", cash: -n(r.buybackCost) * qty - fee, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+          primaEvents.push({ id: p.id + "-roll" + idx, mov: "roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Recompra call", cash: -n(r.buybackCost) * qty - fee, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
             { side: "C", label: etiqueta, perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
           ] });
-          mtmEvents.push({ id: p.id + "-rollmtm" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Recompra short", cash: dirSign(p) * (n(r.buybackCost) - legBefore0) * qty - fee, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+          mtmEvents.push({ id: p.id + "-rollmtm" + idx, mov: "roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Recompra short", cash: dirSign(p) * (n(r.buybackCost) - legBefore0) * qty - fee, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
             { side: "V", label: etiqueta, perShare: legBefore0, cash: legBefore0 * qty },
             { side: "C", label: "recompra", perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
           ] });
           return;
         }
         const cashRoll = (n(r.newCredit) - n(r.buybackCost)) * qty - fee;
-        primaEvents.push({ id: p.id + "-roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Roll", cash: cashRoll, fee, strike: strikeAfterRoll(p, idx), right: p.right, prevStrike: r.prevStrike, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
+        primaEvents.push({ id: p.id + "-roll" + idx, mov: "roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Roll", cash: cashRoll, fee, strike: strikeAfterRoll(p, idx), right: p.right, prevStrike: r.prevStrike, qty: qtyLabelOf(p), expiry: expiryAfterRoll(p, idx), note: r.note || "", legs: [
           { side: "C", label: strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : ""), perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
           { side: "V", label: strikeStr(strikeAfterRoll(p, idx)) + (p.right || "") + (expiryAfterRoll(p, idx) ? " " + ibkrDate(expiryAfterRoll(p, idx)) : ""), perShare: n(r.newCredit), cash: n(r.newCredit) * qty },
         ] });
         const legBefore = idx === 0 ? openingPrimaPerShare(p) : n(chain[idx - 1].newCredit);
         const realized = dirSign(p) * (n(r.buybackCost) - legBefore) * qty - fee;
-        mtmEvents.push({ id: p.id + "-rollmtm" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Roll", cash: realized, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
+        mtmEvents.push({ id: p.id + "-rollmtm" + idx, mov: "roll" + idx, posId: p.id, date: r.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Roll", cash: realized, fee, strike: r.prevStrike, right: p.right, qty: qtyLabelOf(p), expiry: r.prevExpiry, note: r.note || "", legs: [
           { side: "V", label: strikeStr(r.prevStrike) + (p.right || "") + (r.prevExpiry ? " " + ibkrDate(r.prevExpiry) : ""), perShare: legBefore, cash: legBefore * qty },
           { side: "C", label: strikeStr(r.prevStrike) + (p.right || ""), perShare: -n(r.buybackCost), cash: -n(r.buybackCost) * qty },
         ] });
@@ -7012,12 +7031,15 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
         let vOpenFee = n(p.comision);
         (p.legOps || []).forEach((o, idx) => {
           if (o.cash == null) return;
-          const oFee = vOpenFee; vOpenFee = 0;
+          /* v5.15: una pata excluida tampoco se lleva la fee de apertura — la hereda la siguiente que sí
+             cuente, igual que hace vBookedAlgo() en el derivador. Si no, la fee desaparecería con ella. */
+          const _omLeg = omitidoMov(p, "leg" + idx);
+          const oFee = _omLeg ? 0 : vOpenFee; if (!_omLeg) vOpenFee = 0;
           const S = o.leg === "S";
           const isExpira = o.act !== "open" && n(o.px) === 0;
           const kind = o.act === "roll" ? (S ? "Roll corta" : "Roll larga") : isExpira ? (S ? "Expirada corta" : "Larga sin valor") : (S ? "Cierre corta" : "Cierre larga");
           const lbl = (S ? "Corta " : "Larga ") + (o.k || "") + (p.right || "") + (o.expiry ? " " + ibkrDate(o.expiry) : "");
-          const ev = { id: p.id + "-leg" + idx, posId: p.id, date: o.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind, cash: n(o.cash) - oFee, fee: n(o.fee) + oFee, strike: o.k || (S ? p.sK : p.lK), right: p.right, qty: qtyLabelOf(p), expiry: o.expiry || p.expiry, note: o.note || "", legs: [{ side: S ? "C" : "V", label: lbl, perShare: n(o.cash) / (qty || 1), cash: n(o.cash) }] };
+          const ev = { id: p.id + "-leg" + idx, mov: "leg" + idx, posId: p.id, date: o.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind, cash: n(o.cash) - oFee, fee: n(o.fee) + oFee, strike: o.k || (S ? p.sK : p.lK), right: p.right, qty: qtyLabelOf(p), expiry: o.expiry || p.expiry, note: o.note || "", legs: [{ side: S ? "C" : "V", label: lbl, perShare: n(o.cash) / (qty || 1), cash: n(o.cash) }] };
           primaEvents.push(ev);
           mtmEvents.push({ ...ev, id: p.id + "-legmtm" + idx }); /* un vertical no distingue prima acumulada de MTM, igual que en el cierre total */
         });
@@ -7070,7 +7092,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             : isExpira
               ? [{ side: null, label: stkLbl + expLbl + " · expira", perShare: 0, cash: 0 }]
               : [{ side: shortP ? "C" : "V", label: stkLbl + expLbl, perShare: dirSign(p) * n(p.closePrice), cash: dirSign(p) * n(p.closePrice) * qty }];
-        primaEvents.push({ id: p.id + "-close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: cashClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: primaLegs });
+        primaEvents.push({ id: p.id + "-close", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: cashClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: primaLegs });
         const legEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : openingPrimaPerShare(p);
         const realizedClose = dirSign(p) * (n(p.closePrice) - legEntry) * qty - fee - openFee; /* v3.59: openFee = 0 en crédito simple */
         const mtmLegs = (isCreditSpread(p) || gd)
@@ -7084,7 +7106,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 { side: "C", label: stkLbl + expLbl, perShare: -legEntry, cash: -legEntry * qty },
                 { side: "V", label: stkLbl, perShare: n(p.closePrice), cash: n(p.closePrice) * qty },
               ];
-        mtmEvents.push({ id: p.id + "-closemtm", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: realizedClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: mtmLegs });
+        mtmEvents.push({ id: p.id + "-closemtm", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: realizedClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: mtmLegs });
       }
       /* PMCC — CIERRE (modelo acordado):
          · PRIMAS: UN evento combinado = (venta long − coste long − recompra short) × qty − comisiones.
@@ -7100,19 +7122,19 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            (p.comision) ya se restó en su evento de apertura y las de los rolls en los suyos. */
         const fees = n(p.closeComision) + n(p.closeLongComision) + n(lg.comision);
         const combined = (n(p.closeLongPrice) - n(lg.prima) - n(p.closePrice)) * qty - fees;
-        primaEvents.push({ id: p.id + "-close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre PMCC", cash: combined, fee: fees, strike: p.strike, right: "C", qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: [
+        primaEvents.push({ id: p.id + "-close", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre PMCC", cash: combined, fee: fees, strike: p.strike, right: "C", qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: [
           { side: "C", label: strikeStr(lg.strike) + "C · long", perShare: -n(lg.prima), cash: -n(lg.prima) * qty },
           { side: "C", label: strikeStr(p.strike) + "C" + (p.expiry ? " " + ibkrDate(p.expiry) : "") + " · short", perShare: -n(p.closePrice), cash: -n(p.closePrice) * qty },
           { side: "V", label: strikeStr(lg.strike) + "C" + (lg.expiry ? " " + ibkrDate(lg.expiry) : "") + " · long", perShare: n(p.closeLongPrice), cash: n(p.closeLongPrice) * qty },
         ] });
         const shortLegEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : openingPrimaPerShare(p);
         const realizedShort = (shortLegEntry - n(p.closePrice)) * qty - n(p.closeComision);
-        mtmEvents.push({ id: p.id + "-closemtm-s", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre short", cash: realizedShort, fee: n(p.closeComision), strike: p.strike, right: "C", qty: qtyLabelOf(p), expiry: p.expiry, note: p.closeNote || "", legs: [
+        mtmEvents.push({ id: p.id + "-closemtm-s", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre short", cash: realizedShort, fee: n(p.closeComision), strike: p.strike, right: "C", qty: qtyLabelOf(p), expiry: p.expiry, note: p.closeNote || "", legs: [
           { side: "V", label: strikeStr(p.strike) + "C" + (p.expiry ? " " + ibkrDate(p.expiry) : ""), perShare: shortLegEntry, cash: shortLegEntry * qty },
           { side: "C", label: strikeStr(p.strike) + "C", perShare: -n(p.closePrice), cash: -n(p.closePrice) * qty },
         ] });
         const realizedLong = (n(p.closeLongPrice) - n(lg.prima)) * qty - n(p.closeLongComision) - n(lg.comision); /* v3.60: fee de apertura de la larga */
-        mtmEvents.push({ id: p.id + "-closemtm-l", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre long", cash: realizedLong, fee: n(p.closeLongComision) + n(lg.comision), strike: lg.strike, right: "C", qty: qtyLabelOf(p), expiry: lg.expiry, note: p.closeNote || "", legs: [
+        mtmEvents.push({ id: p.id + "-closemtm-l", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Cierre long", cash: realizedLong, fee: n(p.closeLongComision) + n(lg.comision), strike: lg.strike, right: "C", qty: qtyLabelOf(p), expiry: lg.expiry, note: p.closeNote || "", legs: [
           { side: "C", label: strikeStr(lg.strike) + "C" + (lg.expiry ? " " + ibkrDate(lg.expiry) : ""), perShare: -n(lg.prima), cash: -n(lg.prima) * qty },
           { side: "V", label: strikeStr(lg.strike) + "C", perShare: n(p.closeLongPrice), cash: n(p.closeLongPrice) * qty },
         ] });
@@ -7122,7 +7144,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       const fee = n(p.closeComision), sgA = signoAcc(p);
       const useFifo = natOf(p) === "ACC" && hasLots(p);
       const net = useFifo ? fifoRealized(p.lots, p.closePrice, 0) * sgA - fee : (n(p.closePrice) - n(effBep(p))) * qty * sgA - fee;
-      mtmEvents.push({ id: p.id + "-closemtm", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: useFifo ? "Cierre FIFO" : "Cierre", cash: net, fee, strike: "", right: "", qty: qtyLabelOf(p), bep: n(effBep(p)), note: p.closeNote || "" });
+      mtmEvents.push({ id: p.id + "-closemtm", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: useFifo ? "Cierre FIFO" : "Cierre", cash: net, fee, strike: "", right: "", qty: qtyLabelOf(p), bep: n(effBep(p)), note: p.closeNote || "" });
     }
     /* ventas por lote (v5.24): cada venta parcial/total de acciones registra su P&L realizado en MTM,
        independientemente de que la posición siga abierta. Realizado = (precio − coste del lote) × qty − fee. */
@@ -7130,7 +7152,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       p.soldLots.forEach((s, idx) => {
         const sfee = n(s.fee);
         const realized = (n(s.price) - n(s.cost)) * n(s.qty) * signoAcc(p) - sfee;
-        mtmEvents.push({ id: p.id + "-sold" + (s.id || idx), posId: p.id, date: s.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta lote", cash: realized, fee: sfee, strike: "", right: "", qty: n(s.qty) + " acc", bep: n(s.cost), note: "Venta " + n(s.qty) + " @ $" + money2(n(s.price)) + " (coste $" + money2(n(s.cost)) + ")" });
+        mtmEvents.push({ id: p.id + "-sold" + (s.id || idx), mov: "sold" + (s.id || idx), posId: p.id, date: s.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta lote", cash: realized, fee: sfee, strike: "", right: "", qty: n(s.qty) + " acc", bep: n(s.cost), note: "Venta " + n(s.qty) + " @ $" + money2(n(s.price)) + " (coste $" + money2(n(s.cost)) + ")" });
       });
     }
     /* dividendos (v5.28): ingreso de acciones/ETF. Va tanto a Primas (cobro) como a MTM (cash realizado).
@@ -7140,14 +7162,23 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       p.dividends.forEach((d, idx) => {
         const dfee = n(d.fee), dret = n(d.ret);
         const cash = signoAcc(p) * n(d.amount) - dret - dfee;   /* v5.13: en corto el dividendo se PAGA */
-        const base = { posId: p.id, date: d.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Dividendo", cash, fee: dfee, strike: "", right: "", qty: "", note: "Dividendo" + (dret ? " · retención $" + money2(dret) : "") + (dfee ? " · comisión $" + money2(dfee) : "") };
+        const base = { mov: "div" + (d.id || idx), posId: p.id, date: d.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Dividendo", cash, fee: dfee, strike: "", right: "", qty: "", note: "Dividendo" + (dret ? " · retención $" + money2(dret) : "") + (dfee ? " · comisión $" + money2(dfee) : "") };
         primaEvents.push({ ...base, id: p.id + "-div" + (d.id || idx) });
         mtmEvents.push({ ...base, id: p.id + "-divmtm" + (d.id || idx) });
       });
     }
   });
 
-  const allEvents = sub === "primas" ? primaEvents : mtmEvents;
+  /* v5.15: los movimientos EXCLUIDOS salen del reparto antes de cualquier suma. Al filtrarlos aquí,
+     mes, año, acumulado, chips de bloque y los totales por posición se recalculan solos — no hay una
+     segunda lista de sitios que acordarse de tocar, que es donde se crían los descuadres. Los excluidos
+     no se tiran: se guardan aparte para poder enseñarlos y devolverlos. */
+  const porPos = {};
+  positions.forEach((p) => { porPos[p.id] = p; });
+  [primaEvents, mtmEvents].forEach((arr) => arr.forEach((e) => { e.omit = !!(e.mov && porPos[e.posId] && omitidoMov(porPos[e.posId], e.mov)); }));
+  const todos = sub === "primas" ? primaEvents : mtmEvents;
+  const omitidos = todos.filter((e) => e.omit && (blockFilter === "all" || e.block === blockFilter)).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const allEvents = todos.filter((e) => !e.omit);
   allEvents.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   /* v3.31: filtro por bloque. `blocksPresent` alimenta las chips (solo los bloques que tienen movimientos
      en la sub-pestaña actual); `events` queda filtrado, así que mes, año y acumulado se recalculan solos
@@ -7232,8 +7263,87 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   }, [positions]);
   const catCount = (c, closed) => (closed && c === "Acciones" ? ventasParciales.length : 0) + positions.filter((p) => categoryOf(p) === c && !!p.closed === closed).length;
 
-  const primaSumOf = (p) => primaEvents.filter((e) => e.posId === p.id).reduce((s, e) => s + e.cash, 0);
-  const mtmSumOf = (p) => mtmEvents.filter((e) => e.posId === p.id).reduce((s, e) => s + e.cash, 0);
+  /* ---------- v5.15: la fila de un movimiento, extraída para poder pintarla también EXCLUIDA ----------
+     Es la misma fila de siempre; en gris cambia el color y tacha el importe, y el botón morado de editar
+     se acompaña del de excluir / volver a contar. Una sola función para las dos listas: si se duplicara,
+     un movimiento excluido acabaría enseñándose distinto que el mismo movimiento contando. */
+  const filaMov = (e, gris) => {
+    const open = expanded.has(e.id);
+    const _pos = positions.find((x) => x.id === e.posId);
+    return (
+      <div key={e.id} onClick={() => toggleExpand(e.id)} style={{ borderTop: `1px solid ${T.line}`, cursor: "pointer", opacity: gris ? 0.62 : 1 }}>
+        {/* alineación (v5.03): las filas de detalle se sangran al interior de las cajas de total
+           (12px izq, importe a 10px del borde dcho) — así fecha/ticker arrancan donde el texto
+           "TOTAL <mes>" y los importes caen en la misma columna que los de las cajas. */}
+        <div style={{ display: "grid", gridTemplateColumns: "64px 1fr 76px 100px", gap: 0, alignItems: "center", padding: "9px 0 9px 12px", fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>{shortDate(e.date)}</span>
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: gris ? T.sub : T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 6 }}>{e.tkr || "—"}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, textAlign: "right", whiteSpace: "nowrap", paddingRight: 8 }}>${money2(e.fee)}</span>
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: gris ? T.sub : e.cash >= 0 ? T.green : T.red, textAlign: "right", whiteSpace: "nowrap", borderLeft: `1.5px solid ${T.line}`, paddingLeft: 8, paddingRight: 10, textDecoration: gris ? "line-through" : "none" }}>{signMoney(e.cash)}</span>
+        </div>
+        {open && (
+          <div style={{ marginBottom: 9, background: T.tile, borderRadius: 10, padding: "9px 11px" }}>
+            <div style={{ fontSize: 12.5, color: T.ink, fontWeight: 700 }}>
+              {(() => { const b = BLOCKS.find((x) => x.id === e.block); return b ? <span style={{ color: b.color, fontWeight: 800 }}>{b.name.replace("Bloque ", "B")}</span> : null; })()}
+              {e.kind === "Roll" ? " · Roll" : e.kind && e.kind !== "Apertura" && e.kind !== "Cierre" ? " · " + e.kind : ""}
+              {e.qty ? " · x " + e.qty : ""}
+              {e.strike !== "" && e.strike != null ? " " + strikeStr(e.strike) + (e.right || "") : ""}
+              {e.expiry ? " " + ibkrDate(e.expiry) : ""}
+            </div>
+            {/* desglose por patas: chip VENTA/COMPRA, strike + expiry, prima $/acc e importe.
+               Disponible en aperturas, rolls y cierres, tanto en Primas como en MTM. */}
+            {Array.isArray(e.legs) && e.legs.length > 0 && (
+              <div style={{ marginTop: 7, borderTop: `1px dashed ${T.line}`, paddingTop: 7 }}>
+                {e.legs.map((l, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      {l.side && (
+                        <span style={{ flexShrink: 0, width: 56, textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: "#fff", background: l.side === "V" ? T.green : T.red, borderRadius: 6, padding: "2px 0" }}>{l.side === "V" ? "VENTA" : "COMPRA"}</span>
+                      )}
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
+                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: l.perShare >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{(l.perShare >= 0 ? "+" : "-") + "$" + money2(Math.abs(l.perShare))}</span>
+                    </span>
+                    <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, color: l.cash >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{signMoney(l.cash)}</span>
+                  </div>
+                ))}
+                {n(e.fee) > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>Comisión</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: T.red, whiteSpace: "nowrap" }}>-${money2(e.fee)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {e.note ? <div style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", marginTop: 5, lineHeight: 1.4 }}>💬 {e.note}</div> : null}
+            {gris && (
+              <div style={{ fontSize: 11.5, color: T.sub, marginTop: 7, lineHeight: 1.45 }}>
+                Este movimiento está <b style={{ color: T.ink }}>excluido</b>: no cuenta ni en Primas ni en MTM. La posición no se ha tocado.
+              </div>
+            )}
+            {e.posId && (() => {
+              const _isDiv = e.kind === "Dividendo";
+              const _stock = _pos && natOf(_pos) === "ACC";
+              const _h = _isDiv ? onEditDiv : _stock ? onEditLots : onEditChain;
+              if (!_h) return null;
+              const _lbl = _isDiv ? "dividendos" : _stock ? "lotes / ventas" : "este movimiento";
+              return <button onClick={(ev) => { ev.stopPropagation(); _h(e.posId); }} style={{ width: "100%", marginTop: 9, background: T.tilePurple, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={14} />Editar {_lbl}</button>;
+            })()}
+            {/* v5.15: excluir del cómputo. No borra nada de la posición — por eso el texto no dice
+               "borrar" a secas: dice exactamente lo que hace, y el camino de vuelta está al lado. */}
+            {e.posId && e.mov && onOmitMov && (
+              <button type="button" onClick={(ev) => { ev.stopPropagation(); onOmitMov(e.posId, e.mov, !gris); }}
+                style={{ width: "100%", marginTop: 7, background: gris ? T.tileGreen : T.tileRed, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: gris ? T.green : T.red, cursor: "pointer" }}>
+                {gris ? "Volver a contar este movimiento" : "No contar este movimiento"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const primaSumOf = (p) => primaEvents.filter((e) => e.posId === p.id && !e.omit).reduce((s, e) => s + e.cash, 0); /* v5.15: los excluidos no suman */
+  const mtmSumOf = (p) => mtmEvents.filter((e) => e.posId === p.id && !e.omit).reduce((s, e) => s + e.cash, 0);
   /* resultado realizado de una posición CERRADA (v5.13) — mismo criterio que la tarjeta de cada operación:
      opciones cortas normales → prima acumulada; Long Call y credit spreads → realizado MTM (neto contra
      apertura); acciones y débitos → MTM. Se usa para el resumen agregado de la pestaña de estrategia. */
@@ -7429,68 +7539,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                   {isFinite(nlv) && nlv > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: T.sub, marginTop: 1 }}>{signPct(monthGroups[key].total / nlv)} NLV</div>}
                 </div>
               </div>
-              {!isCollapsed && monthGroups[key].items.map((e) => {
-                const blk = BLOCKS.find((b) => b.id === e.block);
-                const open = expanded.has(e.id);
-                return (
-                  <div key={e.id} onClick={() => toggleExpand(e.id)} style={{ borderTop: `1px solid ${T.line}`, cursor: "pointer" }}>
-                    {/* alineación (v5.03): las filas de detalle se sangran al interior de las cajas de total
-                       (12px izq, importe a 10px del borde dcho) — así fecha/ticker arrancan donde el texto
-                       "TOTAL <mes>" y los importes caen en la misma columna que los de las cajas. */}
-                    <div style={{ display: "grid", gridTemplateColumns: "64px 1fr 76px 100px", gap: 0, alignItems: "center", padding: "9px 0 9px 12px", fontVariantNumeric: "tabular-nums" }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: T.sub, whiteSpace: "nowrap" }}>{shortDate(e.date)}</span>
-                      <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 6 }}>{e.tkr || "—"}</span>
-                      <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, textAlign: "right", whiteSpace: "nowrap", paddingRight: 8 }}>${money2(e.fee)}</span>
-                      <span style={{ fontSize: 13.5, fontWeight: 800, color: e.cash >= 0 ? T.green : T.red, textAlign: "right", whiteSpace: "nowrap", borderLeft: `1.5px solid ${T.line}`, paddingLeft: 8, paddingRight: 10 }}>{signMoney(e.cash)}</span>
-                    </div>
-                    {open && (
-                      <div style={{ marginBottom: 9, background: T.tile, borderRadius: 10, padding: "9px 11px" }}>
-                        <div style={{ fontSize: 12.5, color: T.ink, fontWeight: 700 }}>
-                          {(() => { const b = BLOCKS.find((x) => x.id === e.block); return b ? <span style={{ color: b.color, fontWeight: 800 }}>{b.name.replace("Bloque ", "B")}</span> : null; })()}
-                          {e.kind === "Roll" ? " · Roll" : e.kind && e.kind !== "Apertura" && e.kind !== "Cierre" ? " · " + e.kind : ""}
-                          {e.qty ? " · x " + e.qty : ""}
-                          {e.strike !== "" && e.strike != null ? " " + strikeStr(e.strike) + (e.right || "") : ""}
-                          {e.expiry ? " " + ibkrDate(e.expiry) : ""}
-                        </div>
-                        {/* desglose por patas: chip VENTA/COMPRA, strike + expiry, prima $/acc e importe.
-                           Disponible en aperturas, rolls y cierres, tanto en Primas como en MTM. */}
-                        {Array.isArray(e.legs) && e.legs.length > 0 && (
-                          <div style={{ marginTop: 7, borderTop: `1px dashed ${T.line}`, paddingTop: 7 }}>
-                            {e.legs.map((l, i) => (
-                              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
-                                <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                                  {l.side && (
-                                    <span style={{ flexShrink: 0, width: 56, textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: "#fff", background: l.side === "V" ? T.green : T.red, borderRadius: 6, padding: "2px 0" }}>{l.side === "V" ? "VENTA" : "COMPRA"}</span>
-                                  )}
-                                  <span style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
-                                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: l.perShare >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{(l.perShare >= 0 ? "+" : "-") + "$" + money2(Math.abs(l.perShare))}</span>
-                                </span>
-                                <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, color: l.cash >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{signMoney(l.cash)}</span>
-                              </div>
-                            ))}
-                            {n(e.fee) > 0 && (
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
-                                <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>Comisión</span>
-                                <span style={{ fontSize: 12, fontWeight: 800, color: T.red, whiteSpace: "nowrap" }}>-${money2(e.fee)}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {e.note ? <div style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", marginTop: 5, lineHeight: 1.4 }}>💬 {e.note}</div> : null}
-                        {e.posId && (() => {
-                          const _pos = positions.find((x) => x.id === e.posId);
-                          const _isDiv = e.kind === "Dividendo";
-                          const _stock = _pos && natOf(_pos) === "ACC";
-                          const _h = _isDiv ? onEditDiv : _stock ? onEditLots : onEditChain;
-                          if (!_h) return null;
-                          const _lbl = _isDiv ? "dividendos" : _stock ? "lotes / ventas" : "este movimiento";
-                          return <button onClick={(ev) => { ev.stopPropagation(); _h(e.posId); }} style={{ width: "100%", marginTop: 9, background: T.tilePurple, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={14} />Editar {_lbl}</button>;
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {!isCollapsed && monthGroups[key].items.map((e) => filaMov(e))}
             </div>
             );
           })}
@@ -7514,6 +7563,29 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 <span style={{ fontSize: 12.5, fontWeight: 800, color: T.sub, textAlign: "right", paddingRight: 8 }}>${money2(grandFees)}</span>
                 <span style={{ fontSize: 15, fontWeight: 800, color: grandTotal >= 0 ? T.green : T.red, textAlign: "right", borderLeft: `1.5px solid ${T.line}`, paddingLeft: 8, paddingRight: 10 }}>{signMoney(grandTotal)}</span>
               </div>
+            </div>
+          )}
+          {/* v5.15 — los EXCLUIDOS, debajo del acumulado y plegados.
+             No desaparecen: un movimiento que se esfuma sin dejar rastro no se distingue de una avería, y
+             el día que los números no cuadren con el bróker no habría dónde mirar. Aquí se ve cuántos hay,
+             cuánto suman (lo que NO está en el total de arriba) y se devuelve cualquiera de un toque. */}
+          {omitidos.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px dashed ${T.line}` }}>
+              <div onClick={() => setVerOmitidos((v) => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, cursor: "pointer", background: T.tile, borderRadius: 10, padding: "9px 11px", boxShadow: T.raiseSm }}>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12, fontWeight: 800, color: T.ink, letterSpacing: 0.3 }}>
+                    {omitidos.length === 1 ? "1 movimiento excluido" : omitidos.length + " movimientos excluidos"}
+                  </span>
+                  <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, color: T.sub, marginTop: 1 }}>
+                    no cuenta{omitidos.length === 1 ? "" : "n"} en el total de arriba
+                  </span>
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: T.sub, fontVariantNumeric: "tabular-nums", textDecoration: "line-through" }}>{signMoney(omitidos.reduce((a, e) => a + e.cash, 0))}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: T.purple }}>{verOmitidos ? "Ocultar" : "Ver"}</span>
+                </span>
+              </div>
+              {verOmitidos && <div style={{ marginTop: 4 }}>{omitidos.map((e) => filaMov(e, true))}</div>}
             </div>
           )}
         </div>
@@ -15582,6 +15654,13 @@ function App() {
     if (closedObj) setSummaryPos(closedObj); /* v2.14: resumen de cierre sin salir del menú actual */
   };
   const reopenPos = (id) => setPositions((ps) => ps.map((p) => (p.id === id ? { ...p, closed: false } : p)));
+  /* v5.15: excluir / volver a contar un movimiento del Histórico. Guarda solo la CLAVE del movimiento en
+     `p.omit`; nada de la posición se reescribe, así que devolverlo es quitar la clave y ya. */
+  const omitMov = (id, mov, fuera) => setPositions((ps) => ps.map((p) => {
+    if (p.id !== id || !mov) return p;
+    const actual = Array.isArray(p.omit) ? p.omit.filter((x) => x !== mov) : [];
+    return { ...p, omit: fuera ? [...actual, mov] : actual };
+  }));
   /* v4.41: volver a comprar una acción ya vendida del todo. NO resucita la operación cerrada —esa se
      queda archivada en el Histórico con su resultado—: abre una posición NUEVA del mismo ticker,
      bloque y broker, sin las ventas ni los dividendos de la anterior, y salta directo al editor de
@@ -16392,7 +16471,7 @@ function App() {
           })()}
           <MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} onPos={setSheetPosId} /></>)}
 
-        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} onRebuy={rebuyStock} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
+        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} onRebuy={rebuyStock} onOmitMov={omitMov} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
         {view === "ajustes" && (
           /* v1.15: ajustes rediseñados — 4 tarjetas de lista agrupada estilo iOS (icono tintado,
