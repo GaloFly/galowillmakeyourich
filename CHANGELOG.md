@@ -1,5 +1,45 @@
 # CHANGELOG — Bloques
 
+Bloques v5.16 — «Eliminar movimiento», con confirmación
+
+## El síntoma
+Victor, sobre la v5.15: *"¿puedes hacer que ponga eliminar movimiento y al darle un confirmar, se
+borrara este movimiento?"*.
+
+El botón decía **«No contar este movimiento»** — literal de lo que hace por dentro, pero no de lo
+que él va a hacer con él: borrar algo que apuntó mal. Y borraba **al primer toque**, sin preguntar.
+
+## El arreglo
+- El botón pasa a decir **«Eliminar movimiento»**.
+- Al pulsarlo **pregunta**: *"¿Eliminar este movimiento? Dejará de contar en Primas y en MTM"*, con
+  **Cancelar** y **Sí, eliminar**. Hasta que no se confirma **no ha pasado nada**: ni se guarda, ni
+  se mueve un total.
+- La confirmación sale **dentro de la propia fila**, no en una ventana aparte. En el iPhone en modo
+  standalone una ventana emergente tapa justo la fila que estás mirando, que es lo que hace falta
+  ver para decidir.
+- Cerrar la fila cancela la pregunta. Si no, al volver a abrirla seguiría preguntando sola.
+- La lista de excluidos pasa a llamarse **Papelera**, y su botón, **«Recuperar este movimiento»**.
+  Recuperar **no** pregunta: devolver algo no destruye nada.
+
+Por debajo sigue siendo la exclusión de la v5.15: el movimiento desaparece de la lista y de los dos
+totales, pero **la posición no se toca**. El roll ocurrió de verdad —su strike y su fecha siguen
+siendo ciertos— y por eso se puede recuperar. Es también la razón de que la papelera exista: un
+movimiento que se esfumara sin dejar rastro no se distinguiría de una avería, y el día que los
+números no cuadren con IBKR no habría dónde mirar.
+
+## La verificación
+En `pruebas/movimiento-excluido.mjs`, lo que de verdad hay que comprobar de un "¿seguro?" no es que
+salga el cartel, sino que **mientras pregunta no haya pasado nada**:
+
+- tras pulsar «Eliminar movimiento»: sale la pregunta, `omit` sigue vacío y el total sigue en $647;
+- **Cancelar** no borra, no mueve el total y retira la pregunta;
+- solo «Sí, eliminar» guarda la clave y baja Primas $298 y MTM $198.
+
+Comprobado que **caza el fallo**: haciendo que el botón borre además de preguntar —un diálogo que
+confirma algo ya hecho, que es peor que no tenerlo— caen 9 comprobaciones.
+
+`npm run prueba` sigue en 18/18; `pmcc-recompra` y `accion-corta`, en verde.
+
 Bloques v5.15 — Excluir un movimiento del Histórico: deja de contar en Primas Y en MTM
 
 ## El síntoma
