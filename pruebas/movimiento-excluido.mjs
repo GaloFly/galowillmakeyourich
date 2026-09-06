@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   EXCLUIR UN MOVIMIENTO DEL HISTÓRICO (v5.15)
+   ELIMINAR UN MOVIMIENTO DEL HISTÓRICO (v5.15 · confirmación en la v5.16)
 
    Victor: *"que en el histórico de movimientos se pueda editar el movimiento para borrarlo y que
    no se cuente ni en MTM ni en primas"*.
@@ -15,7 +15,8 @@
      · un roll excluido baja Primas EXACTAMENTE su importe de Primas ($298) y MTM EXACTAMENTE el
        suyo ($198) — que son distintos a propósito: una sola clave, dos cuentas;
      · los derivadores autónomos dan lo mismo que las listas;
-     · el movimiento no se esfuma: queda listado aparte, en gris y tachado, y vuelve de un toque;
+     · se pide CONFIRMACIÓN, y mientras pregunta no ha pasado nada todavía: Cancelar no borra;
+     · el movimiento no se esfuma de la app: queda en la papelera, en gris y tachado, y vuelve de un toque;
      · la posición NO se toca (el roll sigue en la cadena con su strike y su fecha): lo único que
        se guarda es la clave en `p.omit`, campo nuevo y opcional;
      · y una posición sin `p.omit` se comporta EXACTAMENTE como antes (regla de formato de datos).
@@ -213,8 +214,8 @@ const abrirFila = async (tkr, importe) => {
   return hecho;
 };
 ok(await abrirFila("TMDX", "+$" + PRIMAS_ROLL), "se abre la ficha del roll (+$" + PRIMAS_ROLL + ")");
-const hayBoton = await page.evaluate(() => /No contar este movimiento/.test(document.body.innerText));
-ok(hayBoton, "y dentro está el botón «No contar este movimiento»");
+const hayBoton = await page.evaluate(() => /Eliminar movimiento/.test(document.body.innerText));
+ok(hayBoton, "y dentro está el botón «Eliminar movimiento»");
 
 const pulsar = async (re) => {
   const hecho = await page.evaluate((patron) => {
@@ -227,7 +228,29 @@ const pulsar = async (re) => {
   await page.waitForTimeout(900);
   return hecho;
 };
-ok(await pulsar("No contar este movimiento"), "se pulsa");
+
+/* --- v5.16: PIDE CONFIRMACIÓN, y el botón por sí solo no borra nada --------------------------
+   Lo que de verdad hay que comprobar de un "¿seguro?" no es que salga el cartel, es que MIENTRAS
+   está en pantalla no haya pasado nada todavía, y que Cancelar deje las cosas como estaban. Un
+   diálogo que confirma algo ya hecho es peor que no tenerlo. */
+ok(await pulsar("Eliminar movimiento"), "se pulsa «Eliminar movimiento»");
+const trasPreguntar = await page.evaluate(() => document.body.innerText);
+ok(/¿Eliminar este movimiento\?/.test(trasPreguntar), "y pregunta antes de hacer nada");
+ok(/Primas/.test(trasPreguntar) && /MTM/.test(trasPreguntar), "diciendo dónde dejará de contar");
+ok(/Cancelar/.test(trasPreguntar) && /Sí, eliminar/.test(trasPreguntar), "con las dos salidas");
+const enPregunta = await guardado();
+ok(!((enPregunta.find((x) => x.id === "sp1").omit || []).length), "y de momento NO ha borrado nada");
+ok((await totalAcum()) === PRIMAS_TOTAL, "el total sigue en $" + PRIMAS_TOTAL + " mientras pregunta");
+
+ok(await pulsar("Cancelar"), "se pulsa «Cancelar»");
+const trasCancelar = await guardado();
+ok(!((trasCancelar.find((x) => x.id === "sp1").omit || []).length), "y no se borra nada");
+ok((await totalAcum()) === PRIMAS_TOTAL, "el total tampoco se mueve (sigue en $" + PRIMAS_TOTAL + ")");
+ok(await page.evaluate(() => !/¿Eliminar este movimiento\?/.test(document.body.innerText)), "y la pregunta se retira");
+
+/* ahora sí */
+ok(await pulsar("Eliminar movimiento"), "se vuelve a pulsar «Eliminar movimiento»");
+ok(await pulsar("Sí, eliminar"), "y se confirma");
 
 console.log("\n=== lo que queda guardado: SOLO la clave, la posición intacta ===");
 const g = await guardado();
@@ -253,26 +276,27 @@ console.log("\n=== no se esfuma: se dice cuántos hay y cuánto suman ===");
    `[^\n]*` sobre el texto de la página no la ve nunca y la comprobación pasaría siempre. Se lee
    el textContent de la caja entera, que es donde de verdad están las dos cosas juntas. */
 const aviso = await page.evaluate(() => {
-  const c = Array.from(document.querySelectorAll("div")).filter((e) => /movimientos? excluidos?/.test(e.textContent || ""));
+  const c = Array.from(document.querySelectorAll("div")).filter((e) => /movimientos? eliminados?/.test(e.textContent || ""));
   c.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
   return c.length ? c[0].textContent : "";
 });
 console.log("  " + (aviso || "(no dice nada)"));
-ok(/1 movimiento excluido/.test(aviso), "el aviso dice que hay 1 movimiento excluido");
+ok(/Papelera/.test(aviso) && /1 movimiento eliminado/.test(aviso), "la papelera dice que hay 1 movimiento eliminado");
 ok(aviso.indexOf("$" + MTM_ROLL) >= 0, "y cuánto suma lo que NO está en el total de arriba (" + aviso + ")");
 /* el roll de TMDX es el ÚNICO movimiento de TMDX en MTM: si el listado plegado enseñara al
-   excluido, aquí ya saldría el ticker. Tiene que aparecer SOLO al abrirlo. */
+   eliminado, aquí ya saldría el ticker. Tiene que aparecer SOLO al abrirlo. */
 const tkrPlegado = await page.evaluate(() => /TMDX/.test(document.body.innerText));
 ok(!tkrPlegado, "y plegado no se ve el movimiento");
-ok(await desplegar("movimientos? excluidos?|movimiento excluido"), "se abre la lista");
+ok(await desplegar("movimientos? eliminados?|movimiento eliminado"), "se abre la papelera");
 const tkrAbierto = await page.evaluate(() => /TMDX/.test(document.body.innerText));
-ok(tkrAbierto, "y ahí sí sale el movimiento excluido");
+ok(tkrAbierto, "y ahí sí sale el movimiento eliminado");
 
 console.log("\n=== y vuelve de un toque ===");
-ok(await abrirFila("TMDX", "+$" + MTM_ROLL), "se abre la ficha del excluido");
+ok(await abrirFila("TMDX", "+$" + MTM_ROLL), "se abre la ficha del eliminado");
 const textoFicha = await page.evaluate(() => document.body.innerText);
-ok(/excluido/.test(textoFicha) && /no cuenta ni en Primas ni en MTM/.test(textoFicha), "que explica en qué estado está");
-ok(await pulsar("Volver a contar este movimiento"), "se pulsa «Volver a contar»");
+ok(/eliminado/.test(textoFicha) && /no cuenta ni en Primas ni en MTM/.test(textoFicha), "que explica en qué estado está");
+/* recuperar no pregunta: devolver algo no destruye nada */
+ok(await pulsar("Recuperar este movimiento"), "se pulsa «Recuperar este movimiento»");
 const m2 = await totalAcum();
 await irA("Primas");
 const p2 = await totalAcum();
@@ -281,8 +305,8 @@ ok(m2 === MTM_TOTAL, "MTM vuelve a $" + MTM_TOTAL + " (sale $" + m2 + ")");
 ok(p2 === PRIMAS_TOTAL, "y Primas a $" + PRIMAS_TOTAL + " (sale $" + p2 + ")");
 const g2 = await guardado();
 ok(!((g2.find((x) => x.id === "sp1").omit || []).length), "y la clave desaparece de lo guardado (" + JSON.stringify(g2.find((x) => x.id === "sp1").omit) + ")");
-const noAviso = await page.evaluate(() => /movimientos? excluidos?/.test(document.body.innerText));
-ok(!noAviso, "sin excluidos, el aviso tampoco está");
+const noAviso = await page.evaluate(() => /Papelera/.test(document.body.innerText));
+ok(!noAviso, "y con la papelera vacía, la papelera tampoco se enseña");
 
 await page.screenshot({ path: D + "/movimiento-excluido.png", fullPage: true });
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));

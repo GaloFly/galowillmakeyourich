@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.15"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.16"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -6918,10 +6918,12 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const [filterOpen, setFilterOpen] = useState(false); /* v1.08: modal de filtros */
   const [exportMsg, setExportMsg] = useState(""); /* v1.14: confirmación del export */
   const [expanded, setExpanded] = useState(new Set());
-  const toggleExpand = (id) => setExpanded((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; });
+  /* v5.16: cerrar la fila cancela la confirmación de borrado — si no, al volver a abrirla seguiría preguntando */
+  const toggleExpand = (id) => { setConfirmarId(null); setExpanded((s) => { const x = new Set(s); x.has(id) ? x.delete(id) : x.add(id); return x; }); };
   const [openMonths, setOpenMonths] = useState(new Set());
   const toggleMonth = (key) => setOpenMonths((s) => { const x = new Set(s); x.has(key) ? x.delete(key) : x.add(key); return x; });
-  const [verOmitidos, setVerOmitidos] = useState(false); /* v5.15: la lista de movimientos excluidos, plegada */
+  const [verOmitidos, setVerOmitidos] = useState(false); /* v5.15: la papelera de movimientos eliminados, plegada */
+  const [confirmarId, setConfirmarId] = useState(null); /* v5.16: qué movimiento está pidiendo confirmación para eliminarse */
   const [openYears, setOpenYears] = useState(new Set());
   const toggleYear = (key) => setOpenYears((s) => { const x = new Set(s); x.has(key) ? x.delete(key) : x.add(key); return x; });
 
@@ -7317,7 +7319,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
             {e.note ? <div style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", marginTop: 5, lineHeight: 1.4 }}>💬 {e.note}</div> : null}
             {gris && (
               <div style={{ fontSize: 11.5, color: T.sub, marginTop: 7, lineHeight: 1.45 }}>
-                Este movimiento está <b style={{ color: T.ink }}>excluido</b>: no cuenta ni en Primas ni en MTM. La posición no se ha tocado.
+                Este movimiento está <b style={{ color: T.ink }}>eliminado</b>: no cuenta ni en Primas ni en MTM. La posición no se ha tocado.
               </div>
             )}
             {e.posId && (() => {
@@ -7328,12 +7330,42 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               const _lbl = _isDiv ? "dividendos" : _stock ? "lotes / ventas" : "este movimiento";
               return <button onClick={(ev) => { ev.stopPropagation(); _h(e.posId); }} style={{ width: "100%", marginTop: 9, background: T.tilePurple, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.purple, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><ActIcon name="edit" size={14} />Editar {_lbl}</button>;
             })()}
-            {/* v5.15: excluir del cómputo. No borra nada de la posición — por eso el texto no dice
-               "borrar" a secas: dice exactamente lo que hace, y el camino de vuelta está al lado. */}
-            {e.posId && e.mov && onOmitMov && (
-              <button type="button" onClick={(ev) => { ev.stopPropagation(); onOmitMov(e.posId, e.mov, !gris); }}
-                style={{ width: "100%", marginTop: 7, background: gris ? T.tileGreen : T.tileRed, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: gris ? T.green : T.red, cursor: "pointer" }}>
-                {gris ? "Volver a contar este movimiento" : "No contar este movimiento"}
+            {/* v5.16 (Victor: *"que ponga eliminar movimiento y al darle un confirmar, se borrara
+               este movimiento"*): el botón dice ELIMINAR y pide confirmación antes de hacer nada.
+               La confirmación va aquí dentro, no en una ventana aparte: en el iPhone en modo
+               standalone las ventanas emergentes tapan la fila que estás mirando, y lo que hay que
+               ver para decidir es justo esa fila.
+               Por debajo sigue siendo la exclusión de la v5.15 —la posición no se toca— y por eso
+               la papelera existe: el roll de verdad ocurrió, y su strike y su fecha siguen siendo
+               ciertos aunque su dinero ya no cuente. */}
+            {e.posId && e.mov && onOmitMov && !gris && (
+              confirmarId === e.id ? (
+                <div onClick={(ev) => ev.stopPropagation()} style={{ marginTop: 7, background: T.tileRed, borderRadius: 10, padding: "10px 11px" }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, lineHeight: 1.45 }}>
+                    ¿Eliminar este movimiento? Dejará de contar en <b>Primas</b> y en <b>MTM</b>.
+                  </div>
+                  <div style={{ fontSize: 11, color: T.sub, marginTop: 3, lineHeight: 1.4 }}>
+                    La posición no se toca, y podrás recuperarlo desde la papelera de aquí abajo.
+                  </div>
+                  <div style={{ display: "flex", gap: 7, marginTop: 9 }}>
+                    <button type="button" onClick={() => setConfirmarId(null)}
+                      style={{ flex: 1, background: T.tile, border: "none", borderRadius: 9, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.sub, cursor: "pointer" }}>Cancelar</button>
+                    <button type="button" onClick={() => { setConfirmarId(null); onOmitMov(e.posId, e.mov, true); }}
+                      style={{ flex: 1, background: T.red, border: "none", borderRadius: 9, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: "#fff", cursor: "pointer" }}>Sí, eliminar</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={(ev) => { ev.stopPropagation(); setConfirmarId(e.id); }}
+                  style={{ width: "100%", marginTop: 7, background: T.tileRed, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.red, cursor: "pointer" }}>
+                  Eliminar movimiento
+                </button>
+              )
+            )}
+            {/* recuperar NO pide confirmación: devolver algo no destruye nada */}
+            {e.posId && e.mov && onOmitMov && gris && (
+              <button type="button" onClick={(ev) => { ev.stopPropagation(); onOmitMov(e.posId, e.mov, false); }}
+                style={{ width: "100%", marginTop: 7, background: T.tileGreen, border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: T.green, cursor: "pointer" }}>
+                Recuperar este movimiento
               </button>
             )}
           </div>
@@ -7565,16 +7597,17 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
               </div>
             </div>
           )}
-          {/* v5.15 — los EXCLUIDOS, debajo del acumulado y plegados.
-             No desaparecen: un movimiento que se esfuma sin dejar rastro no se distingue de una avería, y
-             el día que los números no cuadren con el bróker no habría dónde mirar. Aquí se ve cuántos hay,
-             cuánto suman (lo que NO está en el total de arriba) y se devuelve cualquiera de un toque. */}
+          {/* v5.15 — la PAPELERA, debajo del acumulado y plegada.
+             Un movimiento eliminado desaparece de la lista, que es lo que se pide, pero no del mundo: uno
+             que se esfumara sin dejar rastro no se distinguiría de una avería, y el día que los números no
+             cuadren con el bróker no habría dónde mirar. Aquí se ve cuántos hay, cuánto suman (lo que NO
+             está en el total de arriba) y se recupera cualquiera de un toque. */}
           {omitidos.length > 0 && (
             <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px dashed ${T.line}` }}>
               <div onClick={() => setVerOmitidos((v) => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, cursor: "pointer", background: T.tile, borderRadius: 10, padding: "9px 11px", boxShadow: T.raiseSm }}>
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 12, fontWeight: 800, color: T.ink, letterSpacing: 0.3 }}>
-                    {omitidos.length === 1 ? "1 movimiento excluido" : omitidos.length + " movimientos excluidos"}
+                    Papelera · {omitidos.length === 1 ? "1 movimiento eliminado" : omitidos.length + " movimientos eliminados"}
                   </span>
                   <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, color: T.sub, marginTop: 1 }}>
                     no cuenta{omitidos.length === 1 ? "" : "n"} en el total de arriba
