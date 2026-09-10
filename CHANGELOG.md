@@ -1,5 +1,60 @@
 # CHANGELOG — Bloques
 
+Bloques v5.17 — Las hojas de cerrar / rolar / editar salían a media página
+
+## El síntoma
+Victor: *"cuando cierras o editas posiciones la pantalla que sale no está centrada, hay que buscarla
+haciendo scrolling, súper mala experiencia; debería salir centrada y fácil de rellenar"*.
+
+Medido en el iPhone (pantalla de 390×664), y era literal:
+
+- el velo de la hoja —`position: fixed` con `inset: 0`, que por definición debería medir la
+  pantalla— medía **1212 px de alto y empezaba en −7**;
+- la hoja, centrada dentro de ESO, arrancaba a los **623 px** y terminaba en el **1194**: o sea,
+  asomaba por el borde de abajo y sus campos quedaban fuera de la pantalla;
+- y encima, la barra de navegación y el botón **+** se pintaban POR ENCIMA de la hoja.
+
+## La causa
+Una regla de CSS que no perdona: un elemento con `transform` —**aunque sea `translateX(0px)`, que
+no es lo mismo que `none`**— o con `will-change: transform` deja de ser un elemento normal y pasa a
+ser **el marco de referencia de todos sus descendientes `position: fixed`**. Dejan de medirse contra
+la pantalla y se miden contra él. Su z-index también deja de competir con el del resto de la página,
+que es por lo que la barra de abajo se colaba por encima.
+
+El contenedor que permite **deslizar entre bloques** (B0 ⇄ B1 ⇄ …) llevaba las dos cosas puestas
+siempre, quieto o no. Y estas hojas se pintan dentro de la fila de la posición, o sea dentro de él:
+se centraban respecto a la altura de la LISTA, no de la pantalla. Cuanto más larga la lista, más
+abajo salía la hoja — por eso empeoraba justo cuando más posiciones tenía.
+
+Ya había pasado una vez, en las filas deslizables, y se arregló igual (su comentario lo cuenta):
+**transform solo cuando hay desplazamiento de verdad**. Faltaba hacer lo mismo aquí, y añadir
+`will-change`, que crea el mismo marco de referencia y además reserva una capa de GPU para toda la
+lista de forma permanente — algo que en el iPhone solo hace falta durante los 190 ms del gesto.
+
+## El arreglo
+En reposo, el contenedor no lleva ni `transform` ni `will-change`. Al arrastrar, los dos vuelven.
+
+Ocho pantallas arregladas de una vez: cerrar una opción, cerrar una acción, rolar, editar aperturas
+/ rolls / cierre, lotes, dividendos, la hoja de acciones de la posición y el asistente de nueva
+posición.
+
+## La verificación
+`pruebas/hojas-centradas.mjs` (nueva) abre las ocho y no comprueba "que se vea la hoja" —eso pasaba
+también con el fallo— sino las tres medidas que lo delatan:
+
+1. el velo mide **exactamente** la pantalla (390×664, no 362×1831);
+2. la hoja **cabe entera** sin hacer scroll;
+3. y lo que se toca en el centro de la hoja **es la hoja**, no la barra de abajo.
+
+Y la otra mitad, porque quitar el transform del todo también "arreglaría" el centrado mientras rompe
+el gesto en silencio: se despacha un deslizamiento de verdad y se comprueba que **cambia de bloque**,
+que durante el arrastre el transform SÍ está (−250 px) y que al acabar vuelve a quitarse.
+
+Comprobado que la prueba **caza el fallo**: devolviendo el transform permanente caen 8
+comprobaciones, con el velo midiendo 1831 px y la hoja arrancando en el 623.
+
+`npm run prueba` sigue en 18/18; `movimiento-excluido`, `pmcc-recompra` y `accion-corta`, en verde.
+
 Bloques v5.16 — «Eliminar movimiento», con confirmación
 
 ## El síntoma
