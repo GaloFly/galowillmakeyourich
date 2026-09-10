@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.16"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.17"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -16455,7 +16455,23 @@ function App() {
 
         {/* CONTENIDO DE LA PESTAÑA — deslizar lateralmente aquí cambia de pestaña con animación (B0 ⇄ B1 ⇄ …) */}
         <div ref={swipeElRef}
-          style={{ touchAction: "pan-y", transform: `translateX(${slideX}px)`, opacity: slideX === 0 ? 1 : Math.max(0.35, 1 - Math.abs(slideX) / 420), transition: slideAnim ? "transform 0.19s ease-out, opacity 0.19s ease-out" : "none", willChange: "transform" }}>
+          /* v5.17 — POR QUÉ EL `transform` VA CONDICIONADO, Y EL `will-change` TAMBIÉN.
+             Victor: *"cuando cierras o editas posiciones la pantalla que sale no está centrada, hay
+             que buscarla haciendo scroll"*. Medido: el velo de esas hojas es `position: fixed` con
+             `inset: 0`, y aun así medía 1212 px en vez de los 664 del viewport.
+             La causa es una regla de CSS que no perdona: un elemento con `transform` (aunque sea
+             `translateX(0px)`, que NO es lo mismo que `none`) o con `will-change: transform` se
+             convierte en el marco de referencia de todos sus descendientes `position: fixed`. Este
+             div envuelve el contenido de la pestaña, así que las hojas de cerrar / rolar / editar,
+             que se pintan dentro de la fila de la posición, se centraban respecto a la ALTURA DE LA
+             LISTA en vez de respecto a la pantalla: a media página, y con los campos por debajo del
+             borde inferior. De paso su z-index dejaba de contar contra el de la barra de navegación
+             y el botón +, que se pintaban por encima de la hoja.
+             Ya pasó una vez en SwipeRow (ver su comentario) y se arregló igual: transform SOLO si
+             hay desplazamiento de verdad. `will-change` va con él porque crea el mismo marco —y
+             además reservar una capa de GPU para toda la lista, permanentemente, sale caro en el
+             iPhone y solo hace falta durante los 190 ms del deslizamiento. */
+          style={{ touchAction: "pan-y", transform: slideX === 0 ? "none" : `translateX(${slideX}px)`, opacity: slideX === 0 ? 1 : Math.max(0.35, 1 - Math.abs(slideX) / 420), transition: slideAnim ? "transform 0.19s ease-out, opacity 0.19s ease-out" : "none", willChange: slideX === 0 ? "auto" : "transform" }}>
         {activeTab === "resumen" ? (
           <>
             <BlockDistribution nlv={nlv} blockTotals={blockTotals} onGoBlock={selectTab} privado={privado} />
