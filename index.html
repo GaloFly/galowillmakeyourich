@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.17"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.18"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -7269,6 +7269,69 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
      Es la misma fila de siempre; en gris cambia el color y tacha el importe, y el botón morado de editar
      se acompaña del de excluir / volver a contar. Una sola función para las dos listas: si se duplicara,
      un movimiento excluido acabaría enseñándose distinto que el mismo movimiento contando. */
+  /* ---------- v5.18: el cuadro de rendimiento dentro de un movimiento de MTM ----------
+     Victor: *"en MTM, cuando pulses cada movimiento, que te aparezca el cuadro del rendimiento que te
+     ha generado; como un híbrido entre el histórico y lo que ya sale — las notas, pero también el
+     cuadro de lo que ha generado"*.
+     Un movimiento por sí solo no tiene rentabilidad: un roll de +$198 no es "un +198%" de nada. Lo que
+     sí tiene rendimiento es LA OPERACIÓN a la que pertenece, y eso es lo que se enseña — con ese
+     rótulo encima, en letra clara, para que no se lea como si fuera del movimiento que acabas de
+     abrir. Los números salen de `rendimientoDePos`, los mismos exactos que el Histórico.
+     Va solo en MTM, que es donde él lo pidió: en Primas la columna mide otra cosa (cash cobrado, no
+     resultado), y meter ahí un ROI realizado invitaría a sumar peras con manzanas. */
+  const cuadroRendimiento = (p) => {
+    const R = rendimientoDePos(p);
+    const stock = !R.isOpt;
+    const cerrada = !!p.closed;
+    const grande = stock ? (cerrada ? R.result : effPnl(p)) : (R.csPending ? R.csCredit : R.primaBasis);
+    const pctGrande = stock ? R.stockAnnRoi : R.romAnn;
+    const etiqIzq = stock
+      ? (cerrada ? "P&L realizado" : "P&L unrealised")
+      : (R.csPending ? (R.csCredit >= 0 ? "Crédito" : "Débito") + " pendiente" : R.noOpenBooked ? (cerrada ? "P&L realizado" : "Prima acumulada") : "Prima acumulada");
+    return (
+      <div style={{ marginTop: 9, background: T.card, borderRadius: 14, padding: "11px 12px", border: T.edge }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>La operación entera</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{p.tkr || "—"}</span>
+          {p.tipo && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 6, padding: "2px 5px" }}>{tipoChipLabel(p)}</span>}
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: T.sub }}>{ibkrDate(p.entryDate)}{cerrada ? " → " + ibkrDate(p.closeDate) : " · abierta"}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginTop: 9 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 21, fontWeight: 800, color: grande >= 0 ? T.green : T.red, letterSpacing: -0.4 }}>{signMoney(grande)}</div>
+            <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 500 }}>{etiqIzq}</div>
+          </div>
+          {isFinite(pctGrande) && (
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontSize: 21, fontWeight: 800, color: pctGrande >= 0 ? T.green : T.red, letterSpacing: -0.4 }}>{fmtPct2(pctGrande)}</div>
+              <div style={{ fontSize: 10.5, color: T.sub, fontWeight: 500 }}>Annualized ROI{cerrada ? "" : stock ? " (DIT)" : R.csPending ? " (DTE)" : " (previsto)"}</div>
+            </div>
+          )}
+        </div>
+        {stock && (
+          <div style={{ background: T.tile, borderRadius: 12, padding: "9px 10px", display: "flex", justifyContent: "space-around", gap: 10, marginTop: 9 }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: T.sub, fontWeight: 600 }}>Precio compra (BEP)</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>${money2(effBep(p))}</div>
+            </div>
+            {cerrada && (
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: T.sub, fontWeight: 600 }}>Precio venta</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>${money2(n(p.closePrice))}</div>
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginTop: 8 }}>
+          {stock
+            ? <Tile label={cerrada ? "ROI" : "ROI unrealised"} value={fmtPct2(R.stockRoi)} tone={isFinite(R.stockRoi) && R.stockRoi >= 0 ? "green" : "red"} />
+            : <Tile label={R.csPending ? "ROI potencial" : isCreditSpread(p) ? "ROI (P&L/riesgo)" : "ROI (prima/riesgo)"} value={fmtPct2(R.rom)} tone={isFinite(R.rom) && R.rom >= 0 ? "green" : "red"} />}
+          <Tile label="DIT" value={isFinite(R.dit) ? R.dit + "d" : "\u2014"} />
+        </div>
+      </div>
+    );
+  };
+
   const filaMov = (e, gris) => {
     const open = expanded.has(e.id);
     const _pos = positions.find((x) => x.id === e.posId);
@@ -7322,6 +7385,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 Este movimiento está <b style={{ color: T.ink }}>eliminado</b>: no cuenta ni en Primas ni en MTM. La posición no se ha tocado.
               </div>
             )}
+            {/* v5.18: el rendimiento de la operación, solo en MTM y solo si el movimiento pertenece a
+               una posición de verdad (las ventas parciales derivadas no la tienen). */}
+            {sub === "mtm" && _pos && cuadroRendimiento(_pos)}
             {e.posId && (() => {
               const _isDiv = e.kind === "Dividendo";
               const _stock = _pos && natOf(_pos) === "ACC";
@@ -7390,6 +7456,64 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
      credit spreads abiertos no registran nada hasta el cierre (por diseño), así que su abierto es 0. */
   const openResultOf = (p) => (isOptionNat(p) ? primaSumOf(p) : mtmSumOf(p));
   const stratResultOf = (p) => (p.closed ? closedResultOf(p) : openResultOf(p));
+
+  /* ---------- v5.18: EL RENDIMIENTO DE UNA POSICIÓN, CALCULADO EN UN SOLO SITIO ----------
+     Victor pidió que al abrir un movimiento en MTM salga "el cuadro del rendimiento que ha generado",
+     el mismo que ya se ve en el Histórico. Lo fácil sería copiar las fórmulas al otro sitio; lo que
+     pasa cuando se copian es que un día una se corrige y la otra no, y entonces la MISMA operación
+     enseña dos rentabilidades distintas en dos pantallas — sin que nadie sepa cuál es la buena.
+     Así que se calcula aquí, una vez, y lo usan las dos. Los comentarios de cada criterio (por qué el
+     riesgo de una corta es el BEP ORIGINAL, por qué una abierta se anualiza sobre el DTE y una cerrada
+     sobre el DIT) siguen donde siempre estuvieron, pegados a su línea. */
+  const rendimientoDePos = (p) => {
+    const isOpt = isOptionNat(p);
+    const primaSum = primaSumOf(p);
+    /* Long Call y credit spreads (Iron Condor, Broken Wings) no registran su pata de apertura en
+       Primas (por diseño: no reflejan nada hasta el cierre). Una vez cerradas, "primaSum" solo
+       contendría el cash de esa única pata de cierre (venta o recompra), sin netear contra el coste/
+       crédito de apertura — daría un profit engañoso. Para esos casos, una vez cerrada, se usa el
+       resultado realizado (MTM), que sí neta correctamente contra la apertura original. */
+    const noOpenBooked = isLongCallPos(p) || isCreditSpread(p);
+    const primaBasis = noOpenBooked && p.closed ? mtmSumOf(p) : primaSum;
+    /* credit spread ABIERTO: no hay nada registrado (por diseño), pero sí se puede mostrar el
+       crédito pendiente (prima × qty − comisión) y su ROI potencial sobre el riesgo introducido.
+       Al cerrar, pasa a medirse el realizado: P&L (neto prima − recompra) / riesgo. */
+    const csPending = isCreditSpread(p) && !p.closed;
+    const csCredit = isCreditSpread(p) ? vDisplayPrima(p) * n(p.qty) - n(p.comision) : NaN;
+    const romNumer = csPending ? csCredit : primaBasis;
+    /* v4.42: una venta parcial no tiene eventos MTM propios (no es una posición guardada);
+       su realizado viaja en el propio objeto derivado. */
+    const result = p._venta ? p._venta.realizado : (isOpt ? primaBasis : mtmSumOf(p));
+    /* riesgo de la estrategia para el histórico: en opciones cortas siempre BEP × acciones (contratos ×100),
+       aunque en cartera compute 0 por estar cubierta — aquí interesa el capital que respaldó la operación.
+       v5.15: el BEP de referencia es el ORIGINAL de apertura (strike original − prima de apertura), no el
+       vigente tras los rolls. Así la rentabilidad de un put rolado se mide contra el capital que
+       comprometiste al abrir, no contra el strike al que lo hayas movido. */
+    const origBep = n(openingStrike(p)) - n(openingPrimaPerShare(p));
+    const riesgo = isOpt && natOf(p) === "CRED" ? (isPMCC(p) ? riesgoTotalOf(p) : Math.abs(origBep * n(p.qty))) : capDesplegado(p);
+    const rom = isOpt && riesgo ? romNumer / riesgo : NaN;
+    const dte = isOpt ? daysBetween(p.entryDate, p.expiry) : NaN;
+    const dit = daysBetween(p.entryDate, p.closed ? p.closeDate : todayIso);
+    /* anualizado del ROI (prima/riesgo): mientras está abierta se proyecta sobre el periodo total
+       previsto de la operación — de la apertura original al vencimiento vigente (el mismo dte de
+       arriba, que ya incorpora los rolls: si se rolo, el vencimiento es el nuevo pero la apertura
+       sigue siendo la primera). Al cerrarse, se usa el DIT real (apertura → cierre). Los credit
+       spreads (Iron Condor, Broken Wings) no rolan y no reflejan prima hasta el cierre: cerrados se
+       anualizan con el DIT real; ABIERTOS se proyecta el ROI potencial sobre el DTE (v5.00 — antes
+       usaban DIT y el día de apertura, con DIT=0, el anualizado salía "—"). */
+    const annPeriod = p.closed ? dit : dte;
+    const romAnn = isFinite(rom) && isFinite(annPeriod) && annPeriod > 0 ? rom * (365 / annPeriod) : NaN;
+    /* ROI de acciones: P&L / capital invertido (BEP × qty). Cerradas usan el P&L realizado; abiertas,
+       el unrealised. Anualizado con el DIT real (rentabilidad × 365/DIT), mismo criterio en ambos casos.
+       En abiertas el DIT es apertura→hoy, así que el anualizado extrapola el periodo mantenido hasta ahora. */
+    const stockBasis = Math.abs(n(effBep(p)) * n(p.qty));
+    const stockPnl = !isOpt ? (p.closed ? result : effPnl(p)) : NaN;
+    const stockRoi = !isOpt && stockBasis ? stockPnl / stockBasis : NaN;
+    const stockAnnRoi = isFinite(stockRoi) && isFinite(dit) && dit > 0 ? stockRoi * (365 / dit) : NaN;
+    return { isOpt, primaSum, noOpenBooked, primaBasis, csPending, csCredit, romNumer, result,
+      riesgo, rom, dte, dit, romAnn, stockBasis, stockPnl, stockRoi, stockAnnRoi };
+  };
+  const fmtPct2 = (v) => (isFinite(v) ? (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%" : "\u2014");
   /* v1.02: listado de la estrategia activa con orden seleccionable — fecha (cierre/apertura, reciente
      primero, el comportamiento histórico), ticker (alfabético, empate por fecha) o profit (mayor primero;
      cerradas usan el realizado y abiertas la prima acumulada hasta ahora). */
@@ -8279,55 +8403,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
 
           {stratItems.map((p) => {
             const blk = BLOCKS.find((b) => b.id === p.block);
-            const isOpt = isOptionNat(p);
-            const primaSum = primaSumOf(p);
-            /* Long Call y credit spreads (Iron Condor, Broken Wings) no registran su pata de apertura en
-               Primas (por diseño: no reflejan nada hasta el cierre). Una vez cerradas, "primaSum" solo
-               contendría el cash de esa única pata de cierre (venta o recompra), sin netear contra el coste/
-               crédito de apertura — daría un profit engañoso. Para esos casos, una vez cerrada, se usa el
-               resultado realizado (MTM), que sí neta correctamente contra la apertura original. */
-            /* noOpenBooked: estrategias cuyo débito de apertura NO se registró en Primas y cuyo cierre NO
-               materializa el neto completo (Long Call, credit spreads) → cerradas usan el realizado MTM.
-               El PMCC NO está aquí: su cierre combinado (venta long − coste long − recompra short) hace que
-               la suma de Primas (crédito apertura + rolls + cierre) sea exactamente el profit total. */
-            const noOpenBooked = isLongCallPos(p) || isCreditSpread(p);
-            const primaBasis = noOpenBooked && p.closed ? mtmSumOf(p) : primaSum;
-            /* credit spread ABIERTO: no hay nada registrado (por diseño), pero sí se puede mostrar el
-               crédito pendiente (prima × qty − comisión) y su ROI potencial sobre el riesgo introducido.
-               Al cerrar, pasa a medirse el realizado: P&L (neto prima − recompra) / riesgo. */
-            const csPending = isCreditSpread(p) && !p.closed;
-            const csCredit = isCreditSpread(p) ? vDisplayPrima(p) * n(p.qty) - n(p.comision) : NaN;
-            const romNumer = csPending ? csCredit : primaBasis;
-            /* v4.42: una venta parcial no tiene eventos MTM propios (no es una posición guardada);
-               su realizado viaja en el propio objeto derivado. */
-            const result = p._venta ? p._venta.realizado : (isOpt ? primaBasis : mtmSumOf(p));
-            /* riesgo de la estrategia para el histórico: en opciones cortas siempre BEP × acciones (contratos ×100),
-               aunque en cartera compute 0 por estar cubierta — aquí interesa el capital que respaldó la operación.
-               v5.15: el BEP de referencia es el ORIGINAL de apertura (strike original − prima de apertura), no el
-               vigente tras los rolls. Así la rentabilidad de un put rolado se mide contra el capital que
-               comprometiste al abrir, no contra el strike al que lo hayas movido. */
-            const origBep = n(openingStrike(p)) - n(openingPrimaPerShare(p));
-            const riesgo = isOpt && natOf(p) === "CRED" ? (isPMCC(p) ? riesgoTotalOf(p) : Math.abs(origBep * n(p.qty))) : capDesplegado(p);
-            const rom = isOpt && riesgo ? romNumer / riesgo : NaN;
-            const dte = isOpt ? daysBetween(p.entryDate, p.expiry) : NaN;
-            const dit = daysBetween(p.entryDate, p.closed ? p.closeDate : todayIso);
-            /* anualizado del ROI (prima/riesgo): mientras está abierta se proyecta sobre el periodo total
-               previsto de la operación — de la apertura original al vencimiento vigente (el mismo dte de
-               arriba, que ya incorpora los rolls: si se rolo, el vencimiento es el nuevo pero la apertura
-               sigue siendo la primera). Al cerrarse, se usa el DIT real (apertura → cierre). Los credit
-               spreads (Iron Condor, Broken Wings) no rolan y no reflejan prima hasta el cierre: cerrados se
-               anualizan con el DIT real; ABIERTOS se proyecta el ROI potencial sobre el DTE (v5.00 — antes
-               usaban DIT y el día de apertura, con DIT=0, el anualizado salía "—"). */
-            const annPeriod = p.closed ? dit : dte;
-            const romAnn = isFinite(rom) && isFinite(annPeriod) && annPeriod > 0 ? rom * (365 / annPeriod) : NaN;
-            /* ROI de acciones: P&L / capital invertido (BEP × qty). Cerradas usan el P&L realizado; abiertas,
-               el unrealised. Anualizado con el DIT real (rentabilidad × 365/DIT), mismo criterio en ambos casos.
-               En abiertas el DIT es apertura→hoy, así que el anualizado extrapola el periodo mantenido hasta ahora. */
-            const stockBasis = Math.abs(n(effBep(p)) * n(p.qty));
-            const stockPnl = !isOpt ? (p.closed ? result : effPnl(p)) : NaN;
-            const stockRoi = !isOpt && stockBasis ? stockPnl / stockBasis : NaN;
-            const stockAnnRoi = isFinite(stockRoi) && isFinite(dit) && dit > 0 ? stockRoi * (365 / dit) : NaN;
-            const fmtPct2 = (v) => (isFinite(v) ? (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%" : "\u2014");
+            /* v5.18: las fórmulas viven en rendimientoDePos(), compartidas con el cuadro que ahora
+               sale al abrir un movimiento en MTM. Aquí solo se sacan del sobre. */
+            const { isOpt, primaSum, noOpenBooked, primaBasis, csPending, csCredit, romNumer, result,
+              riesgo, rom, dte, dit, romAnn, stockBasis, stockPnl, stockRoi, stockAnnRoi } = rendimientoDePos(p);
             const contratos = n(p.qty) / 100;
             const qtyLabel = isOpt ? (Number.isInteger(contratos) ? contratos + " contr." : n(p.qty) + " opc") : n(p.qty) + " acc";
             /* v1.88: acción (ACC) con último precio del último 🔄 Precios — para pintar "último × acc" a la
@@ -15315,7 +15394,7 @@ function App() {
       irAlBloqueDe(sheetPos);
       if (view !== "bloques") selectView("bloques");
     }
-    if (action === "reopen") { reopenPos(sheetPos.id); }
+    if (action === "reopen") { pedirReabrir(sheetPos.id); }
     setSheetPosId(null);
   };
   const [wizOpen, setWizOpen] = useState(false);
@@ -15687,6 +15766,17 @@ function App() {
     if (closedObj) setSummaryPos(closedObj); /* v2.14: resumen de cierre sin salir del menú actual */
   };
   const reopenPos = (id) => setPositions((ps) => ps.map((p) => (p.id === id ? { ...p, closed: false } : p)));
+  /* v5.18 — REABRIR PIDE CONFIRMACIÓN, y se pide en UN solo sitio.
+     Victor: *"el botón de reabrir, que cuando le des te pida confirmación, para que no le des sin
+     querer, porque si no es un poco complicado volver a hacerlo"*. Y es verdad: reabrir deshace el
+     cierre, la operación sale del Histórico y deja de contar como cerrada; para dejarla como estaba
+     hay que volver a cerrarla a mano con su fecha, su precio y su comisión.
+     El botón está en TRES sitios (la fila de la posición, la ficha del Histórico y la hoja de
+     acciones). En vez de tres avisos que se irían separando con el tiempo, lo que se pasa a esos
+     tres sitios es `pedirReabrir`: apunta QUÉ posición y deja que la pregunta la haga una sola
+     ventana. `reopenPos` sigue siendo la que reabre de verdad, y solo la llama esa ventana. */
+  const [reabrirId, setReabrirId] = useState(null);
+  const pedirReabrir = (id) => setReabrirId(id);
   /* v5.15: excluir / volver a contar un movimiento del Histórico. Guarda solo la CLAVE del movimiento en
      `p.omit`; nada de la posición se reescribe, así que devolverlo es quitar la clave y ya. */
   const omitMov = (id, mov, fuera) => setPositions((ps) => ps.map((p) => {
@@ -16479,7 +16569,7 @@ function App() {
           </>
         ) : isBlockTab ? (
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
-            editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={reopenPos} legOp={legOp}
+            editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={pedirReabrir} legOp={legOp}
             onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
         ) : activeTab === "aportaciones" ? (
           <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} accounts={accounts} />
@@ -16520,7 +16610,7 @@ function App() {
           })()}
           <MacroCalCard /><VencimientosCard rows={vencimientosRows} onOpen={setInfo} onPos={setSheetPosId} /></>)}
 
-        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={reopenPos} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} onRebuy={rebuyStock} onOmitMov={omitMov} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
+        {view === "movimientos" && <MovimientosView positions={filtered} nlv={nlv} reopenPos={pedirReabrir} onEditChain={setEditChainId} onEditLots={setEditLotsId} onEditDiv={setEditDivId} onRebuy={rebuyStock} onOmitMov={omitMov} snapshots={snapshots} flows={flows} saveSnapshot={saveSnapshot} deleteSnapshot={deleteSnapshot} />}
 
         {view === "ajustes" && (
           /* v1.15: ajustes rediseñados — 4 tarjetas de lista agrupada estilo iOS (icono tintado,
@@ -16900,6 +16990,32 @@ function App() {
 
       {/* EDITOR DE DIVIDENDOS */}
       {editDivPos && <DividendsEditor p={editDivPos} onSave={savePositionEdit} onClose={() => setEditDivId(null)} />}
+      {/* v5.18: la pregunta de reabrir. Dice lo que va a pasar Y lo que va a costar deshacerlo, que es
+         el motivo de que la pregunta exista. zIndex por encima de las hojas (60) porque puede llegar
+         desde la hoja de acciones. */}
+      {(() => {
+        const pr = reabrirId ? positions.find((x) => x.id === reabrirId) : null;
+        if (!pr) return null;
+        return (
+          <div onClick={() => setReabrirId(null)} style={{ position: "fixed", inset: 0, background: T.veil, backdropFilter: T.veilBlur, WebkitBackdropFilter: T.veilBlur, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "calc(14px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom))" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 20px", width: "100%", maxWidth: 460, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, display: "flex", alignItems: "center", gap: 8 }}><ActIcon name="reopen" size={19} />¿Reabrir {pr.tkr || "la posición"}?</div>
+              <div style={{ fontSize: 12.5, color: T.sub, fontWeight: 600, marginTop: 8, lineHeight: 1.5 }}>
+                Deshace el cierre{pr.closeDate ? " del " + ibkrDate(pr.closeDate) : ""} y vuelve a estar <b style={{ color: T.ink }}>activa</b>: sale del Histórico y su resultado deja de contar como cerrado.
+              </div>
+              <div style={{ fontSize: 11.5, color: T.sub, marginTop: 7, lineHeight: 1.45 }}>
+                Para dejarla como está ahora tendrías que <b style={{ color: T.ink }}>volver a cerrarla a mano</b>, con su fecha, su precio y su comisión.
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button type="button" onClick={() => setReabrirId(null)}
+                  style={{ flex: 1, background: T.tile, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: T.sub, cursor: "pointer" }}>Cancelar</button>
+                <button type="button" onClick={() => { const id = reabrirId; setReabrirId(null); reopenPos(id); }}
+                  style={{ flex: 1, background: T.purple, border: "none", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 800, color: "#fff", cursor: "pointer" }}>Sí, reabrir</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* v2.14: TARJETA-RESUMEN al cerrar una posición (ROI/ROI anualizado/DIT), sin ir a Histórico */}
       {summaryPos && <PosSummaryCard p={summaryPos} onClose={() => setSummaryPos(null)} />}

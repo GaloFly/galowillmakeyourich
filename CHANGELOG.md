@@ -1,5 +1,69 @@
 # CHANGELOG — Bloques
 
+Bloques v5.18 — Reabrir pregunta antes · y el rendimiento dentro de cada movimiento de MTM
+
+## 1. Reabrir pide confirmación
+
+Victor: *"el botón de reabrir, que cuando le des te pida confirmación, para que no le des sin querer,
+porque si no es un poco complicado volver a hacerlo"*.
+
+Tiene razón en lo de "complicado": reabrir deshace el cierre, la operación **sale del Histórico** y
+su resultado deja de contar como cerrado. Para dejarla como estaba hay que volver a cerrarla a mano
+con su fecha, su precio y su comisión. Y hasta ahora eso pasaba **al primer toque**.
+
+Ahora pregunta: *"¿Reabrir IDT? Deshace el cierre del SEP 10 '26 y vuelve a estar activa: sale del
+Histórico y su resultado deja de contar como cerrado"*, y debajo lo que costaría deshacerlo, que es
+el motivo de que la pregunta exista. Hasta confirmar **no ha pasado nada**.
+
+El botón está en **tres** sitios (la fila de la posición, la ficha del Histórico y la hoja de
+acciones). En vez de tres avisos que con el tiempo se irían separando, los tres llaman ahora a
+`pedirReabrir`, que solo apunta QUÉ posición; la pregunta la hace **una sola ventana**.
+
+## 2. El rendimiento, dentro del movimiento de MTM
+
+Victor: *"en MTM, cuando pulses cada movimiento, que te aparezca el cuadro del rendimiento que te ha
+generado; como un híbrido entre el histórico y lo que ya sale — las notas, pero también el cuadro de
+lo que ha generado"*.
+
+Al abrir un movimiento en **MTM** sale ahora, debajo de las notas y las patas, el mismo cuadro que en
+el Histórico: P&L realizado, Annualized ROI, precio de compra (BEP), precio de venta, ROI y DIT. En
+opciones, su variante: prima acumulada y ROI sobre el riesgo de apertura.
+
+Dos decisiones de fondo:
+
+- **Va rotulado como «LA OPERACIÓN ENTERA».** Un movimiento suelto no tiene rentabilidad: un roll de
+  +$198 no es "un +198%" de nada. Lo que tiene rendimiento es la operación a la que pertenece, y eso
+  es lo que se enseña — con el rótulo encima para que no se lea como si fuera del movimiento que
+  acabas de abrir.
+- **Solo en MTM**, que es donde él lo pidió. En Primas la columna mide otra cosa (cash cobrado, no
+  resultado) y meter ahí un ROI realizado invitaría a sumar peras con manzanas.
+
+Y por debajo, lo importante: **las fórmulas se han movido a un solo sitio** (`rendimientoDePos`), que
+usan las dos pantallas. Copiarlas al cuadro nuevo habría sido más rápido, y el día que una se
+corrigiera y la otra no, la MISMA operación enseñaría dos rentabilidades distintas en dos pantallas
+sin que nadie supiera cuál es la buena.
+
+## La verificación
+`pruebas/rendimiento-en-mtm.mjs` (nueva), con el IDT de su captura (333 acciones a $45,73 vendidas a
+$69,20 tras casi cinco años):
+
+- las **seis cifras** del cuadro de MTM y las del Histórico son idénticas, comparadas una a una;
+- y además **cuadran con la cuenta hecha a mano**: P&L (69,20 − 45,73) × 333 = $7.815,51 → +$7.816 ·
+  ROI 7.815,51 / 15.228,09 = 51,32 % · DIT 1.815 días · anualizado 51,32 % × 365/1.815 = 10,32 %;
+- en Primas el cuadro **no** aparece, y el movimiento se abre como siempre;
+- en la opción el cuadro es el suyo (prima acumulada +$597 = 299 de apertura + 298 del roll, ROI
+  sobre el riesgo de apertura 8,91 %) y no se le inventa un precio de venta;
+- reabrir: mientras pregunta la posición **sigue cerrada**, Cancelar la deja cerrada, y solo
+  «Sí, reabrir» la reabre.
+
+Comprobado que caza los dos fallos: haciendo que «Reabrir» reabra además de preguntar caen 4
+comprobaciones. Y una nota sobre la segunda: con solo comparar MTM contra el Histórico, cambiar el
+365 del anualizado por 360 **pasaba en verde** —las dos pantallas comparten función, así que las dos
+cambiaban a la vez—. Por eso están también las cuentas a mano; con ellas, ese cambio sale en rojo.
+
+`npm run prueba` sigue en 18/18, lo que confirma que mover las fórmulas a un solo sitio no ha movido
+un céntimo. `hojas-centradas`, `movimiento-excluido`, `pmcc-recompra` y `accion-corta`, en verde.
+
 Bloques v5.17 — Las hojas de cerrar / rolar / editar salían a media página
 
 ## El síntoma
