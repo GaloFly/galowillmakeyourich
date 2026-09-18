@@ -216,6 +216,52 @@ console.log("  " + (v.cobertura || "(no dice nada)"));
 ok(/3 opciones con precio real|Tus 3 opciones/.test(v.cobertura), "la cabecera dice a cuántas opciones cubre");
 
 /* ---------------------------------------------------------------------------
+   2b. v5.21 — DECIR CUÁLES FALTAN, NO SOLO CUÁNTAS.
+   Victor, tras la v5.20: *"sigue igual"*. Y no era verdad del todo — el MKT VL había subido 2.218 y
+   el aviso ya decía "6 de tus 11 opciones con precio real · 5 sin precio todavía". Pero con un "5"
+   no se puede hacer nada: no sabes dónde mirar. Y los dos motivos posibles se arreglan de forma
+   distinta: a unas les falta pulsar 🔄 Precios, y a otras les falta un DATO (a un PMCC sin el
+   vencimiento de su pata larga la app no sabe qué contrato pedir, por muchas veces que pulses).
+--------------------------------------------------------------------------- */
+console.log("\n=== y dice CUÁLES faltan, separando los dos motivos ===");
+const POS2 = [
+  POS[0], POS[1],                                   /* NVDA acción · ORCL con precio */
+  { ...POS[2], id: "ibit2", optMarks: {} },         /* IBIT: describible, pero sin precio → 🔄 Precios */
+  { id: "pmcc", tkr: "ASTS", block: 2, tipo: "PMCC", nat: "CRED", right: "C", qty: "100", strike: "70",
+    expiry: "2027-01-21", prima: "8", long: { strike: "60" }, entryDate: "2026-06-01", broker: "IBKR" },
+];  /* al PMCC le falta el VENCIMIENTO de la pata larga: no hay contrato que pedir */
+const ctx3 = await browser.newContext({ ...devices["iPhone 13"], screen: { width: 390, height: 844 }, serviceWorkers: "block" });
+await ctx3.route(/finnhub\.io/, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ c: 130, dp: 0, pc: 130, h: 130 }) }));
+await ctx3.route(/puente\.alphavext\.com/, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }));
+const p3 = await ctx3.newPage();
+await p3.addInitScript(({ pos, cash, margin }) => {
+  localStorage.setItem("bloques_pos_v5", JSON.stringify(pos));
+  localStorage.setItem("bloques_acc_v5", JSON.stringify({ IBKR: { cash: String(cash), margin: String(margin) } }));
+  localStorage.setItem("bloques_dark_override", "dark");
+  localStorage.setItem("bloques_view_v1", "portfolio");
+  localStorage.setItem("bloques_puente_v1", JSON.stringify({ url: "https://puente.alphavext.com", token: "clave" }));
+}, { pos: POS2, cash: CASH, margin: MARGIN });
+await p3.goto(URL_APP, { waitUntil: "load" });
+await p3.waitForTimeout(2600);
+await p3.evaluate(() => { const b = Array.from(document.querySelectorAll("button, div")).find((e) => (e.textContent || "").trim() === "Todo OK"); if (b) b.click(); });
+await p3.waitForTimeout(600);
+const aviso = await p3.evaluate(() => {
+  const t = document.body.innerText;
+  return { cab: (t.match(/[^\n]*opciones con precio real[^\n]*/) || [""])[0],
+    falta: (t.match(/Sin precio todavía:[^\n]*/) || [""])[0],
+    roto: (t.match(/A [^\n]*no se le puede pedir precio[^\n]*/) || [""])[0] };
+});
+console.log("  " + aviso.cab);
+console.log("  " + aviso.falta);
+console.log("  " + aviso.roto.slice(0, 150));
+ok(/1 de tus 3 opciones/.test(aviso.cab), "la cabecera cuenta bien: 1 de 3 (sale: " + aviso.cab + ")");
+ok(/IBIT/.test(aviso.falta) && /Precios/.test(aviso.falta), "NOMBRA la que solo necesita un refresco, y dice qué pulsar");
+ok(/ASTS/.test(aviso.roto), "y NOMBRA la que no se puede pedir por falta de datos");
+ok(!/ASTS/.test(aviso.falta), "sin mezclarlas: al PMCC roto no se le arregla pulsando 🔄 Precios");
+ok(/vencimiento|strike|prima/i.test(aviso.roto), "y dice QUÉ dato falta, para poder ir a completarlo");
+await ctx3.close();
+
+/* ---------------------------------------------------------------------------
    3. SIN SERVIDOR: NI UNA MARCA. La red de seguridad de los dos amigos de Victor.
 --------------------------------------------------------------------------- */
 console.log("\n=== sin servidor propio, todo como antes de la v4.51 ===");
