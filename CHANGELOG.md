@@ -1,5 +1,50 @@
 # CHANGELOG — Bloques
 
+Bloques v5.25 — El Valor mercado en Auto salía vacío y no decía por qué
+
+## El síntoma
+Victor, en la ficha de su PMCC de ASTS: *"el problema es que no está cogiendo bien el valor de
+mercado; fíjate, lo tengo en Auto y no aparece nada"*.
+
+## La causa
+En Auto, sin precio del servidor, ahí no había más que **un campo vacío**. Nada que dijera si el
+servidor no había contestado todavía, si a la posición le faltaba un dato, o si el contrato que se
+le pedía no existe — que era su caso: el LEAPS apuntado a un miércoles.
+
+Cuarta vez en el mismo día con la misma lección: **callarse no es un estado neutro, no se distingue
+de una avería**. La v5.21 lo arregló en la cabecera, la v5.22 para los Iron Condor, la v5.23 para los
+contratos que el servidor no conoce… y el hueco seguía mudo justo en la pantalla donde se va a mirar
+cuando algo no cuadra.
+
+## El arreglo
+Debajo del campo, **por qué está vacío**. Son los mismos motivos que ya separa el aviso de la
+cabecera, pero dichos para UNA posición, en el sitio donde se está mirando — y cada uno se arregla
+de forma distinta:
+
+| lo que pasa | lo que dice |
+|---|---|
+| no hay servidor propio | ponlo en Manual y escríbelo tú |
+| le falta un dato a una pata | complétalo aquí arriba |
+| el servidor no conoce el contrato | **ASTS 70C · 12 ene 2028 (miércoles)** — pulsar otra vez no sirve |
+| todavía no ha llegado | pulsa 🔄 Precios |
+| estructura que la app no descompone | es manual por diseño, no te falta ningún dato |
+
+Y **cuando sí hay precio no dice nada**, ni cuando lo has puesto en Manual a propósito, ni en una
+acción (su valor es Último × Cantidad), ni en una posición cerrada — a esa no le falta nada que
+completar, ya terminó. Un aviso que sale siempre no avisa de nada.
+
+## La verificación
+`pruebas/valor-mercado-vacio.mjs`: los cinco motivos y los cuatro silencios, leídos de la función
+compilada, más el recorrido completo en pantalla (descarga real contra un servidor que conoce una
+opción y no conoce la otra, abrir la ficha, y leer el aviso debajo del campo). Sembrar el estado a
+mano en localStorage no vale y la prueba no lo hace: IndexedDB es lo autoritativo y lo machaca.
+
+Tres controles con el fallo puesto otra vez: callarlo siempre tira 7 comprobaciones, hablar siempre
+tira 1, y quitar la guarda de las posiciones cerradas tira otra.
+
+`npm run prueba` sigue en 18/18 y las otras once suites en verde.
+
+
 Bloques v5.24 — "Igual": le pedí que corrigiera un dato que la app no le dejaba tocar
 
 ## El síntoma
