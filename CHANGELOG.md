@@ -1,5 +1,74 @@
 # CHANGELOG — Bloques
 
+Bloques v5.20 — El valor de mercado de las opciones era un número escrito a mano
+
+## El síntoma
+Victor, comparando la app contra IBKR **con el filtro puesto en su bróker**: *"no estoy de acuerdo,
+mira, solo filtrando IBKR no cuadran MKT VL, NLV y EL"*. Tenía razón: mi diagnóstico anterior —que el
+grueso era la suma de DEGIRO— no cubría esto.
+
+Medido, y cuadra al céntimo:
+
+| | App (IBKR) | IBKR | Dif. |
+|---|---|---|---|
+| MKT VL | 141.931 | 155.111 | **−13.180** |
+| NLV | 111.031 | 125.123 | −14.092 |
+| Excess Liq | 40.501 | 54.593 | −14.092 |
+
+No son tres problemas sino uno: `NLV = MKT VL + cash` y `EL = NLV − Margin`, así que un MKT VL corto
+arrastra a los otros dos. Y el MKT VL descuadraba así:
+
+    las opciones sin su valor real ....... 12.013
+    precios de acciones con retraso ......  1.167
+                                          -------
+    total                                  13.180   (+912 de cash escrito de más → 14.092 en NLV y EL)
+
+## La causa
+El valor de mercado de una ACCIÓN se calculaba solo (último × cantidad). El de una opción era un
+**campo manual** que no se actualizaba **nunca**, ni siquiera al pulsar 🔄 Precios.
+
+Lo absurdo: desde la v4.51 la app ya le pregunta al servidor lo que vale cada contrato y lo usa para
+el P&L y para las griegas. Para el valor de mercado no lo miraba, y seguía leyendo un número escrito
+semanas atrás. Las opciones de Victor figuraban en unos −18.400 cuando valían −6.425.
+
+## El arreglo
+Una opción vale **lo que costaría cerrarla hoy, cambiado de signo**: una corta vale en contra (es una
+deuda, y así la pinta el bróker, en rojo) y una larga a favor. Se apoya en `patasDePosicion`, el
+mismo camino único que ya usan el P&L y las griegas, así que sirve igual para una pata que para las
+cuatro de un cóndor — y hereda sus dos candados sin añadir ninguno:
+
+- **sin servidor propio no se usa NI UNA marca**, aunque estén guardadas (los dos amigos de Victor no
+  notan nada, y `npm run prueba` sigue en 18/18 sin mover un céntimo);
+- **o están las marcas de TODAS las patas, o no se usa ninguna** — nada de medio real, medio escrito.
+
+Y lo que no sabe describir (Iron Condor, Iron Fly, Calendar suelto) **conserva su valor manual**: sin
+patas no es "vale cero", es que no se sabe.
+
+**Se dice en pantalla**, con la misma regla que las griegas — siempre, no solo cuando falta algo:
+- en la cabecera, *"Tus 3 opciones con precio real del servidor"* (o *"2 de tus 3… · 1 sin precio
+  todavía: pulsa 🔄 Precios"*);
+- y al editar la posición, el valor sale en violeta con la chapa **REAL** y dice de dónde viene.
+- El interruptor **Auto / Manual** aparece ahora también en las opciones: en Manual manda lo que
+  escribas, como hasta ahora.
+
+## Efecto secundario que conviene saber
+Una opción con el margen en modo **porcentaje** lo calcula sobre el valor de mercado, así que ese
+margen cambiará. Las de Victor están en modo valor absoluto, así que no le afecta.
+
+## La verificación
+`pruebas/mktvl-opciones.mjs` (nueva), con las cuentas escritas sobre su ORCL y sus IBIT reales:
+
+- una **corta** vale −40,02 × 200 = −$8.004 y una **larga** +47,29 × 100 = +$4.729 — con el control
+  explícito de que la corta sale en negativo y la larga en positivo, que es el fallo más tonto y más
+  caro posible;
+- un **spread** vale la suma de sus patas: −(4,10 − 1,60) × 100 = −$250;
+- MKT VL $9.475 → NLV $4.475 → EL $1.475, los tres números que Victor veía descuadrados;
+- los dos candados, cada uno con su caso;
+- y un **Iron Condor** conserva su −1.234 escrito a mano.
+
+Comprobado que caza los fallos: devolviendo el campo manual caen 7 comprobaciones; con el signo
+invertido, 7 (y el MKT VL se va a $16.525 en vez de $9.475); ignorando el candado del servidor, 3.
+
 Bloques v5.19 — Te ejercen una put: la prima se contaba DOS veces
 
 ## El síntoma
