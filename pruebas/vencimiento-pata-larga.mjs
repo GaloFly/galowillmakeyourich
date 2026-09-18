@@ -128,18 +128,23 @@ ok(fechas.put.venc === VTO_PUT, "y la short put, donde siempre");
    2. EL SEMÁFORO: una call COMPRADA no está a salvo por estar bajo su strike.
 --------------------------------------------------------------------------- */
 console.log("\n=== el semáforo juzga la larga como larga ===");
+/* el BEP de esa fila es el de la v5.27: strike de la larga 70 + débito neto 32,50 = 102,50 */
 const sem = await page.evaluate(() => ({
-  /* ASTS a 58,55 · PMCC sin corta: strike de la larga 70, BEP (débito neto) 32,50 */
-  sola: vencDanger({ tipo: "PMCC", solaLarga: true, right: "C", strike: "70", bep: "32.5", last: "58.55" }),
-  /* el mismo caso con el precio POR DEBAJO del BEP: ahí sí está en peligro */
-  solaMal: vencDanger({ tipo: "PMCC", solaLarga: true, right: "C", strike: "70", bep: "32.5", last: "28" }),
+  /* ASTS a 58,55: por debajo del break-even Y por debajo del strike — hoy expiraría sin valor */
+  sola: vencDanger({ tipo: "PMCC", solaLarga: true, right: "C", strike: "70", bep: "102.5", last: "58.55" }),
+  /* por encima del break-even: en ganancia */
+  solaBien: vencDanger({ tipo: "PMCC", solaLarga: true, right: "C", strike: "70", bep: "102.5", last: "110" }),
+  /* el control que importa: entre el strike y el BEP (105 > 70) la regla de las CORTAS diría
+     "peligro" y la de las largas "todavía en pérdida". Son cosas distintas y no pueden confundirse. */
+  entreMedias: vencDanger({ tipo: "PMCC", solaLarga: true, right: "C", strike: "70", bep: "102.5", last: "90" }),
   /* y una call CORTA de verdad: peligro por encima del strike, como siempre */
   corta: vencDanger({ tipo: "PMCC", right: "C", strike: "95", bep: "27.35", last: "98" }),
 }));
-console.log("  larga con ASTS 58,55 (BEP 32,5) → " + sem.sola + "   ·   con ASTS 28 → " + sem.solaMal + "   ·   corta con ASTS 98 (strike 95) → " + sem.corta);
-ok(sem.sola === false, "la call comprada a 58,55 con BEP 32,5 NO está en peligro (sale " + sem.sola + ")");
-ok(sem.solaMal === true, "pero por debajo del BEP sí (sale " + sem.solaMal + ")");
-ok(sem.corta === true, "y una corta sigue juzgándose por su strike (sale " + sem.corta + ")");
+console.log("  larga con ASTS 58,55 → " + sem.sola + "   ·   con 110 → " + sem.solaBien + "   ·   con 90 (sobre el strike, bajo el BEP) → " + sem.entreMedias + "   ·   corta con 98 (strike 95) → " + sem.corta);
+ok(sem.sola === true, "la call comprada con ASTS a 58,55 y BEP 102,5 SÍ está en pérdida (hoy expiraría sin valor)");
+ok(sem.solaBien === false, "por encima del break-even, no (sale " + sem.solaBien + ")");
+ok(sem.entreMedias === true, "y entre el strike y el BEP sigue en pérdida — no se juzga por el strike");
+ok(sem.corta === true, "una corta sigue juzgándose por su strike (sale " + sem.corta + ")");
 
 /* ---------------------------------------------------------------------------
    3. EN PANTALLA: las tres fechas, el conteo y el riesgo total.
@@ -151,6 +156,7 @@ const v = await page.evaluate(() => {
   const num = (re) => { const m = t.match(re); return m ? Number(m[1].replace(/,/g, "")) : NaN; };
   return {
     ops: num(/(\d+) operaciones/),
+    peligro: num(/(\d+) en peligro/),
     total: num(/\$([\d,]+)\s*\n\s*Riesgo total/),
     fechas: (t.match(/\d{1,2} [A-Z]{3} 20\d\d/g) || []),
     tiene2028: /21 JAN 2028/.test(t),
@@ -163,6 +169,10 @@ ok(v.tiene2028, "la fecha de 2028 APARECE (antes no salía ninguna)");
 ok(v.ops === 3, "las tres posiciones se cuentan (sale " + v.ops + ")");
 ok(v.total === R_PUT + R_SIN + R_CON, "y el riesgo total las suma UNA vez cada una: $" + (R_PUT + R_SIN + R_CON) + " (sale $" + v.total + ")");
 ok(v.fechas.length === 3, "hay tres filas de vencimiento, una por fecha (salen " + v.fechas.length + ")");
+/* con ASTS a 58,55: la short put 63 (asignable) y la call comprada de 70 (hoy expiraría sin valor).
+   El PMCC entero no: su corta es la 95 y el precio está muy por debajo. */
+console.log("  en peligro: " + v.peligro);
+ok(v.peligro === 2, "cuenta 2 en peligro: la put asignable y la call comprada bajo su BEP (sale " + v.peligro + ")");
 
 /* ---------------------------------------------------------------------------
    4. Y LA FILA DICE QUÉ CONTRATO ES: el strike de la larga, no un hueco.
@@ -182,6 +192,43 @@ const fila = await page.evaluate(() => {
 console.log("  " + fila);
 ok(/70C/.test(fila), "se etiqueta con el strike de la larga (70C), no con un hueco");
 ok(!/·\s*C\s*·/.test(fila.replace(/70C/g, "")), "y no queda una 'C' suelta sin strike");
+
+/* ---------------------------------------------------------------------------
+   5. v5.27 — EL BEP ES UN PRECIO, NO UN DÉBITO.
+   Victor, viendo "70C · Últ $58.27 · BEP $32.5" en la misma línea: *"el BEP de las opciones largas
+   no es lo mismo que el strike price, no está relacionado; habría que sumar prima pagada más
+   strike, ¿no?"*. Exacto: ahí había un DÉBITO NETO pegado a un precio, y compararlos no significa
+   nada. Con solo la larga, el break-even es strike + débito: 70 + 32,50 = 102,50.
+--------------------------------------------------------------------------- */
+console.log("\n=== el BEP que sale junto al 'Últ' es un PRECIO ===");
+const beps = await page.evaluate((pos) => {
+  const sin = pos.find((p) => p.id === "sin"), con = pos.find((p) => p.id === "con");
+  const r = (v) => (isFinite(v) ? Math.round(v * 100) / 100 : null);
+  return { solo: r(bepPmccSolo(sin)), debito: r(effBep(sin)), conCorta: r(bepPmccSolo(con)) };
+}, POS);
+console.log("  PMCC sin corta → BEP " + beps.solo + " (débito neto " + beps.debito + ")   ·   PMCC entero → " + beps.conCorta);
+ok(beps.solo === 102.5, "BEP = strike 70 + débito neto 32,50 = 102,50 (sale " + beps.solo + ")");
+ok(beps.debito === 32.5, "y el débito neto sigue siendo 32,50 — el número de coste no se toca");
+ok(!isFinite(beps.conCorta) || beps.conCorta === null,
+  "con la corta viva NO se inventa un BEP: no hay uno simple (sale " + beps.conCorta + ")");
+console.log("  " + fila);
+ok(/BEP \$102\.5/.test(fila), "en la fila sale BEP $102.5, no $32.5 (fila: " + fila.slice(0, 90) + ")");
+ok(!/BEP \$32\.5/.test(fila), "y ya no se llama BEP a un débito");
+/* y la fila del PMCC entero llama al suyo por su nombre */
+await page.evaluate(() => {
+  const f = Array.from(document.querySelectorAll("div")).filter((e) => /21 JAN 2027/.test(e.textContent || "") && (e.textContent || "").length < 200 && getComputedStyle(e).cursor === "pointer")
+    .sort((a, b) => (a.textContent || "").length - (b.textContent || "").length)[0];
+  if (f) f.click();
+});
+await page.waitForTimeout(600);
+const fila2027 = await page.evaluate(() => {
+  const t = document.body.innerText;
+  const i = t.indexOf("21 JAN 2027");
+  return i >= 0 ? t.slice(i, i + 150).replace(/\n+/g, " · ") : "(no se ve)";
+});
+console.log("  " + fila2027);
+ok(/Débito \$27\.35/.test(fila2027), "el PMCC entero enseña su débito neto LLAMADO débito (fila: " + fila2027.slice(0, 90) + ")");
+ok(!/BEP/.test(fila2027), "y ahí no aparece la palabra BEP");
 await page.screenshot({ path: D + "/vencimiento-pata-larga.png" });
 ok(!errores.length, "sin errores de JS " + JSON.stringify(errores.slice(0, 2)));
 
