@@ -1,5 +1,61 @@
 # CHANGELOG — Bloques
 
+Bloques v5.23 — "Pulsa 🔄 Precios" cuando pulsar no podía arreglarlo
+
+## El síntoma
+Victor, con la v5.22 puesta y funcionando: *"está ya casi todo bien, falta esa PMCC de ASTS que no
+tiene pata corta vendida ahora mismo, solo larga"*.
+
+Su ficha, abierta: **STRIKE SHORT vacío, EXPIRY vacío**, y la pata larga completa —
+**strike $70, prima $34,81/acc, vto JAN 12 '28**.
+
+## La causa, que estaba a la vista
+**El 12 de enero de 2028 es miércoles.** A dos años vista no vence ninguna opción en miércoles: el
+LEAPS de enero del 28 es el **21**, tercer viernes. Ese vencimiento está mal escrito.
+
+Así que la app preguntaba a OpenD por `US.ASTS280112C70000`, OpenD no conocía ese contrato, y lo
+único que se veía era `P&L · MANUAL` y un aviso diciendo **"pulsa 🔄 Precios"** — un botón que no
+podía arreglarlo por muchas veces que se pulsara.
+
+Es la misma trampa de la v5.21 y la v5.22, por tercera vez y en otro sitio: **un mensaje que manda a
+hacer algo que no sirve es peor que no decir nada**. Y aquí la app tenía el dato: el puente ya
+devuelve `sin_datos` con la lista de códigos que no reconoce, pero se tiraba a la basura.
+
+## El arreglo
+Dos cosas.
+
+**1. Se dice cuando el servidor no conoce un contrato**, con el contrato escrito en cristiano y —esto
+es lo que resuelve el caso— **con su día de la semana**:
+
+> Tu servidor no conoce este contrato de **ASTS PMCC**: **ASTS 70C · 12 ene 2028 (miércoles)**.
+> Pulsar 🔄 Precios otra vez no lo va a arreglar — comprueba el vencimiento y el strike en tu bróker.
+
+Con la palabra "miércoles" delante, el error se ve solo. Sin ella hay que ir a mirar un calendario.
+
+Y lleva su propio candado: **si no ha llegado NI UNA marca, el que falla es el puente** (apagado, sin
+red, clave caducada) y no se acusa a ningún contrato. Sin eso, un servidor caído mandaría a Victor a
+revisar diez posiciones que están perfectas.
+
+**2. Un PMCC sin strike NI vencimiento de la corta se valora por la pata que le queda**, tenga o no
+la marca `noShort`. La ponen los botones de "Recomprar corta" y "Expirar corta", pero una ficha
+editada a mano se queda sin ella. Sin strike y sin vencimiento no hay contrato: eso no es un dato a
+medias, es una pata que no está. **Si falta solo UNO de los dos, sí es un dato incompleto y no se
+valora nada** — el candado de la v4.51 sigue mandando.
+
+## La verificación
+`pruebas/contrato-desconocido.mjs`, con la PMCC de Victor tal cual está en su teléfono y un puente de
+mentira que habla como el de verdad (contesta lo que conoce y lista lo que no). Comprueba que se
+pregunta por el contrato, que se nombra con su día de la semana, que con el vencimiento corregido al
+21 la posición pasa sola a **+$4.120 y P&L +$639**, y que con el servidor mudo no se señala a nadie.
+
+Se volvió a meter **cada pieza del arreglo por separado** para ver la prueba en rojo: quitar la
+robustez del `noShort` tira 1, quitar el registro de contratos desconocidos tira 5, y quitar el
+candado del puente mudo tira 2. También se probó un arreglo chapucero ("sin corta = sin vencimiento"),
+que se traga un dato a medias: la prueba lo caza.
+
+`npm run prueba` sigue en 18/18 y las otras diez suites en verde.
+
+
 Bloques v5.22 — Las dos Long Call y los tres PMCC nunca podían tener precio
 
 ## El síntoma

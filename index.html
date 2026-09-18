@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.22"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.23"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -882,6 +882,23 @@ const codContrato = (tkr, expiry, right, strike) => {
   return mils > 0 ? "US." + String(tkr).trim().toUpperCase() + m[1].slice(2) + m[2] + m[3] + right + mils : null;
 };
 const codigoOpcion = (p) => (esUnaPata(p) ? codContrato(p.tkr, p.expiry, p.right, p.strike) : null);
+/* ---------- v5.23: el código de Futu, leído al revés, para poder ENSEÑARLO ----------
+   "US.ASTS280112C70000" no le dice nada a nadie. "ASTS 70C · 12 ene 2028 (miércoles)" sí — y el día
+   de la semana es justo donde salta el error, porque una opción no vence en miércoles a dos años
+   vista. Es lo que costó la tarde del 18-sep-2026: la app preguntaba por ese contrato, el servidor
+   no lo conocía, y lo único que se veía era "P&L · MANUAL" y un aviso mandando a pulsar 🔄 Precios. */
+const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const leeContrato = (cod) => {
+  const m = String(cod || "").match(/^US\.([A-Z.]+)(\d{2})(\d{2})(\d{2})([PC])(\d+)$/);
+  if (!m) return null;
+  const tkr = m[1], aa = m[2], mm = m[3], dd = m[4], right = m[5];
+  const strike = Number(m[6]) / 1000;
+  const f = new Date("20" + aa + "-" + mm + "-" + dd + "T12:00:00");
+  if (isNaN(f.getTime())) return null;
+  const mes = MESES_CORTOS[Number(mm) - 1] || mm;
+  return { tkr, right, strike, dia: DIAS_SEMANA[f.getDay()],
+    texto: tkr + " " + strike + right + " · " + Number(dd) + " " + mes + " 20" + aa };
+};
 /* ---------- v4.53: TODA posición se describe como una lista de patas ----------
    Hasta la v4.52 había un camino para "una pata" y otro para los verticales, casi idénticos. Con
    DC/DD y PMCC entrando serían cuatro caminos paralelos haciendo la misma cuenta — y ahí es donde se
@@ -919,9 +936,15 @@ const patasDePosicion = (p) => {
      si falta el código de una, no se devuelve nada (media posición valorada miente). */
   if (isPMCC(p) && p.long) {
     const lg = p.long || {};
-    if (!p.noShort) mete(codContrato(p.tkr, p.expiry, p.right, p.strike), n(p.prima), 1);
+    /* v5.23: la marca `noShort` la ponen los botones de recomprar y expirar, pero una posición puede
+       quedarse sin corta por otros caminos (editando la ficha a mano, o importada) y entonces tiene
+       los dos campos vacíos y ninguna marca. Sin strike NI vencimiento no hay contrato que valorar:
+       eso no es "un dato a medias", es una pata que no está. Si falta solo UNO de los dos, sí es un
+       dato incompleto y entonces no se valora nada — el candado de la v4.51 sigue mandando. */
+    const sinCorta = !!p.noShort || (!String(p.strike == null ? "" : p.strike).trim() && !String(p.expiry || "").trim());
+    if (!sinCorta) mete(codContrato(p.tkr, p.expiry, p.right, p.strike), n(p.prima), 1);
     mete(codContrato(p.tkr, lg.expiry, lg.right || p.right, lg.strike), n(lg.prima), -1);
-    return salida.length === (p.noShort ? 1 : 2) ? salida : [];
+    return salida.length === (sinCorta ? 1 : 2) ? salida : [];
   }
   /* DC/DD: cuatro patas y dos vencimientos — las shorts vencen en p.expiry, las longs en
      dcdd.expiryLong. Una pata que no exista simplemente no entra (un Calendar de un solo lado). */
@@ -3568,7 +3591,7 @@ function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manu
             —cubiertas o no—, porque el día que falte una nadie se daría cuenta si solo se avisara al
             fallar. Mismo criterio que la cobertura de la tarjeta de griegas. */}
         {!!mktCobertura && mktCobertura.total > 0 && (() => {
-          const { total, reales, manuales, sinPrecio, sinPatas, sinModelo } = mktCobertura;
+          const { total, reales, manuales, sinPrecio, sinPatas, sinModelo, sinDato, contratos } = mktCobertura;
           const lista = (a) => (a || []).join(", ");
           return (
             <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 7, lineHeight: 1.45 }}>
@@ -3584,6 +3607,12 @@ function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manu
                   {sinPatas.length === 1
                     ? <>A <b>{lista(sinPatas)}</b> no se le puede pedir precio: le faltan datos de sus patas (strike, vencimiento o prima de alguna). Ábrela y complétala, o su valor seguirá siendo el que escribas a mano.</>
                     : <>A <b>{lista(sinPatas)}</b> no se les puede pedir precio: les faltan datos de sus patas (strike, vencimiento o prima de alguna). Ábrelas y complétalas, o su valor seguirá siendo el que escribas a mano.</>}
+                </div>
+              )}
+              {/* v5.23: preguntado y sin respuesta para ESE contrato — no es cosa de volver a pulsar */}
+              {(sinDato || []).length > 0 && (
+                <div style={{ marginTop: 3, color: T.gold }}>
+                  Tu servidor no conoce {(contratos || []).length === 1 ? "este contrato" : "estos contratos"} de <b>{lista(sinDato)}</b>: <b style={{ color: T.ink }}>{lista(contratos)}</b>. Pulsar 🔄 Precios otra vez no lo va a arreglar — comprueba el vencimiento y el strike en tu bróker.
                 </div>
               )}
               {/* v5.22: y estas no tienen arreglo por tu parte — no te mandamos a completar nada */}
@@ -14935,7 +14964,7 @@ function App() {
        —re-descargable con un 🔄 Precios—, igual que el % del día, que tampoco se guarda. Y sobre
        todo: los backups se comparten por chat, y un amigo sin servidor no debe heredar precios
        congelados de otro. Quitarlas no rompe nada: si faltan, la posición calcula como siempre. */
-    const posOut = positions.map(({ optMarks, optGriegas, optGriegasCrudas, optLast, optCodigo, optTs, optIv, optDelta, optTheta, optOi, ...p }) => ({
+    const posOut = positions.map(({ optMarks, optGriegas, optGriegasCrudas, optSinDato, optLast, optCodigo, optTs, optIv, optDelta, optTheta, optOi, ...p }) => ({
       ...p,
       margen: p.margen != null ? p.margen : "",
       margenPct: p.margenPct != null ? p.margenPct : "100",
@@ -15174,6 +15203,11 @@ function App() {
       if (!codigos.length) marcaErrores = {};
     }
     const ahora = Date.now();
+    /* v5.23: ¿ha contestado el servidor en este refresco? Si no ha llegado NI UNA marca, el que
+       falla es el puente (apagado, sin red, token caducado) y no los contratos: no se acusa a
+       ninguno. Con al menos una respuesta buena, un código que no vuelve es un código que el
+       servidor no conoce, y eso sí se puede decir. */
+    const pedidos = Object.keys(marcas).length > 0;
     /* aplica subyacente y, si la hay, la marca del contrato — con su código al lado, para que una
        posición rolada descarte sola la marca del contrato viejo (ver marcaOpcion) */
     const aplica = (p) => {
@@ -15217,6 +15251,16 @@ function App() {
             else if (tsDato == null || ms > tsDato) tsDato = ms;
           } else if (viejas[c]) griegas[c] = viejas[c];
         });
+        /* v5.23: los contratos por los que SÍ se preguntó y el servidor no supo contestar.
+           Hasta ahora, "no tengo precio" tapaba dos averías distintas: que la app nunca hubiera
+           preguntado (le falta un dato a la posición) y que hubiera preguntado por un contrato que
+           NO EXISTE. La segunda es casi siempre un vencimiento o un strike mal escritos —el caso de
+           Victor: un LEAPS de ASTS apuntado al 12 de enero del 28, que es MIÉRCOLES, y ese día no
+           vence nada—, y mandaba a pulsar 🔄 Precios una y otra vez sin que pasara nunca nada.
+           Se guarda el código literal por el que se preguntó, que es el dato que permite verlo.
+           Es dato de mercado: no viaja en el backup. */
+        const sinDato = pedidos ? cods.filter((c) => !marcas[c]) : [];
+        if (pedidos) q = { ...q, optSinDato: sinDato.length ? sinDato : undefined };
         if (Object.keys(tabla).length) {
           q = { ...q, optMarks: tabla, optGriegas: griegas, optTs: ahora,
             optGriegasCrudas: Object.keys(crudas).length ? crudas : undefined,
@@ -15427,15 +15471,31 @@ function App() {
        suelto NO guardan sus patas por separado — nunca las han guardado, es una carencia conocida de
        la app, no un dato que Victor se dejara. Ahí no hay nada que abrir ni que rellenar: su valor es
        manual por diseño. Mandarle a "completarla" es exactamente el pecado que arregló la v5.21,
-       cometido en otro sitio. */
+       cometido en otro sitio.
+
+       v5.23: y un CUARTO, que es el que costó la tarde del 18-sep-2026. "Pulsa 🔄 Precios" da por
+       hecho que el servidor todavía no ha contestado — pero si ya contestó y de ESE contrato no
+       sabe nada, pulsar mil veces no hará nada. Pasa cuando el contrato no existe: el LEAPS de ASTS
+       de Victor estaba apuntado al 12 de enero del 28, que es miércoles, y ese día no vence nada.
+       Se nombra el contrato por el que se preguntó, con su día de la semana, que es donde se ve. */
     const conModelo = (p) => isVertical(p) || isPMCC(p) || isDCDD(p) || isLongCallPos(p) || natOf(p) === "CRED" || natOf(p) === "DEB";
     const sinModelo = pend.filter((p) => !patasDePosicion(p).length && !conModelo(p));
     const sinPatas = pend.filter((p) => !patasDePosicion(p).length && conModelo(p));
-    const sinPrecio = pend.filter((p) => patasDePosicion(p).length > 0);
+    const conPatas = pend.filter((p) => patasDePosicion(p).length > 0);
+    const desconocido = (p) => (Array.isArray(p.optSinDato) ? p.optSinDato : []);
+    const sinDato = conPatas.filter((p) => desconocido(p).length > 0);
+    const sinPrecio = conPatas.filter((p) => !desconocido(p).length);
     const nombre = (p) => (p.tkr || "?") + (p.tipo ? " " + tipoChipLabel(p) : "");
+    /* el contrato literal por el que se preguntó, en castellano y con el día de la semana */
+    const contratos = [];
+    sinDato.forEach((p) => desconocido(p).forEach((c) => {
+      const d = leeContrato(c);
+      contratos.push(d ? d.texto + " (" + d.dia + ")" : c);
+    }));
     return { total: opts.length, reales: opts.filter((p) => mktEsReal(p)).length,
       manuales: opts.filter((p) => p.mktModo === "MANUAL").length,
-      sinPrecio: sinPrecio.map(nombre), sinPatas: sinPatas.map(nombre), sinModelo: sinModelo.map(nombre) };
+      sinPrecio: sinPrecio.map(nombre), sinPatas: sinPatas.map(nombre), sinModelo: sinModelo.map(nombre),
+      sinDato: sinDato.map(nombre), contratos: [...new Set(contratos)] };
   }, [active]);
   const sumField = (field) => brokers.reduce((s, b) => s + n((accounts[b] || {})[field]), 0);
   const manualCash = broker === "Todos" ? sumField("cash") : n((accounts[broker] || {}).cash);
