@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.20"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.21"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -3556,14 +3556,24 @@ function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manu
             —cubiertas o no—, porque el día que falte una nadie se daría cuenta si solo se avisara al
             fallar. Mismo criterio que la cobertura de la tarjeta de griegas. */}
         {!!mktCobertura && mktCobertura.total > 0 && (() => {
-          const { total, reales, manuales } = mktCobertura;
-          const pend = total - reales - manuales;
+          const { total, reales, manuales, sinPrecio, sinPatas } = mktCobertura;
+          const lista = (a) => (a || []).join(", ");
           return (
             <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 7, lineHeight: 1.45 }}>
               {reales > 0 && <span style={{ fontWeight: 800, color: T.purple }}>{reales === total ? "Tus " + total + " opciones" : reales + " de tus " + total + " opciones"} con precio real del servidor</span>}
               {reales === 0 && <span>Ninguna de tus {total} opciones tiene precio del servidor</span>}
               {manuales > 0 && <span> · {manuales} a mano</span>}
-              {pend > 0 && <span> · {pend} {pend === 1 ? "sin precio todavía" : "sin precio todavía"}: pulsa 🔄 Precios</span>}
+              {/* v5.21: los dos motivos van separados porque se arreglan de forma distinta */}
+              {(sinPrecio || []).length > 0 && (
+                <div style={{ marginTop: 3 }}>Sin precio todavía: <b style={{ color: T.ink }}>{lista(sinPrecio)}</b> — pulsa 🔄 Precios.</div>
+              )}
+              {(sinPatas || []).length > 0 && (
+                <div style={{ marginTop: 3, color: T.gold }}>
+                  {sinPatas.length === 1
+                    ? <>A <b>{lista(sinPatas)}</b> no se le puede pedir precio: le faltan datos de sus patas (strike, vencimiento o prima de alguna). Ábrela y complétala, o su valor seguirá siendo el que escribas a mano.</>
+                    : <>A <b>{lista(sinPatas)}</b> no se les puede pedir precio: les faltan datos de sus patas (strike, vencimiento o prima de alguna). Ábrelas y complétalas, o su valor seguirá siendo el que escribas a mano.</>}
+                </div>
+              )}
             </div>
           );
         })()}
@@ -15385,8 +15395,20 @@ function App() {
      que no lo cubre, porque parece completo. Misma regla que la tarjeta de griegas (v4.54). */
   const mktCobertura = useMemo(() => {
     const opts = active.filter((p) => isOptionNat(p));
+    const pend = opts.filter((p) => !mktEsReal(p) && p.mktModo !== "MANUAL");
+    /* v5.21 — decir CUÁLES faltan, no solo cuántas.
+       Victor, tras la v5.20: *"sigue igual"*. Y no: el MKT VL había subido 2.218 y el aviso ya decía
+       "6 de tus 11 opciones con precio real · 5 sin precio todavía". Pero con "5" no se puede hacer
+       nada — no sabes dónde mirar. Con sus nombres, sí: o les falta pulsar 🔄 Precios, o les falta un
+       dato (a un PMCC sin el vencimiento de la pata larga la app no sabe qué contrato pedirle al
+       servidor). Mismo criterio que el aviso de griegas, que lleva nombrando tickers desde la v4.55.
+       Se distinguen los dos motivos porque tienen soluciones distintas. */
+    const sinPatas = pend.filter((p) => !patasDePosicion(p).length);
+    const sinPrecio = pend.filter((p) => patasDePosicion(p).length > 0);
+    const nombre = (p) => (p.tkr || "?") + (p.tipo ? " " + tipoChipLabel(p) : "");
     return { total: opts.length, reales: opts.filter((p) => mktEsReal(p)).length,
-      manuales: opts.filter((p) => p.mktModo === "MANUAL").length };
+      manuales: opts.filter((p) => p.mktModo === "MANUAL").length,
+      sinPrecio: sinPrecio.map(nombre), sinPatas: sinPatas.map(nombre) };
   }, [active]);
   const sumField = (field) => brokers.reduce((s, b) => s + n((accounts[b] || {})[field]), 0);
   const manualCash = broker === "Todos" ? sumField("cash") : n((accounts[broker] || {}).cash);

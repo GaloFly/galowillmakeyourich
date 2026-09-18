@@ -1,5 +1,53 @@
 # CHANGELOG — Bloques
 
+Bloques v5.21 — El aviso decía "5 sin precio" y con eso no se puede hacer nada
+
+## El síntoma
+Victor, tras instalar la v5.20: *"sigue igual"*.
+
+No era igual —el MKT VL había subido $2.218 y el NLV y el EL con él— pero tampoco estaba resuelto.
+Su propia pantalla decía por qué: **"6 de tus 11 opciones con precio real del servidor · 5 sin
+precio todavía: pulsa 🔄 Precios"**.
+
+Comparado con IBKR, de los $13.180 originales quedaban $10.962. Las 5 opciones sin precio son casi
+todo lo que falta.
+
+## La causa del "sigue igual"
+El aviso daba un **número**, y con un número no se puede actuar: no sabes cuáles son, ni si el
+problema es el mismo en las cinco. Y no lo es — hay dos motivos, con soluciones distintas:
+
+1. **Le falta un refresco.** La posición está bien descrita, pero el servidor no le ha mandado
+   precio todavía. Se arregla pulsando 🔄 Precios.
+2. **Le falta un DATO.** A un PMCC sin el vencimiento de su pata larga la app no sabe qué contrato
+   pedirle al servidor, así que puedes pulsar 🔄 Precios mil veces y no pasará nada. Hay que abrir la
+   posición y completarla.
+
+Mandar a alguien a pulsar un botón que no va a arreglar su problema es peor que no decirle nada.
+
+## El arreglo
+El aviso pasa a **nombrar las posiciones** y a **separar los dos motivos**:
+
+> Sin precio todavía: **IBIT Long Call** — pulsa 🔄 Precios.
+>
+> A **ASTS PMCC** no se le puede pedir precio: le faltan datos de sus patas (strike, vencimiento o
+> prima de alguna). Ábrela y complétala, o su valor seguirá siendo el que escribas a mano.
+
+El segundo va en ámbar, porque es el que necesita que hagas algo de verdad.
+
+Mismo criterio que el aviso de griegas, que lleva nombrando tickers desde la v4.55: cuando algo
+falta, decir **qué** falta y **qué hacer**.
+
+## La verificación
+En `pruebas/mktvl-opciones.mjs`, una cartera con las tres situaciones a la vez: una opción con precio,
+una describible pero sin precio, y un PMCC al que le falta el vencimiento de la larga. Se comprueba
+que cuenta bien (1 de 3), que **nombra** cada una, que **no las mezcla** —al PMCC roto no se le manda
+pulsar 🔄 Precios— y que dice **qué dato** falta.
+
+Comprobado que caza el fallo: volviendo al aviso mudo que solo daba el número caen 3 comprobaciones;
+metiendo los dos motivos en el mismo saco, otras 3.
+
+`npm run prueba` sigue en 18/18.
+
 Bloques v5.20 — El valor de mercado de las opciones era un número escrito a mano
 
 ## El síntoma
