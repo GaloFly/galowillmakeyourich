@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.26"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.27"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1021,6 +1021,22 @@ const codigosDePosicion = (p) => patasDePosicion(p).map((x) => x.cod);
    desaparece no se distingue de una que no existe. */
 const soloPataLarga = (p) => !!(p && isPMCC(p) && !p.expiry && p.long && p.long.expiry);
 const vencimientoDe = (p) => (p && p.expiry ? p.expiry : (soloPataLarga(p) ? p.long.expiry : ""));
+/* ---------- v5.27: el BEP de un PMCC no era un precio ----------
+   Victor, viendo "70C · Últ $58.27 · BEP $32.5" en la misma línea: *"el BEP de las opciones largas
+   no es lo mismo que el strike price, no está relacionado; habría que sumar prima pagada más
+   strike, ¿no?"*. Exacto, y el fallo es de bulto: un BEP es un PRECIO DEL SUBYACENTE —por eso está
+   pegado al "Últ", para compararlos— y ahí había un DÉBITO NETO. Comparar 58,27 con 32,50 no
+   significa nada.
+
+   `effBep` devuelve para un PMCC su débito neto (prima larga − corta): es su coste por acción, y
+   como tal sirve para el riesgo y para el % de P&L. Ese número no se toca — se le quita el nombre
+   que no le corresponde.
+
+   Cuando lo único que queda es la call comprada, el break-even sí existe y es sencillo: el strike
+   de la larga más lo que te ha costado neto. 70 + 32,50 = 102,50. Con la corta viva NO hay uno
+   simple (depende del valor temporal que le quede a la larga el día que venza la corta), así que
+   ahí no se inventa: se enseña el débito, llamado débito. */
+const bepPmccSolo = (p) => (soloPataLarga(p) ? n((p.long || {}).strike) + pmccNetDebit(p) : NaN);
 /* ---------- v4.56: el candado ----------
    Victor: *"no quiero que a mis amigos les salga… si no tienen esa funcionalidad"*. Y encontró un
    agujero de verdad: el backup se lleva las marcas dentro (`...p` copia todo). Si él le pasa su
@@ -4619,7 +4635,9 @@ function VencimientosCard({ rows, onOpen, onPos }) {
                           {(hasLast || (isFinite(d.bep) && n(d.bep) !== 0)) && (
                             <div style={{ fontSize: 11, color: T.sub, fontWeight: 700, lineHeight: 1.35, marginTop: 1, display: "flex", flexWrap: "wrap", gap: "0 6px" }}>
                               {hasLast && <span style={{ whiteSpace: "nowrap" }}>{"Últ $" + money2(lastN)}</span>}
-                              {isFinite(d.bep) && n(d.bep) !== 0 ? <span style={{ whiteSpace: "nowrap" }}>{"BEP $" + money2(d.bep)}</span> : null}
+                              {/* v5.27: un BEP es un precio del subyacente y por eso va junto al "Últ".
+                                  El débito neto de un PMCC no lo es: mismo número, nombre correcto. */}
+                              {isFinite(d.bep) && n(d.bep) !== 0 ? <span style={{ whiteSpace: "nowrap" }}>{(d.bepEsPrecio === false ? "Débito $" : "BEP $") + money2(d.bep)}</span> : null}
                             </div>
                           )}
                           {/* varias posiciones fundidas en esta fila: se eligen una a una en vez de abrir
@@ -6236,7 +6254,14 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               const up = n(p.prima);
               const upStr = (up < 0 ? "−$" : "$") + money2(Math.abs(up));
               return <MicroStat label="Prima/u" value={upStr} />;
-            })() : (
+            })() : isPMCC(p) ? (
+              /* v5.27: el "BEP" del PMCC es su DÉBITO NETO, y aquí va justo al lado de "Último" —
+                 puestos en fila invitan a compararlos, y no son la misma magnitud. Mismo número,
+                 nombre correcto. Cuando solo queda la larga sí hay break-even: strike + débito. */
+              soloPataLarga(p)
+                ? <MicroStat label="BEP" value={"$" + money2(bepPmccSolo(p))} />
+                : <MicroStat label="Débito" value={"$" + money2(effBep(p))} />
+            ) : (
               <MicroStat label="BEP" value={"$" + money2(effBep(p))} />
             )}
             <MicroStat label="Último" value={p.last ? "$" + money2(p.last) : "—"} />
@@ -6445,9 +6470,18 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </div>
               <EditField label="Comisión long" prefix="$" value={(p.long || {}).comision} onChange={setLong("comision")} />
               <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>BEP (auto) = prima long − short</span>
+                <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>Débito neto = prima long − short</span>
                 <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(effBep(p))}</span>
               </div>
+              {/* v5.27: y el break-even de verdad, cuando existe. Con la corta viva no hay uno simple
+                  —depende del valor temporal que le quede a la larga el día que venza la corta— y no
+                  se inventa. Sin corta, es el de una call comprada: strike + lo que te ha costado. */}
+              {soloPataLarga(p) && (
+                <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>BEP = strike long + débito neto</span>
+                  <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(bepPmccSolo(p))}</span>
+                </div>
+              )}
             </>
           )}
           {!cash && natOf(p) === "CRED" && (
@@ -16434,14 +16468,17 @@ function App() {
         const sola = soloPataLarga(p);
         const strikeFila = sola ? ((p.long || {}).strike || "") : (p.strike || "");
         const key = p.tkr + "|" + p.block + "|" + (p.right || "") + "|" + strikeFila + "|" + (p.tipo || "") + "|" + spreads + "|" + dcStk;
-        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: strikeFila, tipo: p.tipo, spreads, dcStk, solaLarga: sola, qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
+        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: strikeFila, tipo: p.tipo, spreads, dcStk, solaLarga: sola, bepEsPrecio: sola || !isPMCC(p), qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
         /* v4.91 (Victor: "en vencimientos, pulsando la posición que se pueda editar, cerrar o rolar").
            La fila puede fundir varias posiciones idénticas (mismo ticker, bloque, strike y tipo), así que
            se llevan TODAS. Si es una, se abre directa; si son varias, se elige — abrir la primera "porque
            sí" sería editar una posición distinta de la que has tocado, sin decirlo. */
         groups[key].ids.push(p.id);
         groups[key].qty += n(p.qty);
-        groups[key].bepW += effBep(p) * n(p.qty);
+        /* v5.27: en esta pantalla el BEP va pegado al último precio, así que tiene que ser un precio.
+           Para el PMCC que solo conserva su larga, ése es strike + débito neto (ver `bepPmccSolo`);
+           para el resto, el de siempre. */
+        groups[key].bepW += (sola ? bepPmccSolo(p) : effBep(p)) * n(p.qty);
         groups[key].riesgo += capDesplegado(p);
         if (!groups[key].last && p.last) groups[key].last = p.last;
         if (p.covered) groups[key].covered = true;
@@ -16450,7 +16487,7 @@ function App() {
         const contratos = g.qty / 100;
         return {
           tkr: g.tkr, block: g.block, right: g.right, strike: g.strike,
-          tipo: g.tipo, spreads: g.spreads, dcStk: g.dcStk, solaLarga: g.solaLarga,
+          tipo: g.tipo, spreads: g.spreads, dcStk: g.dcStk, solaLarga: g.solaLarga, bepEsPrecio: g.bepEsPrecio,
           qtyNum: Number.isInteger(contratos) ? contratos : g.qty,
           bep: g.qty ? g.bepW / g.qty : NaN,
           riesgo: g.riesgo, last: g.last, covered: g.covered, ids: g.ids,

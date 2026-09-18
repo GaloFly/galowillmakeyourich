@@ -1,5 +1,54 @@
 # CHANGELOG — Bloques
 
+Bloques v5.27 — El "BEP" de un PMCC no era un precio, y estaba pegado al precio
+
+## El síntoma
+Victor, leyendo la fila que acababa de aparecer en la v5.26 —`ASTS · x1 70C · Últ $58.27 · BEP $32.5`—:
+*"el BEP de las opciones largas no es lo mismo que el strike price, no está relacionado; habría que
+sumar prima pagada más strike, ¿no?"*.
+
+Tiene razón, y el fallo es de bulto.
+
+## La causa
+Un **BEP es un precio del subyacente**. Por eso en esa línea va pegado al "Últ": están juntos para
+compararlos de un vistazo. Y lo que había ahí no era un precio: `effBep` devuelve para un PMCC su
+**débito neto** (prima pagada por la larga − prima cobrada por la corta), que es su coste por acción.
+
+Comparar `Últ $58.27` con `BEP $32.5` no significa absolutamente nada. El código ya lo sabía —el
+comentario del PMCC dice literalmente *"el 'BEP' del PMCC no es un precio: es el DÉBITO NETO"*— pero
+la pantalla seguía llamándolo BEP, al lado del precio.
+
+## El arreglo
+El número de coste **no se toca**: sigue alimentando el riesgo y el % de P&L igual que siempre. Lo
+que se le quita es el nombre que no le corresponde.
+
+- **Con la corta recomprada o expirada** (solo queda la call comprada) sí hay un break-even, y es el
+  de cualquier call comprada: **strike de la larga + débito neto**. 70 + 32,50 = **$102,50**. Eso es
+  lo que sale ahora junto al "Últ", en Vencimientos y en la ficha.
+- **Con la corta viva** no hay un break-even simple —depende del valor temporal que le quede a la
+  larga el día que venza la corta— así que **no se inventa uno**: se enseña el mismo número de antes
+  llamado **Débito**, en Vencimientos, en la fila de la posición y en el editor.
+
+**Consecuencia que se va a notar:** esas filas pasan de verde a **rojo**. Y es lo correcto: con ASTS
+a 58, una call comprada de strike 70 expiraría hoy sin valor. Verde era justo la lectura contraria.
+Es la misma regla que Victor pidió en la v1.79 para las long call (*"con el spot por debajo del BEP
+hay que marcarlas en rojo, no en verde"*), aplicada donde faltaba.
+
+## La verificación
+`pruebas/vencimiento-pata-larga.mjs` crece con los números a mano: BEP = 102,50, débito = 32,50 (sin
+mover), ningún BEP inventado para el PMCC entero, y las etiquetas correctas en las dos filas. El
+semáforo se comprueba en los tres tramos, incluido el que los distingue: con el precio **entre el
+strike y el BEP** (90, sobre 70 y bajo 102,5) la regla de las cortas diría "peligro de asignación" y
+la de las largas "todavía en pérdida" — son cosas distintas y no pueden confundirse.
+
+Dos controles con el fallo puesto otra vez: devolver el débito como BEP tira 4 comprobaciones
+(incluido el conteo de "en peligro", que baja de 2 a 1), y llamar BEP a los dos tira 2.
+
+**Línea base refijada a propósito** (`npm run prueba -- --fijar`): se movió **una** entrada,
+`pestaña.B2.tickers`, y solo porque la etiqueta `BEP` del PMCC ahora es `Débito`. **Ningún importe
+cambió** — `pestaña.B2.importes` salió idéntica, y las otras 17 también.
+
+
 Bloques v5.26 — Un PMCC sin corta también vence, y no salía en Vencimientos
 
 ## El síntoma
