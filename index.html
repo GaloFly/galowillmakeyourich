@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.25"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.26"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -520,7 +520,10 @@ const vencDanger = (d) => {
   const lastN = n(d.last), strikeN = n(d.strike);
   const hasLast = d.last !== "" && d.last != null && isFinite(lastN) && lastN !== 0;
   if (!hasLast) return null;
-  if (BEP_DEBIT_STRATS.has(d.tipo)) {
+  /* v5.26: `solaLarga` = un PMCC al que le recompraron la corta y solo le queda la call COMPRADA.
+     Se juzga como una long call —por BEP, no por strike—: con la regla de las cortas saldría verde
+     justo cuando el precio se hunde por debajo del strike, que es cuando esa call se va a cero. */
+  if (BEP_DEBIT_STRATS.has(d.tipo) || d.solaLarga) {
     const bepN = n(d.bep);
     const ref = isFinite(bepN) && bepN !== 0 ? bepN : strikeN;
     return ref ? lastN < ref : null;
@@ -1010,6 +1013,14 @@ const patasDePosicion = (p) => {
   return salida;
 };
 const codigosDePosicion = (p) => patasDePosicion(p).map((x) => x.cod);
+/* ---------- v5.26: bajo qué fecha vive una posición en Vencimientos ----------
+   Normalmente su propio `expiry`. Pero un PMCC al que le recompraron o expiró la corta NO tiene:
+   lo único que le queda es la call comprada, con su vencimiento propio meses o años más lejos. Sin
+   esto, esa posición no salía en Vencimientos EN ABSOLUTO — Victor, con dos LEAPS de 2028 en
+   cartera: *"no aparecen vencimientos; fíjate que solo hay hasta 2027"*. Una posición que
+   desaparece no se distingue de una que no existe. */
+const soloPataLarga = (p) => !!(p && isPMCC(p) && !p.expiry && p.long && p.long.expiry);
+const vencimientoDe = (p) => (p && p.expiry ? p.expiry : (soloPataLarga(p) ? p.long.expiry : ""));
 /* ---------- v4.56: el candado ----------
    Victor: *"no quiero que a mis amigos les salga… si no tienen esa funcionalidad"*. Y encontró un
    agujero de verdad: el backup se lleva las marcas dentro (`...p` copia todo). Si él le pasa su
@@ -15991,7 +16002,10 @@ function App() {
   };
   /* v3.46: la call corta de un PMCC/Diagonal expira sin valor y NO se vende otra de momento — la posición
      sigue abierta solo con la long. Registra la expiración en la cadena (pata expiredShort, $0), vacía
-     strike/expiry (así sale de Vencimientos) y marca noShort. Fecha: el propio vencimiento si ya pasó,
+     strike/expiry y marca noShort. Fecha: el propio vencimiento si ya pasó,
+     (v5.26: vaciar strike/expiry sacaba la posición de Vencimientos DEL TODO, y eso era de más. Lo
+     que no debe seguir ahí es la fecha de la corta, que ya no existe; la posición sí, bajo el
+     vencimiento de su pata larga. Lo hace `vencimientoDe`, no este vaciado.)
      hoy si no. El crédito cobrado no se toca (ya vive en p.prima). */
   const expirePmccShort = (id, note) => {
     setPositions((ps) => ps.map((p) => {
@@ -16394,10 +16408,14 @@ function App() {
   const vencimientosRows = useMemo(() => {
     const map = {};
     active.forEach((p) => {
-      if (!isOptionNat(p) || !p.expiry) return;
-      if (!map[p.expiry]) map[p.expiry] = { expiry: p.expiry, riesgo: 0, items: [] };
-      map[p.expiry].riesgo += capDesplegado(p);
-      map[p.expiry].items.push(p);
+      /* v5.26: `vencimientoDe` en vez de `p.expiry` — un PMCC sin corta vive bajo el vencimiento de
+         su pata larga, que es lo único que le queda. Cada posición sigue apareciendo UNA vez, así
+         que ningún riesgo se cuenta dos veces. */
+      const exp = vencimientoDe(p);
+      if (!isOptionNat(p) || !exp) return;
+      if (!map[exp]) map[exp] = { expiry: exp, riesgo: 0, items: [] };
+      map[exp].riesgo += capDesplegado(p);
+      map[exp].items.push(p);
     });
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return Object.values(map).sort((a, b) => (a.expiry < b.expiry ? -1 : 1)).map((r) => {
@@ -16411,8 +16429,12 @@ function App() {
         const dc = isDCDD(p);
         const spreads = cs ? [p.putSpread, p.callSpread].filter(Boolean).join(" · ") : "";
         const dcStk = dc ? [dcStrikePut(dcddOf(p)) ? "P " + dcStrikePut(dcddOf(p)) : "", dcStrikeCall(dcddOf(p)) ? "C " + dcStrikeCall(dcddOf(p)) : ""].filter(Boolean).join(" · ") : "";
-        const key = p.tkr + "|" + p.block + "|" + (p.right || "") + "|" + (p.strike || "") + "|" + (p.tipo || "") + "|" + spreads + "|" + dcStk;
-        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: p.strike, tipo: p.tipo, spreads, dcStk, qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
+        /* v5.26: el PMCC sin corta se etiqueta con el strike de su LARGA — es el contrato que de
+           verdad vence ese día. Con el strike vacío la fila ponía solo "C". */
+        const sola = soloPataLarga(p);
+        const strikeFila = sola ? ((p.long || {}).strike || "") : (p.strike || "");
+        const key = p.tkr + "|" + p.block + "|" + (p.right || "") + "|" + strikeFila + "|" + (p.tipo || "") + "|" + spreads + "|" + dcStk;
+        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: strikeFila, tipo: p.tipo, spreads, dcStk, solaLarga: sola, qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
         /* v4.91 (Victor: "en vencimientos, pulsando la posición que se pueda editar, cerrar o rolar").
            La fila puede fundir varias posiciones idénticas (mismo ticker, bloque, strike y tipo), así que
            se llevan TODAS. Si es una, se abre directa; si son varias, se elige — abrir la primera "porque
@@ -16428,7 +16450,7 @@ function App() {
         const contratos = g.qty / 100;
         return {
           tkr: g.tkr, block: g.block, right: g.right, strike: g.strike,
-          tipo: g.tipo, spreads: g.spreads, dcStk: g.dcStk,
+          tipo: g.tipo, spreads: g.spreads, dcStk: g.dcStk, solaLarga: g.solaLarga,
           qtyNum: Number.isInteger(contratos) ? contratos : g.qty,
           bep: g.qty ? g.bepW / g.qty : NaN,
           riesgo: g.riesgo, last: g.last, covered: g.covered, ids: g.ids,

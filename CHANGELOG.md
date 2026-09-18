@@ -1,5 +1,47 @@
 # CHANGELOG — Bloques
 
+Bloques v5.26 — Un PMCC sin corta también vence, y no salía en Vencimientos
+
+## El síntoma
+Victor, con la v5.25 ya funcionando: *"funciona, pero los vencimientos, no aparecen vencimientos.
+Fíjate que solo hay vencimientos hasta 2027"* — teniendo **dos LEAPS de ASTS de 2028** en cartera.
+
+## La causa
+Vencimientos agrupa por `p.expiry`. Y un PMCC al que se le recompró o expiró la corta **no tiene**:
+se le vacían strike y vencimiento a propósito desde la v3.46. Lo único que le queda es la call
+comprada, con su vencimiento propio años más lejos.
+
+Resultado: esas posiciones **no salían en Vencimientos en absoluto**. Ni en la lista, ni en el
+conteo de operaciones, ni en el riesgo total. Y no es poco dinero: en su cartera son $5.985 de
+riesgo que esa pantalla no contaba.
+
+El vaciado de la v3.46 era correcto en su mitad —lo que no debe seguir ahí es la fecha de una corta
+que ya no existe— y de más en la otra: la posición sí sigue viva, y vence.
+
+## El arreglo
+`vencimientoDe(p)`: su propio `expiry`, o el de su pata larga cuando es lo único que le queda. Cada
+posición aparece **una sola vez**, así que ningún riesgo se cuenta dos veces.
+
+Con dos detalles que hacen que la fila signifique algo:
+
+- **Se etiqueta con el strike de la larga** (`70C`). Con el strike vacío la fila ponía solo `C`.
+- **El semáforo la juzga como lo que es: una call COMPRADA**, por BEP y no por strike. Con la regla
+  de las cortas —peligro por encima del strike— habría salido **verde justo cuando el precio se
+  hunde**, que es cuando esa call se va a cero. Exactamente al revés.
+
+## La verificación
+`pruebas/vencimiento-pata-larga.mjs`, con tres posiciones y los números escritos a mano: una short
+put (riesgo 5.480), un PMCC sin corta con su LEAPS de 2028 (3.250) y un PMCC entero cuya corta vence
+en 2027 (2.735). Comprueba las tres fechas, que el total son 11.465 —cada una contada una vez—, que
+el PMCC entero **no** se mueve a 2028, la etiqueta `70C` y el semáforo en los dos sentidos.
+
+Tres controles con el fallo puesto otra vez: quitar `vencimientoDe` tira 6 comprobaciones, quitar el
+semáforo de pata larga 1 (la del precio bajo el BEP: con el precio alto los dos criterios coinciden
+por casualidad, y por eso hacen falta los dos casos), y quitar la etiqueta del strike 1.
+
+`npm run prueba` sigue en 18/18 y las otras doce suites en verde.
+
+
 Bloques v5.25 — El Valor mercado en Auto salía vacío y no decía por qué
 
 ## El síntoma
