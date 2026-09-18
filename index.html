@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.18"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.19"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -736,6 +736,27 @@ const plausibleOf = (p) => {
    Réplica byte a byte de las fórmulas de primaEvents/mtmEvents de MovimientosView, pero para UNA posición,
    para poder mostrar la tarjeta-resumen de cierre sin ir a Histórico. closedResultOf = mtm para acciones,
    long call y credit spreads; prima acumulada para el resto de opciones (short put/CC/PMCC). */
+/* ---------- v5.19: UNA PUT ASIGNADA NO "GANA" SU PRIMA ----------
+   Victor, tras una asignación de MRLN: *"hemos recibido la prima, la opción nos la ejercen... ¿se
+   reduce el break even price o cuándo lo contabiliza Hacienda?"*.
+
+   Medido antes de tocar nada, con su caso exacto (10 contratos, strike 7,50, prima acumulada $2.300,
+   acciones vendidas después a $6,00):
+     caja de verdad  =  +2.300 primas − 7.500 compra + 6.000 venta  =  **+800**
+     lo que decía la app (MTM)                                       =  **+3.100**
+   Se contaba la prima DOS veces: una como resultado de la put, y otra escondida dentro del coste
+   rebajado de las acciones (BEP 5,20 en vez del strike 7,50).
+
+   La prima no puede estar en los dos sitios. Y el criterio fiscal español más aceptado dice dónde
+   va: al ser ejercido, la prima cobrada **minora el valor de adquisición** de las acciones — no
+   genera plusvalía propia ese día; la plusvalía aflora entera cuando vendes las acciones. Es
+   exactamente lo que ya hacía el BEP de 5,20, así que lo que sobraba era lo otro.
+
+   Por eso, para una short put asignada:
+     · PRIMAS sigue enseñando el cash cobrado. Ese dinero entró de verdad, y esa pestaña mide eso.
+     · MTM y el Histórico la dan por CERO, con un apunte que lo dice con todas las letras en vez de
+       callarlo: su resultado no ha desaparecido, vive dentro del coste de las acciones. */
+const esPutAsignada = (p) => !!p.exercised && !!p.closed && natOf(p) === "CRED" && p.right === "P" && !isPMCC(p);
 const _oPrimaPS = (p) => { const c = p.rollChain || []; return c.length ? n(c[0].prevPrima) : n(p.prima); };
 const _oStrike = (p) => { const c = p.rollChain || []; return c.length ? c[0].prevStrike : p.strike; };
 const _dirSign = (p) => (natOf(p) === "CRED" || isCreditSpread(p) ? -1 : 1);
@@ -758,7 +779,10 @@ function primaSumOfPos(p) {
   }
   return s;
 }
-function mtmSumOfPos(p) {
+/* el MTM "en bruto": lo que la posición ha realizado sin aplicar la regla de la asignación. Se
+   necesita aparte porque el apunte que traspasa la prima al coste de las acciones vale exactamente
+   esto en negativo — así la suma queda en cero clavado, sin depender de rehacer la cuenta. */
+function mtmBrutoOfPos(p) {
   const qty = n(p.qty), chain = p.rollChain || []; let s = 0;
   const om = (k) => omitidoMov(p, k); /* v5.15 */
   if (isVertical(p)) s += vBookedSum(p) - (vBookedAlgo(p) ? n(p.comision) : 0); /* v3.52 + v3.59: idéntico a Primas — un vertical no distingue prima acumulada de MTM; la fee de apertura se imputa una vez */
@@ -798,9 +822,14 @@ function mtmSumOfPos(p) {
   if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d, idx) => { if (om("div" + (d.id || idx))) return; s += signoAcc(p) * n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
   return s;
 }
+/* v5.19: lo que traspasa una put asignada al coste de las acciones — todo su realizado */
+const primaAlCoste = (p) => (esPutAsignada(p) ? mtmBrutoOfPos(p) : 0);
+function mtmSumOfPos(p) { return esPutAsignada(p) ? 0 : mtmBrutoOfPos(p); }
 const realizedOf = (p) => {
   if (!isOptionNat(p)) return mtmSumOfPos(p);
-  const noOpenBooked = isLongCallPos(p) || isCreditSpread(p);
+  /* v5.19: la asignada va por MTM (cero), no por su prima acumulada: esa prima ya está contada
+     dentro del coste de las acciones que te entregaron. */
+  const noOpenBooked = isLongCallPos(p) || isCreditSpread(p) || esPutAsignada(p);
   return noOpenBooked ? mtmSumOfPos(p) : primaSumOfPos(p);
 };
 /* valor de mercado — para acciones (ACC) se recalcula solo: Último × Cantidad. Manual para opciones o si se fuerza. */
@@ -5902,10 +5931,13 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const closeExpira = closeKind === "expira";
   const [closeMode, setCloseMode] = useState("total"); // acciones: total o parcial
   const [closeQtyV, setCloseQtyV] = useState(""); // nº de acciones en cierre parcial
-  const openClose = () => { setCloseDateV(new Date().toISOString().slice(0, 10)); setClosePriceV(""); setCloseComisionV(""); setCloseNoteV(""); setCloseLongPriceV(""); setCloseLongComisionV(""); setCloseKind("recompra"); setCloseMode("total"); setCloseQtyV(String(n(p.qty))); setClosing(true); };
+  /* v5.19 (Victor: "que se asigne a bloque 1, bloque 2 o bloque 3, puedes poner en cualquiera"): a qué
+     bloque van las acciones que te entregan al asignarte. Por defecto B1, que es donde iban antes. */
+  const [asigBloque, setAsigBloque] = useState(1);
+  const openClose = () => { setCloseDateV(new Date().toISOString().slice(0, 10)); setClosePriceV(""); setCloseComisionV(""); setCloseNoteV(""); setCloseLongPriceV(""); setCloseLongComisionV(""); setCloseKind(pendingAction && pendingAction.action === "asignada" ? "exercised" : "recompra"); setCloseMode("total"); setCloseQtyV(String(n(p.qty))); setAsigBloque(1); setClosing(true); };
   const confirmClose = () => {
     const partial = natOf(p) === "ACC" && closeMode === "parcial";
-    onClose({ date: closeDateV, price: (closeExercised || closeExpira || (isPMCC(p) && p.noShort)) ? "0" : closePriceV, comision: closeExpira ? "0" : closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "" });
+    onClose({ date: closeDateV, price: (closeExercised || closeExpira || (isPMCC(p) && p.noShort)) ? "0" : closePriceV, comision: closeExpira ? "0" : closeComisionV, note: closeNoteV, longPrice: closeLongPriceV, longComision: closeLongComisionV, exercised: closeExercised, partial, qtyPart: partial ? closeQtyV : "", asigBloque });
     setClosing(false);
   };
   /* v3.50: hoja de PATA de un vertical (Credit Spread) — cerrar / rolar / reabrir solo la corta o la larga */
@@ -5933,6 +5965,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
     if (pendingAction && pendingAction.id === p.id) {
       if (pendingAction.action === "roll") openRoll();
       if (pendingAction.action === "close") openClose();
+      if (pendingAction.action === "asignada") openClose(); /* v5.19: misma hoja, ya marcada en "Ejercida / asignada" */
       if (pendingAction.action === "legS") openLeg("S");
       if (pendingAction.action === "legL") openLeg("L");
       /* v4.35: si venimos del banner de vencidas (u otra pantalla), esta fila puede estar muy abajo
@@ -6617,14 +6650,15 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 26, border: T.modalEdge, padding: "18px 18px 24px", width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>✕ Cerrar {p.tkr || "posición"}</div>
+                  {/* v5.19: una asignación NO es un cierre — te obligan a comprar. El título lo dice. */}
+                  <div style={{ fontSize: 17, fontWeight: 800, color: T.ink }}>{closeExercised ? "Te han ejercido " + (p.tkr || "la posición") : "✕ Cerrar " + (p.tkr || "posición")}</div>
                   {/* descripción clara de qué posición se cierra (v5.13): tipo + strikes/spreads/expiry + nº contratos */}
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
                     {p.tipo && <span style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, background: T.tile, borderRadius: 7, padding: "3px 7px" }}>{tipoChipLabel(p)}</span>}
                     {optionDetail(p) && <span style={{ fontSize: 12, fontWeight: 700, color: T.ink }}>{optionDetail(p)}</span>}
                     <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>× {Number.isInteger(n(p.qty) / 100) && opt ? n(p.qty) / 100 + " contr." : n(p.qty) + (opt ? " opc" : " acc")}</span>
                   </div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 3 }}>{pmcc ? "Recompra de la short + venta de la long · por acción" : isCreditSpread(p) ? "Close price (coste de recompra del spread) · por acción" : (opt ? "Precio de recompra" : "Precio de venta") + " · por acción" + (opt ? " · queda archivada con su cadena de rolls" : "")}</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: T.sub, marginTop: 3 }}>{closeExercised ? "No la recompras: te entregan las acciones al strike" : pmcc ? "Recompra de la short + venta de la long · por acción" : isCreditSpread(p) ? "Close price (coste de recompra del spread) · por acción" : (opt ? "Precio de recompra" : "Precio de venta") + " · por acción" + (opt ? " · queda archivada con su cadena de rolls" : "")}</div>
                 </div>
                 <button onClick={() => setClosing(false)} style={{ background: T.tile, border: "none", borderRadius: 12, width: 34, height: 34, fontSize: 15, color: T.sub, cursor: "pointer", flexShrink: 0 }}>✕</button>
               </div>
@@ -6642,6 +6676,36 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                   <div style={{ gridColumn: "span 2" }}>
                     <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>¿Cómo se cierra?</span>
                     <Pill options={["Recompra", "Ejercida / asignada", "Expira sin valor"]} value={closeExercised ? "Ejercida / asignada" : closeExpira ? "Expira sin valor" : "Recompra"} onChange={(v) => setCloseKind(v === "Ejercida / asignada" ? "exercised" : v === "Expira sin valor" ? "expira" : "recompra")} size="sm" />
+                    {/* v5.19 — QUÉ PASA AL ASIGNARTE, dicho antes de confirmar.
+                        Hasta ahora la app creaba la acción en B1 sin avisar y sin preguntar: Victor
+                        registró una asignación y no encontró dónde había ido. Ahora se ve lo que va a
+                        hacer (cuántas acciones, a qué coste y por qué ese coste) y se elige el bloque. */}
+                    {closeExercised && shortSide && p.right === "P" && !isPMCC(p) && (() => {
+                      const accs = n(p.qty);
+                      const traspaso = mtmBrutoOfPos({ ...p, closed: true, closePrice: "0", closeComision: closeComisionV, exercised: true });
+                      const coste = accs ? n(p.strike) - traspaso / accs : NaN;
+                      return (
+                        <div style={{ marginTop: 10, background: T.tileGreen, borderRadius: 14, padding: "12px 13px" }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 800, color: T.green }}>Te quedas {accs} acciones de {p.tkr || "—"}</div>
+                          <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.5 }}>
+                            Coste <b style={{ color: T.ink }}>${isFinite(coste) ? money2(coste) : "—"}</b> por acción, no ${money2(n(p.strike))}: la prima que cobraste ({signMoney(traspaso)}) se resta del precio de compra.
+                          </div>
+                          <div style={{ fontSize: 10.5, color: T.sub, marginTop: 5, lineHeight: 1.45 }}>
+                            Por eso esta put pasará a contar <b>0</b> en MTM y en el Histórico: su resultado no se pierde, se muda al coste de las acciones y saldrá cuando las vendas. En Primas se sigue viendo el cobro.
+                          </div>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 11, marginBottom: 5 }}>¿A qué bloque van?</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {BLOCKS.map((b) => (
+                              <button key={b.id} type="button" onClick={() => setAsigBloque(b.id)}
+                                style={{ flex: "1 1 auto", border: "none", cursor: "pointer", borderRadius: 10, padding: "9px 8px", fontSize: 11.5, fontWeight: 800,
+                                  background: asigBloque === b.id ? b.badge : T.tile, color: asigBloque === b.id ? "#fff" : T.sub }}>
+                                B{b.id} · {b.tag}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
                 {!canExercise && !pmcc && opt && shortSide && (
@@ -7109,6 +7173,22 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 { side: "V", label: stkLbl, perShare: n(p.closePrice), cash: n(p.closePrice) * qty },
               ];
         mtmEvents.push({ id: p.id + "-closemtm", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: p.exercised ? "Asignada" : isExpira ? "Expirada" : "Cierre", cash: realizedClose, fee: fee + openFee, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry, bep: n(effBep(p)), note: p.closeNote || "", legs: mtmLegs });
+        /* v5.19 — EL APUNTE QUE EVITA CONTAR LA PRIMA DOS VECES.
+           Una short put asignada deja de ser un resultado: su prima pasa a abaratar las acciones que
+           te entregan. Aquí se resta ENTERO lo que la posición llevaba realizado, de forma que su MTM
+           queda en cero clavado, y se dice por qué en vez de dejar un cero sin explicar — un cero
+           mudo no se distingue de un fallo. La fecha es la de la asignación: hasta ese día la put sí
+           iba ganando; es ese día cuando su resultado se muda a las acciones. */
+        if (esPutAsignada(p)) {
+          const traspaso = mtmBrutoOfPos(p);
+          const acc = positions.find((x) => x.assignedFrom === p.id);
+          mtmEvents.push({ id: p.id + "-asigcoste", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo,
+            kind: "Prima al coste de las acciones", cash: -traspaso, fee: 0, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry,
+            note: "Te asignaron: la prima cobrada no cuenta como resultado, pasa a abaratar las " + (acc ? n(acc.qty) : n(p.qty)) + " acciones"
+              + (acc ? " (coste $" + money2(n(effBep(acc))) + " en vez de $" + money2(n(p.strike)) + ")" : "")
+              + ". El resultado saldrá cuando las vendas.",
+            legs: [{ side: null, label: "Traspasado al coste de " + (p.tkr || "las acciones"), perShare: qty ? -traspaso / qty : 0, cash: -traspaso }] });
+        }
       }
       /* PMCC — CIERRE (modelo acordado):
          · PRIMAS: UN evento combinado = (venta long − coste long − recompra short) × qty − comisiones.
@@ -7448,7 +7528,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const closedResultOf = (p) => {
     if (p._venta) return p._venta.realizado; /* v4.42: venta parcial — su realizado va en el propio objeto */
     if (!isOptionNat(p)) return mtmSumOf(p);
-    const noOpenBooked = isLongCallPos(p) || isCreditSpread(p);
+    /* v5.19: una put asignada va por MTM (cero), no por su prima: esa prima ya está dentro del coste
+       de las acciones. Sumarla aquí la contaría dos veces — ver `esPutAsignada`. */
+    const noOpenBooked = isLongCallPos(p) || isCreditSpread(p) || esPutAsignada(p);
     return noOpenBooked ? mtmSumOf(p) : primaSumOf(p);
   };
   /* v1.02: resultado "hasta ahora" de una posición ABIERTA — en opciones, la prima ya cobrada (aperturas +
@@ -8303,7 +8385,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                resultado a otra posición. La app ya crea la acción con assignedFrom = id de la put y coste
                base = BEP, así que la cadena se reconstruye sin pedir nada al usuario.
                · VIVAS: la acción sigue abierta → valoración a hoy (BEP vs last), NUNCA entra en estadísticas.
-               · CERRADAS: acción vendida → resultado real de la cadena = prima de la put + realizado de la acción.
+               · CERRADAS: acción vendida → resultado real de la cadena = el realizado de la acción, que YA
+                 lleva la prima dentro (su coste es strike − prima). Sumar la prima aparte la contaría dos veces.
                Respeta el filtro de ticker de la pestaña; ignora el de estado (una asignación es, por
                definición, una put cerrada con una acción que puede seguir viva). */
             const asigs = positions
@@ -8328,7 +8411,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 const last = st ? n(st.last) : NaN;
                 const viva = !!st && !st.closed;
                 const accion = !st ? NaN : st.closed ? mtmSumOf(st) : (isFinite(last) && last > 0 && isFinite(bep) ? (last - bep) * shares : NaN);
-                return { p, st, linkOk, prima, bep, shares, last, viva, accion, total: isFinite(accion) ? prima + accion : NaN };
+                /* v5.19: el total de la cadena es SOLO el de la acción, no prima + acción. La prima ya
+                   está dentro del coste de esa acción (BEP = strike − prima), así que sumarla otra vez la
+                   contaba dos veces — con el caso de Victor daban +$3.100 donde la caja decía +$800. */
+                return { p, st, linkOk, prima, bep, shares, last, viva, accion, total: isFinite(accion) ? accion : NaN };
               })
               .sort((a, b) => (b.p.closeDate || "").localeCompare(a.p.closeDate || ""));
             if (asigs.length === 0) return null;
@@ -8342,7 +8428,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>{a.p.tkr} <span style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>${money2(n(a.p.strike))} · {a.p.closeDate || "—"}</span></div>
                   <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 2 }}>
-                    Prima {signMoney(a.prima)}{isFinite(a.bep) ? " · BEP $" + money2(a.bep) : ""}{a.viva && isFinite(a.last) && a.last > 0 ? " · hoy $" + money2(a.last) : ""}{isFinite(a.shares) ? " · " + a.shares + " acc." : ""}
+                    Prima {signMoney(a.prima)} → ya dentro del{isFinite(a.bep) ? " BEP $" + money2(a.bep) : " coste"}{a.viva && isFinite(a.last) && a.last > 0 ? " · hoy $" + money2(a.last) : ""}{isFinite(a.shares) ? " · " + a.shares + " acc." : ""}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -8365,7 +8451,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 </summary>
                 <div style={{ padding: "0 16px 14px" }}>
                   <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginBottom: 9 }}>
-                    La put asignada no acaba en la put: sigue en las acciones. Aquí se ve la cadena entera (prima + acción). Las vivas son valoración a día de hoy, no resultado, y por eso no entran en ninguna estadística.
+                    La put asignada no acaba en la put: sigue en las acciones. Aquí se ve la cadena entera — el resultado es el de la acción, que ya lleva la prima dentro de su coste. Las vivas son valoración a día de hoy, no resultado, y por eso no entran en ninguna estadística.
                   </div>
                   {vivas.length > 0 && (<>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
@@ -15389,7 +15475,7 @@ function App() {
        v4.35: además hay que saltar a la PESTAÑA DEL BLOQUE de la posición. La acción pendiente solo
        la recoge la BlockCard de ese bloque, así que llegando a Portfolio con el Resumen abierto (o
        con otro bloque) el formulario no aparecía nunca y el botón parecía no hacer nada. */
-    if (action === "roll" || action === "close" || action === "legS" || action === "legL") {
+    if (action === "roll" || action === "close" || action === "asignada" || action === "legS" || action === "legL") {
       setPendingAction({ id: sheetPos.id, action });
       irAlBloqueDe(sheetPos);
       if (view !== "bloques") selectView("bloques");
@@ -15720,7 +15806,7 @@ function App() {
      · Short PUT asignada → se crea automáticamente una posición de acción en B1 (Long Stock) con coste base
        = el BEP que había hasta la fecha (strike − prima acumulada), la cantidad de acciones asignadas y el
        mismo broker. La opción queda cerrada y archivada con su cadena. */
-  const closePos = (id, { date, price, comision, note, longPrice, longComision, exercised, partial, qtyPart }) => {
+  const closePos = (id, { date, price, comision, note, longPrice, longComision, exercised, partial, qtyPart, asigBloque }) => {
     let closedObj = null; /* v2.14: posición que queda CERRADA en esta acción → tarjeta-resumen */
     setPositions((ps) => {
       const tgt = ps.find((p) => p.id === id);
@@ -15748,10 +15834,16 @@ function App() {
       if (exercised && tgt && natOf(tgt) === "CRED" && tgt.right === "P" && !isPMCC(tgt)) {
         const shares = n(tgt.qty);
         if (shares > 0) {
-          const costBasis = effBep(tgt); // strike − prima acumulada, a la fecha de asignación
+          /* v5.19: el coste base sale del REALIZADO de la put (prima acumulada de todos los rolls, ya
+             neta de comisiones), no de `effBep`, que ignora las comisiones. Así el coste de las
+             acciones es exactamente lo que la put deja de contar como resultado, y la cadena cuadra
+             al céntimo en vez de dejarse las comisiones por el camino. */
+          const traspaso = mtmBrutoOfPos({ ...tgt, closed: true, closePrice: "0", closeComision: comision, exercised: true });
+          const costBasis = n(tgt.strike) - traspaso / shares;
+          const bloque = [0, 1, 2, 3].indexOf(n(asigBloque)) >= 0 ? n(asigBloque) : 1;
           const id2 = newId();
           next = [...next, {
-            id: id2, block: 1, broker: tgt.broker, tkr: tgt.tkr, tipo: "Long Stock", nat: "ACC",
+            id: id2, block: bloque, broker: tgt.broker, tkr: tgt.tkr, tipo: "Long Stock", nat: "ACC",
             strike: "", right: "P", expiry: "", qty: String(shares), bep: String(costBasis), prima: "",
             comision: "", ivr: "", last: "", mktValue: "", riesgo: "", factor: "1", margen: "",
             margenPct: "100", margenModo: "PCT", mktModo: "AUTO", pnlModo: "AUTO", pnl: "",
@@ -17128,6 +17220,13 @@ function App() {
                 {!p.closed && isVertical(p) && <ActionBtn icon="roll" label={p.noShort ? "Vender corta nueva" : "Pata corta"} sub={p.noShort ? "Reabrir la pata vendida días después" : "Cerrar o rolar SOLO la corta" + (p.sK ? " · strike " + p.sK : "")} color={T.purple} tint={T.tilePurple} onClick={() => sheetDo("legS")} />}
                 {!p.closed && isVertical(p) && <ActionBtn icon="shield" label={p.noLong ? "Comprar larga nueva" : "Pata larga"} sub={p.noLong ? "Reabrir la protección" : "Cerrar o rolar SOLO la larga" + (p.lK ? " · strike " + p.lK : "")} color={T.gold} tint={T.tileAmber} onClick={() => sheetDo("legL")} />}
                 {canCloseP && !(isVertical(p) && (p.noShort || p.noLong)) && <ActionBtn icon="close" label="Cerrar posición" sub="Registra el cierre con fecha, precio y comisión" onClick={() => sheetDo("close")} />}
+                {/* v5.19 (Victor: *"me han ejercido unas puts y veo que no tenemos en la app reflejado cómo
+                    registrarlas"*). Sí lo había desde la v5.15 — pero escondido dentro de "Cerrar
+                    posición", en un desplegable. Una asignación no es "cerrar": es que te obligan a
+                    comprar. Ahora tiene su propio botón y dice lo que va a pasar. */}
+                {!p.closed && natOf(p) === "CRED" && p.right === "P" && !isPMCC(p) && (
+                  <ActionBtn icon="shield" label="Me han ejercido" sub={"Te quedas " + n(p.qty) + " acciones · la prima abarata el precio de compra"} color={T.green} tint={T.tileGreen} onClick={() => sheetDo("asignada")} />
+                )}
                 {p.closed && <ActionBtn icon="reopen" label="Reabrir" sub="Deshace el cierre y vuelve a activa" onClick={() => sheetDo("reopen")} />}
                 {p.closed && <ActionBtn icon="edit" label="Editar" sub="Modificar campos de la posición cerrada" onClick={() => sheetDo("edit")} />}
                 <ActionBtn icon="🗑" danger label={sheetConfirmDel ? "¿Seguro? Se borra del todo" : "Eliminar"} sub={sheetConfirmDel ? "Esta acción no se puede deshacer" : "Borra la posición y su historial de rolls"} onClick={() => { if (!sheetConfirmDel) { setSheetConfirmDel(true); return; } delPos(p.id); setSheetPosId(null); }} />
