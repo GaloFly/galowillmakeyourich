@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.23"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.24"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -888,6 +888,24 @@ const codigoOpcion = (p) => (esUnaPata(p) ? codContrato(p.tkr, p.expiry, p.right
    vista. Es lo que costó la tarde del 18-sep-2026: la app preguntaba por ese contrato, el servidor
    no lo conocía, y lo único que se veía era "P&L · MANUAL" y un aviso mandando a pulsar 🔄 Precios. */
 const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+/* v5.24: el día de la semana de un vencimiento, dicho ahí mismo donde se teclea. Es lo único que
+   hacía falta para ver de un vistazo el error que costó una tarde: un LEAPS apuntado a un miércoles.
+   No juzga —enseña el dato— y solo se pone en ámbar cuando es imposible (fin de semana) o muy
+   improbable (lejano y no viernes: los mensuales y los LEAPS vencen el tercer viernes). Y dice
+   "compruébalo", no "está mal": quien sabe si existe ese contrato es el bróker, no esta app. */
+const avisoVencimiento = (iso) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ""))) return null;
+  const f = new Date(iso + "T12:00:00");
+  if (isNaN(f.getTime())) return null;
+  const dia = DIAS_SEMANA[f.getDay()];
+  const finde = f.getDay() === 0 || f.getDay() === 6;
+  const lejano = (f.getTime() - Date.now()) / 864e5 > 180;
+  const raro = finde || (lejano && f.getDay() !== 5);
+  return { dia, raro,
+    texto: finde ? "Cae en " + dia + " — en fin de semana no vence ninguna opción."
+      : raro ? "Cae en " + dia + ". Los vencimientos a más de medio año son viernes (el tercero del mes) — compruébalo en tu bróker."
+      : dia };
+};
 const leeContrato = (cod) => {
   const m = String(cod || "").match(/^US\.([A-Z.]+)(\d{2})(\d{2})(\d{2})([PC])(\d+)$/);
   if (!m) return null;
@@ -5980,6 +5998,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const pnlBasis = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || cap;
   const pnlPct = pnlBasis ? pnlVal / pnlBasis : NaN;
   const rollChain = p.rollChain || [];
+  /* v5.24: escribir UN campo de la pata larga del PMCC. Va por el mismo `onChange` que todo lo demás
+     —se guarda al instante— y reemplaza el objeto entero conservando el resto de sus campos, que es
+     la regla de la casa: solo se añade o se corrige, nunca se pierde lo que ya había. */
+  const setLong = (k) => (v) => onChange("long")({ ...(p.long || {}), [k]: v });
   const canRoll = !!onRoll && !p.closed && opt && natOf(p) === "CRED"; // roll de cadena: solo opciones cortas (Short Put/Short Call, nat=Crédito)
   const canClose = !!onClose && !p.closed && (nat === "ACC" || nat === "COLLAR" || opt) && !(isVertical(p) && (p.noShort || p.noLong)); // acciones/collar/cualquier opción; vertical con UNA pata cerrada se remata desde su hoja de pata
   const [rolling, setRolling] = useState(false);
@@ -6270,6 +6292,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                     style={{ flex: 1, minWidth: 0, boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: p.expiry ? T.ink : T.sub, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none", appearance: "none", WebkitAppearance: "none" }} />
                   {p.expiry && <button type="button" onClick={() => onChange("expiry")("")} style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 11, border: "none", background: T.tile, color: T.red, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>✕</button>}
                 </div>
+                {(() => { const a = avisoVencimiento(p.expiry); return a ? <div style={{ fontSize: 10.5, fontWeight: 700, color: a.raro ? T.gold : T.sub, marginTop: 4, lineHeight: 1.4 }}>{a.texto}</div> : null; })()}
               </div>
             </>
           )}
@@ -6356,12 +6379,29 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(effBep(p))}</span>
             </div>
           )}
+          {/* ---------- v5.24: la pata larga del PMCC se puede EDITAR ----------
+              Era una tarjeta de SOLO LECTURA: lo que se tecleara al crear la posición se quedaba ahí
+              para siempre. Victor tenía el vencimiento de su LEAPS de ASTS apuntado al 12 de enero
+              de 2028 —que es miércoles, y en miércoles no vence nada a dos años vista—, así que la
+              app le pedía al servidor un contrato inexistente y la posición no podía tener precio.
+              Y no había forma de corregirlo: o se borraba la posición y se rehacía, perdiendo su
+              historial de rolls, o se quedaba rota. Un dato que la app USA para pedir precios tiene
+              que poder arreglarse en el mismo sitio donde se ve que está mal. */}
           {!cash && isPMCC(p) && (
             <>
-              <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px" }}>
-                <div style={{ fontSize: 10, color: T.green, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Pata long · call comprada</div>
-                <div style={{ fontSize: 12, color: T.ink, fontWeight: 700 }}>Strike ${money2(n((p.long || {}).strike))} · Prima pagada ${money2(n((p.long || {}).prima))}/acc{(p.long || {}).expiry ? " · vto " + ibkrDate((p.long || {}).expiry) : ""}</div>
+              <div style={{ gridColumn: "span 2", fontSize: 10, color: T.green, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 2 }}>Pata long · call comprada</div>
+              <EditField label="Strike long" prefix="$" value={(p.long || {}).strike} onChange={setLong("strike")} />
+              <EditField label="Prima pagada $/acc" prefix="$" value={(p.long || {}).prima} onChange={setLong("prima")} />
+              <div style={{ gridColumn: "span 2" }}>
+                <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Vencimiento long</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="date" value={(p.long || {}).expiry || ""} onChange={(e) => setLong("expiry")(e.target.value)}
+                    style={{ flex: 1, minWidth: 0, boxSizing: "border-box", height: 40, background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: (p.long || {}).expiry ? T.ink : T.sub, fontSize: 14, fontWeight: 700, padding: "0 10px", outline: "none", appearance: "none", WebkitAppearance: "none" }} />
+                  {(p.long || {}).expiry && <button type="button" onClick={() => setLong("expiry")("")} style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 11, border: "none", background: T.tile, color: T.red, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>✕</button>}
+                </div>
+                {(() => { const a = avisoVencimiento((p.long || {}).expiry); return a ? <div style={{ fontSize: 10.5, fontWeight: 700, color: a.raro ? T.gold : T.sub, marginTop: 4, lineHeight: 1.4 }}>{a.texto}</div> : null; })()}
               </div>
+              <EditField label="Comisión long" prefix="$" value={(p.long || {}).comision} onChange={setLong("comision")} />
               <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>BEP (auto) = prima long − short</span>
                 <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(effBep(p))}</span>
