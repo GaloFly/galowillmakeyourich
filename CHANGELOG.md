@@ -1,5 +1,71 @@
 # CHANGELOG — Bloques
 
+Bloques v5.19 — Te ejercen una put: la prima se contaba DOS veces
+
+## El síntoma
+Victor: *"me han ejercido unas puts y veo que no tenemos en la app reflejado cómo registrarlas"*.
+
+Sí lo había, desde la v5.15 — pero **escondido dentro de "Cerrar posición"**, en un desplegable de
+tres opciones. Que no lo encontrara es un fallo de la app: una asignación no es "cerrar", es que te
+obligan a comprar.
+
+Y al ir a mirarlo apareció algo peor. Medido con su caso exacto (10 contratos de MRLN, strike 7,50,
+prima acumulada $2.300), asignando y vendiendo después las 1.000 acciones a $6,00:
+
+| | |
+|---|---|
+| Caja de verdad | +2.300 primas − 7.500 compra + 6.000 venta = **+$800** |
+| Lo que decía la app (MTM) | **+$3.100** |
+
+## La causa
+La prima se contaba **dos veces**: una como resultado de la put (la opción se cerraba a precio 0, o
+sea te quedabas la prima entera) y otra escondida dentro del **coste rebajado** de las acciones
+(BEP 5,20 en vez del strike 7,50). El mismo error estaba en el resumen "🔗 Asignadas" del Histórico.
+
+## Dónde va la prima, y por qué
+Victor, al darse cuenta: *"me estoy dando cuenta de que no podemos poner break even price 5,20...
+¿cómo se refleja de cara a Hacienda?"*.
+
+El 5,20 **sí** se puede poner: es lo correcto, y coincide con el criterio fiscal español más
+aceptado — al ser ejercido, la prima cobrada **minora el valor de adquisición** de las acciones y no
+genera plusvalía propia ese día; la plusvalía aflora entera cuando vendes las acciones. Lo que
+sobraba era lo otro. (Criterio a confirmar con su asesor: aquí solo se decide cómo suma la app.)
+
+## El arreglo
+Para una short put asignada:
+
+- **Primas** sigue enseñando el cobro de $2.300. Ese dinero entró de verdad en agosto, y esa pestaña
+  mide exactamente eso.
+- **MTM y el Histórico** la dan por **cero**, con un apunte que lo dice con todas las letras —
+  *"Prima al coste de las acciones"*— en vez de dejar un cero mudo, que no se distingue de una
+  avería. Su resultado no se ha perdido: vive dentro del coste de las acciones y saldrá al venderlas.
+- El resumen **"🔗 Asignadas"** deja de sumar prima + acción y enseña el resultado de la cadena.
+- El **coste base** ya no sale de `effBep` (que ignora las comisiones) sino del realizado de la put,
+  así la cadena cuadra al céntimo en vez de dejarse las comisiones por el camino.
+
+Con eso, vendiendo las MRLN a $6,00 la app dice **+$800**.
+
+## Y lo que pidió, además
+- **Botón propio "Me han ejercido"** en el menú de la posición, junto a Rolar y Cerrar. Antes de
+  confirmar dice lo que va a hacer: cuántas acciones te quedas, a qué coste, por qué ese coste y por
+  qué la put pasará a contar 0.
+- **El bloque es elegible** (Victor: *"o a B1 o a B3 o a B2, puedes poner en cualquiera"*). Antes iba
+  siempre a B1 sin preguntar — que es por lo que él no encontraba las acciones.
+- Las **calls ejercidas** quedan para la próxima, como pidió.
+
+## La verificación
+`pruebas/asignacion-put.mjs` (nueva) fija el **+$800** con la cuenta escrita a mano y comprueba el
+reparto en los DOS caminos de cálculo: los derivadores autónomos (leídos del compilado) y los
+totales de pantalla. Más el control de que una put que **no** te asignan sigue ganando su prima
+entera, para que el arreglo no se lleve por delante el caso normal.
+
+Comprobado que caza los dos fallos: devolviendo la regla al derivador autónomo caen 2
+comprobaciones; quitando el apunte de traspaso de los eventos caen 3, con la pantalla marcando otra
+vez **+$3.100**. Y que hacía falta probar los dos: con solo los totales de pantalla, el primer fallo
+**pasaba en verde**.
+
+`npm run prueba` sigue en 18/18 — una cartera sin asignaciones no se entera de nada.
+
 Bloques v5.18 — Reabrir pregunta antes · y el rendimiento dentro de cada movimiento de MTM
 
 ## 1. Reabrir pide confirmación
