@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.24"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.25"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -842,6 +842,37 @@ const effMkt = (p) => {
   return n(p.mktValue);
 };
 const mktEsReal = (p) => !isAutoMkt(p) && isOptionNat(p) && p.mktModo !== "MANUAL" && isFinite(mktRealOpcion(p)); /* v5.20: ¿el MKT VL de esta posición sale del servidor? */
+/* ---------- v5.25: por qué está vacío el Valor mercado en Auto ----------
+   Victor, mirando la ficha de su PMCC: *"no está cogiendo bien el valor de mercado; fíjate, lo tengo
+   en Auto y no aparece nada"*. Y en Auto, sin precio del servidor, ahí no había más que una caja en
+   blanco — que no se distingue de una avería. Es la misma lección de la v5.21, la v5.22 y la v5.23
+   por cuarta vez: **callarse no es un estado neutro**.
+
+   Los motivos posibles son los mismos cuatro que ya separa el aviso de la cabecera, y tienen
+   soluciones distintas; aquí se dicen para UNA posición, en el sitio exacto donde se está mirando.
+   Devuelve null cuando no hay nada que explicar (hay precio, o es manual a propósito). */
+const motivoSinPrecio = (p) => {
+  /* una posición CERRADA no tiene patas vivas por definición: ahí no falta nada que arreglar, y
+     decirle "complétala" sería mandarla a tocar una operación que ya terminó. */
+  if (!p || p.closed || !isOptionNat(p) || p.mktModo === "MANUAL" || mktEsReal(p)) return null;
+  if (!HAY_PUENTE) return "En Auto este valor lo manda tu servidor propio, y no hay ninguno configurado (Ajustes → Avanzado). Ponlo en Manual y escríbelo tú.";
+  const patas = patasDePosicion(p);
+  if (!patas.length) {
+    const conModelo = isVertical(p) || isPMCC(p) || isDCDD(p) || isLongCallPos(p) || natOf(p) === "CRED" || natOf(p) === "DEB";
+    return conModelo
+      ? "Le falta un dato a alguna pata (strike, vencimiento o prima), así que no hay contrato que pedirle al servidor. Complétalo aquí arriba."
+      : "La app todavía no sabe descomponer esta estructura en sus patas, así que su valor es el que escribas a mano. No te falta ningún dato.";
+  }
+  const sinDato = (Array.isArray(p.optSinDato) ? p.optSinDato : []).filter((c) => patas.some((x) => x.cod === c));
+  if (sinDato.length) {
+    const d = leeContrato(sinDato[0]);
+    return "Tu servidor no conoce " + (d ? d.texto + " (" + d.dia + ")" : sinDato[0]) +
+      ". Pulsar 🔄 Precios otra vez no lo va a arreglar — comprueba el vencimiento y el strike en tu bróker.";
+  }
+  const faltan = patas.filter((x) => !isFinite(marcaDe(p, x.cod)));
+  if (faltan.length) return "Todavía no hay precio de " + (faltan.length === 1 ? "su contrato" : faltan.length + " de sus " + patas.length + " patas") + ". Pulsa 🔄 Precios.";
+  return null;
+};
 const isPctMargin = (p) => p.margenModo !== "VALOR";
 const effMargen = (p) => (natOf(p) === "CASH" ? 0 : (isPctMargin(p) ? Math.abs(effMkt(p)) * (p.margenPct === "" || p.margenPct == null ? 0 : n(p.margenPct)) / 100 : n(p.margen)));
 /* P&L auto: (Último − BEP) × Cantidad para acciones, o simulación a vencimiento para opciones cortas.
@@ -6595,7 +6626,12 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                   </div>
                 </div>
               ) : (
-                <EditField label="" prefix="$" value={p.mktValue} onChange={onChange("mktValue")} signed />
+                <>
+                  <EditField label="" prefix="$" value={p.mktValue} onChange={onChange("mktValue")} signed />
+                  {/* v5.25: y si está en Auto y sale vacío, POR QUÉ. Una caja en blanco no se
+                      distingue de una avería, y cada motivo se arregla de una forma distinta. */}
+                  {(() => { const m = motivoSinPrecio(p); return m ? <div style={{ fontSize: 10.5, color: T.gold, fontWeight: 700, marginTop: 5, lineHeight: 1.45 }}>{m}</div> : null; })()}
+                </>
               )}
             </div>
           )}
