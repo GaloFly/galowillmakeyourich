@@ -1,5 +1,55 @@
 # CHANGELOG — Bloques
 
+Bloques v5.24 — "Igual": le pedí que corrigiera un dato que la app no le dejaba tocar
+
+## El síntoma
+La v5.23 ya decía exactamente qué pasaba —*"tu servidor no conoce este contrato de ASTS PMCC:
+ASTS 70C · 12 ene 2028 (miércoles)"*— y le dije a Victor que corrigiera el vencimiento. Respuesta:
+**"Igual"**.
+
+Tenía razón, y el fallo era mío: **no podía**.
+
+## La causa
+La pata larga del PMCC era una **tarjeta de solo lectura**. Strike, prima y vencimiento se tecleaban
+al crear la posición en el asistente y ahí se quedaban para siempre. Para arreglar una fecha mal
+escrita había que **borrar la posición y rehacerla** — perdiendo su historial de rolls, que es justo
+lo que no se puede perder.
+
+O sea: la app usaba ese dato para pedirle precios al servidor, sabía decir que estaba mal, y no
+dejaba arreglarlo.
+
+## El arreglo
+**La pata larga se edita como todo lo demás.** Cuatro campos —strike, prima pagada, vencimiento y
+comisión— en el mismo formulario, con el mismo "se guarda al instante". Se reemplaza el objeto
+entero conservando el resto de sus campos (la delta, por ejemplo): solo se corrige, nunca se pierde
+lo que ya había.
+
+**Y el vencimiento dice en qué día de la semana cae**, justo debajo del campo. Es lo único que hacía
+falta para ver el error de un vistazo:
+
+> **Cae en miércoles.** Los vencimientos a más de medio año son viernes (el tercero del mes) —
+> compruébalo en tu bróker.
+
+En ámbar solo cuando es **imposible** (fin de semana) o **improbable** (a más de medio año y no es
+viernes: los mensuales y los LEAPS vencen el tercer viernes). Un vencimiento normal —el tercer
+viernes, o un semanal cercano— no se marca: un aviso que sale siempre no avisa de nada. Y dice
+*"compruébalo"*, no *"está mal"*: quien sabe si ese contrato existe es el bróker, no esta app.
+
+El mismo aviso va también en el vencimiento de la pata corta, que ya era editable.
+
+## La verificación
+`pruebas/pata-larga-editable.mjs` hace el recorrido entero con la posición real de Victor: abre el
+bloque, abre la posición, pulsa Editar, comprueba que los cuatro campos están, **teclea el
+vencimiento bueno**, **recarga la app** (IndexedDB es lo autoritativo, no el estado de React) y
+comprueba que la posición pide ya el contrato bueno y se valora sola en **+$4.120 · P&L +$639**, sin
+perder ni el resto de la pata larga ni el historial de rolls.
+
+Se volvió a poner la tarjeta de solo lectura para verla en rojo: tira 7 comprobaciones. Y se anuló
+el aviso del día de la semana: tira 4. Una comprobación que no puede fallar no demuestra nada.
+
+`npm run prueba` sigue en 18/18 y las otras once suites en verde.
+
+
 Bloques v5.23 — "Pulsa 🔄 Precios" cuando pulsar no podía arreglarlo
 
 ## El síntoma
