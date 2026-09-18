@@ -1,5 +1,79 @@
 # CHANGELOG — Bloques
 
+Bloques v5.22 — Las dos Long Call y los tres PMCC nunca podían tener precio
+
+## El síntoma
+Tercera vuelta del mismo descuadre con IBKR. La v5.20 puso precio real a las opciones, la v5.21
+dijo cuáles seguían sin él, y entonces se pudo ver quiénes eran: **dos Long Call de IBIT y tres
+PMCC** (dos de ASTS y uno de MRLN).
+
+Con la lista en la mano, la cuenta cuadra sola. En IBKR esas cinco valen:
+
+| | |
+|---|---|
+| IBIT call 39 | +$4.729 |
+| IBIT call 45 | +$1.328 |
+| ASTS call 70 | +$2.221 |
+| ASTS call 60 | +$2.530 |
+| MRLN call 7,5 | +$68 |
+| **total** | **+$10.876** |
+
+Y lo que faltaba tras la v5.21 era **$10.962**. Es esto y nada más.
+
+## La causa — dos, no una
+El aviso de la v5.21 mandaba a pulsar 🔄 Precios, y eso no iba a arreglarlo nunca: la app **no sabía
+describir** esas cinco posiciones, aunque todas sean un solo contrato o dos bien identificados. Se
+comprobó en el código compilado antes de tocar nada:
+
+1. **La Long Call se guarda con `nat: "DEF"`** (riesgo definido), que es como la crea el asistente y
+   como la reconoce el resto de la app. Pero el filtro que decide si una posición es "de una pata"
+   pedía `CRED` o `DEB`. O sea: la **única** estrategia de débito de un solo contrato quedaba fuera
+   — pese a que el CHANGELOG lleva diciendo desde la v4.51 que tiene precio real.
+
+2. **Un PMCC sin call vendida se quedaba sin patas.** Desde la v3.46 (expirar) y la v5.10 (recomprar)
+   un PMCC puede seguir vivo con solo la pata larga mientras se vende la siguiente corta. El código
+   exigía **dos** patas siempre y, al faltar una, devolvía la lista vacía: sin precio, sin griegas,
+   en silencio, y justo en el caso más fácil de valorar de todos.
+
+Por qué no lo cazó la prueba de la v5.20: su IBIT de laboratorio estaba escrito con `nat: "DEB"`, que
+no es como lo crea el asistente. La prueba comprobaba la fórmula, no el dato real.
+
+## El arreglo
+- `esUnaPata` acepta la Long Call por `isLongCallPos`, que exige el tipo exacto
+  (*Long Call* / *Long Call Leaps*). Los demás `nat=DEF` son multi-pata aunque guarden un strike
+  suelto (Calendar, Iron Man, débito genérico) y **no** se cuelan por ese hueco.
+- El PMCC hace lo que ya hacía el vertical: la pata que no existe no entra, pero **las que sí existen
+  tienen que estar todas**. Si falta el precio de una, no se usa ninguna — el candado de la v4.51 no
+  se toca.
+
+Con esto, las cinco pasan a tener valor y P&L de mercado, y el MKT VL, el NLV y el Excess Liq se
+mueven con ellas.
+
+## Y de paso, una cosa que este arreglo destapaba
+Al quedarse solas en la lista de "sin precio", los Iron Condor y los Calendar heredaban el aviso
+ámbar de la v5.21: *"ábrela y complétala"*. Y a esas no les falta ningún dato — es que **la app
+todavía no guarda sus patas por separado**, y nunca lo ha hecho. Mandar a Victor a rellenar un hueco
+que no existe es el mismo pecado que arregló la v5.21, cometido en otro sitio.
+
+Ahora son tres grupos, no dos, y cada uno dice lo que hay que hacer (o que no hay nada que hacer):
+
+> **IBIT Long Call** — pulsa 🔄 Precios.
+> A **ASTS PMCC** no se le puede pedir precio: le faltan datos de sus patas. Ábrela y complétala.
+> **SPY Calendar**: la app todavía no guarda sus patas por separado, así que su valor es el que
+> escribas a mano. **No te falta ningún dato.**
+
+## La verificación
+`pruebas/patas-que-faltaban.mjs`, con los importes reales de IBKR: las cinco posiciones valen lo que
+dice el bróker, el PMCC entero sigue valiendo la suma de sus dos patas con su signo, el Calendar de
+control no se cuela, y sin servidor propio no se usa ni una marca.
+
+Se volvió a meter **cada uno de los dos fallos por separado** para ver la prueba en rojo: el de la
+Long Call tira 8 comprobaciones, el del PMCC tira 6. Una comprobación que no puede fallar no
+demuestra nada.
+
+`npm run prueba` sigue en 18/18, y las otras ocho suites (incluida `pmcc-recompra`) en verde.
+
+
 Bloques v5.21 — El aviso decía "5 sin precio" y con eso no se puede hacer nada
 
 ## El síntoma

@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.21"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.22"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -864,7 +864,13 @@ const effMargen = (p) => (natOf(p) === "CASH" ? 0 : (isPctMargin(p) ? Math.abs(e
 const esUnaPata = (p) => {
   if (!p || p.closed || !isOptionNat(p)) return false;
   const nat = natOf(p);
-  if (nat !== "CRED" && nat !== "DEB") return false;
+  /* v5.22: la Long Call se guarda con nat DEF (riesgo definido), NO DEB — así la creó siempre el
+     asistente y así la reconoce `isLongCallPos`. Este filtro la dejaba fuera, de modo que la única
+     estrategia de débito de UN solo contrato no podía tener precio real pese a que el CHANGELOG
+     dice desde la v4.51 que sí. Se acepta por `isLongCallPos`, que exige el tipo exacto
+     (Long Call / Long Call Leaps): los demás nat=DEF son multi-pata aunque guarden un strike suelto
+     (Calendar, Iron Man, débito genérico) y NO deben colarse por aquí. */
+  if (nat !== "CRED" && nat !== "DEB" && !isLongCallPos(p)) return false;
   if (isVertical(p) || isPMCC(p) || isDCDD(p) || p.long || p.legs || p.sK || p.lK) return false; /* multi-pata */
   return !!(p.tkr && (p.right === "C" || p.right === "P") && p.expiry && n(p.strike) > 0);
 };
@@ -904,12 +910,18 @@ const patasDePosicion = (p) => {
     if (!p.noLong) mete(codContrato(p.tkr, p.expiry, p.right, p.lK), n(p.lP), -1);
     return salida;
   }
-  /* PMCC / Diagonal: la corta en p.*, la larga en p.long — DOS vencimientos distintos */
+  /* PMCC / Diagonal: la corta en p.*, la larga en p.long — DOS vencimientos distintos.
+     v5.22: un PMCC puede quedarse SIN call vendida y seguir vivo — se recompra o expira la corta y
+     la long comprada sigue ahí hasta que se venda otra (`noShort`, v3.46/v5.10). Exigir dos patas
+     siempre dejaba esas posiciones con la lista vacía, o sea sin precio real ni griegas, en silencio
+     y justo cuando solo queda un contrato que es lo más fácil de valorar. Se hace como en el
+     vertical: la pata que no existe no entra, pero las que sí existen tienen que estar TODAS —
+     si falta el código de una, no se devuelve nada (media posición valorada miente). */
   if (isPMCC(p) && p.long) {
     const lg = p.long || {};
-    mete(codContrato(p.tkr, p.expiry, p.right, p.strike), n(p.prima), 1);
+    if (!p.noShort) mete(codContrato(p.tkr, p.expiry, p.right, p.strike), n(p.prima), 1);
     mete(codContrato(p.tkr, lg.expiry, lg.right || p.right, lg.strike), n(lg.prima), -1);
-    return salida.length === 2 ? salida : [];
+    return salida.length === (p.noShort ? 1 : 2) ? salida : [];
   }
   /* DC/DD: cuatro patas y dos vencimientos — las shorts vencen en p.expiry, las longs en
      dcdd.expiryLong. Una pata que no exista simplemente no entra (un Calendar de un solo lado). */
@@ -3556,7 +3568,7 @@ function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manu
             —cubiertas o no—, porque el día que falte una nadie se daría cuenta si solo se avisara al
             fallar. Mismo criterio que la cobertura de la tarjeta de griegas. */}
         {!!mktCobertura && mktCobertura.total > 0 && (() => {
-          const { total, reales, manuales, sinPrecio, sinPatas } = mktCobertura;
+          const { total, reales, manuales, sinPrecio, sinPatas, sinModelo } = mktCobertura;
           const lista = (a) => (a || []).join(", ");
           return (
             <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 7, lineHeight: 1.45 }}>
@@ -3572,6 +3584,12 @@ function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manu
                   {sinPatas.length === 1
                     ? <>A <b>{lista(sinPatas)}</b> no se le puede pedir precio: le faltan datos de sus patas (strike, vencimiento o prima de alguna). Ábrela y complétala, o su valor seguirá siendo el que escribas a mano.</>
                     : <>A <b>{lista(sinPatas)}</b> no se les puede pedir precio: les faltan datos de sus patas (strike, vencimiento o prima de alguna). Ábrelas y complétalas, o su valor seguirá siendo el que escribas a mano.</>}
+                </div>
+              )}
+              {/* v5.22: y estas no tienen arreglo por tu parte — no te mandamos a completar nada */}
+              {(sinModelo || []).length > 0 && (
+                <div style={{ marginTop: 3 }}>
+                  <b style={{ color: T.ink }}>{lista(sinModelo)}</b>: la app todavía no guarda sus patas por separado, así que su valor es el que escribas a mano. No te falta ningún dato.
                 </div>
               )}
             </div>
@@ -15402,13 +15420,22 @@ function App() {
        nada — no sabes dónde mirar. Con sus nombres, sí: o les falta pulsar 🔄 Precios, o les falta un
        dato (a un PMCC sin el vencimiento de la pata larga la app no sabe qué contrato pedirle al
        servidor). Mismo criterio que el aviso de griegas, que lleva nombrando tickers desde la v4.55.
-       Se distinguen los dos motivos porque tienen soluciones distintas. */
-    const sinPatas = pend.filter((p) => !patasDePosicion(p).length);
+       Se distinguen los dos motivos porque tienen soluciones distintas.
+
+       v5.22: y un TERCER grupo, que hasta ahora se mezclaba con el segundo y mandaba a completar una
+       posición a la que no le falta nada. Un Iron Condor, un Iron Fly, un Broken Wing o un Calendar
+       suelto NO guardan sus patas por separado — nunca las han guardado, es una carencia conocida de
+       la app, no un dato que Victor se dejara. Ahí no hay nada que abrir ni que rellenar: su valor es
+       manual por diseño. Mandarle a "completarla" es exactamente el pecado que arregló la v5.21,
+       cometido en otro sitio. */
+    const conModelo = (p) => isVertical(p) || isPMCC(p) || isDCDD(p) || isLongCallPos(p) || natOf(p) === "CRED" || natOf(p) === "DEB";
+    const sinModelo = pend.filter((p) => !patasDePosicion(p).length && !conModelo(p));
+    const sinPatas = pend.filter((p) => !patasDePosicion(p).length && conModelo(p));
     const sinPrecio = pend.filter((p) => patasDePosicion(p).length > 0);
     const nombre = (p) => (p.tkr || "?") + (p.tipo ? " " + tipoChipLabel(p) : "");
     return { total: opts.length, reales: opts.filter((p) => mktEsReal(p)).length,
       manuales: opts.filter((p) => p.mktModo === "MANUAL").length,
-      sinPrecio: sinPrecio.map(nombre), sinPatas: sinPatas.map(nombre) };
+      sinPrecio: sinPrecio.map(nombre), sinPatas: sinPatas.map(nombre), sinModelo: sinModelo.map(nombre) };
   }, [active]);
   const sumField = (field) => brokers.reduce((s, b) => s + n((accounts[b] || {})[field]), 0);
   const manualCash = broker === "Todos" ? sumField("cash") : n((accounts[broker] || {}).cash);
