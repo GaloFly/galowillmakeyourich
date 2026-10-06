@@ -507,6 +507,41 @@ comentario que dice a dónde se fue.)
   copiar-pegar en la ventana equivocada. Regla: si hay dos Claudes trabajando en el VPS, que solo
   uno toque la infraestructura.
 
+#### Las tres semanas en que «estaba activo» y no estaba (13-sep → 6-oct-2026)
+
+La ficha del servidor desapareció de la app el 15-sep y nadie lo notó hasta que Victor quiso
+preguntarle por la API de Moomoo el 1-oct. `systemctl status` decía `active (running)` todo ese
+tiempo. **Era verdad y no servía de nada**: el proceso estaba vivo, parado en una pregunta
+interactiva que nadie podía ver, porque la pantalla iba a `/dev/null`.
+
+- **Claude se actualiza solo** (2.1.269 → 2.1.287 → 2.1.291 en tres semanas) y una actualización
+  puede traer preguntas nuevas al arrancar. Hubo DOS encadenadas: *«Is this a project you trust?»*
+  y, tras contestarla, *«Not logged in · Run /login»*. Bajo systemd, cada una es un cuelgue mudo.
+- **La confianza es POR CARPETA.** El servicio arranca en `WorkingDirectory=/home/agente/trabajo`,
+  pero `su - agente` deja en `/home/agente`: se contestó «sí» en la carpeta equivocada y el
+  servicio siguió parado. Al arrancar a mano para diagnosticar, **`cd trabajo` primero** y
+  comprobar que la pregunta dice `/home/agente/trabajo`.
+- **`/login` por SSH desde el Terminal del Mac no se puede copiar.** La tecla `c` («c to copy»)
+  no llega al portapapeles del Mac (Terminal.app no soporta OSC 52; iTerm2 sí), y el enlace
+  pintado por la TUI se recorta por el borde derecho —un carácter por línea—, así que copiarlo con
+  Shift tampoco vale. Lo que funcionó: arrancar con `script -qfec "claude --remote-control"
+  /home/agente/login.log`, hacer `/login` y **dejarlo abierto** (si se cancela, el enlace caduca),
+  y desde otra pestaña como root sacar el enlace limpio del fichero:
+  `sed 's/\x1b\][^\x07]*\x07//g; s/\x1b\[[0-9;?]*[A-Za-z]//g' /home/agente/login.log | tr -d '\r\n' | grep -ao 'https://claude\.com/cai/oauth/authorize?[A-Za-z0-9%&=_.+-]*' | awk '{ if (length($0) > m) { m = length($0); b = $0 } } END { print b }'`
+  Ojo: puede salir con la palabra `Hold` pegada al final (es el texto de la línea siguiente); se
+  quita. El `state=` auténtico tiene 43 caracteres. Elegir cuenta de **suscripción**, no API.
+- **Desde el 6-oct la pantalla del servicio se graba**: el unit ya no manda a `/dev/null` sino a
+  `/home/agente/claude-remoto.log`. Si la ficha vuelve a desaparecer, lo primero es
+  `tail -c 2000 /home/agente/claude-remoto.log` — enseña la pregunta en la que está parado, sin
+  adivinar. (Vigilar el tamaño del fichero; si crece, `truncate -s 0`.)
+- **La señal fiable de que está vivo NO es `systemctl status`**: es que exista una ficha
+  `ubuntu-4gb-fsn1-2-…` reciente y *connected* en la app. Desde una sesión de Claude en la nube se
+  comprueba con `list_sessions` de Claude Code Remote; cada arranque del servicio crea una ficha
+  nueva, así que «ninguna ficha desde el último reinicio» = parado aunque diga `active`.
+- Las skills de la cuenta de Victor se sincronizan al servidor **al hacer login**
+  (`~agente/.claude/skills/synced/`): sin login, tampoco hay skills. Las sincronizadas el 6-oct son
+  las estándar (docs, docx, pdf, xlsx…); **no hay ninguna de Moomoo ahí**.
+
 ## Semántica que confunde y ya se aclaró
 
 - Barra apilada del hero = **reparto del capital desplegado** (cuota de cada bloque sobre la suma
