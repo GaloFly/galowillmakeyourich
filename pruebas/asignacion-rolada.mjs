@@ -270,6 +270,9 @@ const banner = (t1.match(/El coste de estas acciones[^\n]*/) || [""])[0];
 console.log("  " + banner.slice(0, 200));
 ok(/\$174\.83/.test(banner) && /\$139\.36/.test(banner), "se avisa: el coste guardado es $174.83 y debería ser $139.36");
 ok(/Corregir a \$139\.36/.test(t1), "con un botón para corregirlo");
+/* v5.29: mientras guarda el coste viejo NO se enseña BEP de estrategia — ese coste ya ERA el de
+   estrategia, y sumarle otra vez los rolls daría uno falso */
+ok(!/BEP estrategia/.test(t1), "con el coste viejo aún guardado, no se inventa un BEP de estrategia encima");
 await b.page.evaluate(() => { const e = Array.from(document.querySelectorAll("div")).find((x) => /^El coste de estas acciones/.test((x.innerText || "").trim())); if (e) e.scrollIntoView({ block: "center" }); });
 await b.page.waitForTimeout(500);
 await b.page.screenshot({ path: D + "/asignacion-rolada-aviso.png" });
@@ -282,6 +285,74 @@ console.log("  tras pulsarlo y recargar → bep " + (tras && tras.bep));
 ok(tras && Math.abs(Number(tras.bep) - COSTE) < 0.005, "el coste queda en $" + COSTE + " y sobrevive a recargar");
 const t1b = await verB1(b.page);
 ok(!/Corregir a/.test(t1b), "y el aviso desaparece: ya no hay nada que corregir");
+
+/* ---------------------------------------------------------------------------
+   5. v5.29 — EL BEP DE LA ESTRATEGIA, A LA VISTA.
+   Victor: *"ese break-even de 162 sí me interesa, porque si vendo las acciones a 145 va a contar
+   como profit, y no ha sido así en toda la evolución de la estrategia"*. Eligió la cuenta de
+   Hacienda + el BEP de estrategia al lado. En esta cadena:
+     BEP estrategia = 139,36 − (−7.094 / 200) = 174,83
+     estrategia hoy, a 129 = (129 − 174,83) × 200 = −9.166  ← la caja, otra vez
+     y vendiendo a 145:  MTM de la venta (145 − 139,36) × 200 = +1.128,
+                         estrategia completa 1.128 − 7.094 = −5.966 = +3.034 − 38.000 + 29.000
+--------------------------------------------------------------------------- */
+console.log("\n=== el BEP de la estrategia, junto al fiscal ===");
+const linea = (t1b.match(/BEP estrategia[^\n]*/) || [""])[0];
+console.log("  " + linea);
+ok(/BEP estrategia \$174\.83/.test(linea), "se ve el BEP de la estrategia: $174.83 (= 139,36 + los rolls por acción)");
+ok(/3 rolls \(-\$7,094\) ya contados en MTM/.test(linea), "y dice de dónde sale: 3 rolls (−$7,094) ya contados en MTM");
+ok(/estrategia hoy -\$9,166/.test(linea), "y lo que deja la estrategia hoy, a 129: −$9,166, la caja");
+
+console.log("\n=== vender a 145: MTM dice la venta, y al lado la estrategia ===");
+const pb = b.page;
+const pulsarB = async (re) => { const h = await pb.evaluate((pat) => { const rx = new RegExp(pat); const x = Array.from(document.querySelectorAll("button")).find((y) => rx.test(y.innerText || "") && y.offsetParent !== null); if (!x) return false; x.click(); return true; }, re); await pb.waitForTimeout(900); return h; };
+await pb.evaluate(() => {
+  const c = Array.from(document.querySelectorAll("div")).filter((e) => /ORCL/.test(e.textContent || "") && /Long Stock/.test(e.textContent || "") && getComputedStyle(e).cursor === "pointer");
+  c.sort((a, b2) => (b2.innerText || "").length - (a.innerText || "").length);
+  if (c[0]) c[0].click();
+});
+await pb.waitForTimeout(700);
+ok(await pulsarB("^Cerrar posición"), "se cierra la posición de acciones");
+await pb.evaluate(() => {
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  const i = Array.from(document.querySelectorAll("input")).find((x) => { const l = x.closest("label"); return l && /precio venta/i.test(l.innerText || ""); });
+  if (i) { set.call(i, "145"); i.dispatchEvent(new Event("input", { bubbles: true })); }
+});
+await pb.waitForTimeout(500);
+ok(await pulsarB("Confirmar"), "vendidas a $145");
+await pb.evaluate(() => { const x = Array.from(document.querySelectorAll("button")).find((y) => /^(✕|×)$/.test((y.innerText || "").trim()) && y.offsetParent !== null); if (x) x.click(); });
+await pb.waitForTimeout(700);
+const notaVenta = await pb.evaluate((pos) => {
+  /* la nota se lee del propio motor de Movimientos no hace falta: se busca el texto en la pantalla de
+     MTM tras desplegar el mes; si la lista no la pinta, se cae a calcularla con las funciones */
+  const vivas = JSON.parse(localStorage.getItem("bloques_pos_v5") || "[]");
+  const st = vivas.find((x) => x.id === "accorcl"), put = vivas.find((x) => x.id === "orcl");
+  const estr = estrategiaAsignada(st, put);
+  const net = (n(st.closePrice) - n(effBep(st))) * n(st.qty) - n(st.closeComision);
+  return { cerrada: !!st.closed, net: Math.round(net), nota: notaEstrategiaVenta(estr, net, st.qty) };
+});
+console.log("  venta → MTM $" + notaVenta.net + " · " + notaVenta.nota);
+ok(notaVenta.cerrada && notaVenta.net === 1128, "MTM apunta la venta contra el coste fiscal: +$1,128 (sale $" + notaVenta.net + ")");
+ok(/Estrategia completa \(put rolada \+ acciones\): -\$5,966/.test(notaVenta.nota), "y al lado: estrategia completa −$5,966 — la venta NO se lee como beneficio de la estrategia");
+/* y que esa nota llega de verdad a la pantalla de MTM */
+for (const t of ["Movimientos", "MTM"]) {
+  await pb.evaluate((x) => { const e = Array.from(document.querySelectorAll("button, div")).find((y) => (y.innerText || "").trim() === x); if (e) e.click(); }, t);
+  await pb.waitForTimeout(800);
+}
+const mesHoy = "TOTAL " + new Date().toLocaleDateString("es-ES", { month: "short" }).replace(".", "").toUpperCase().slice(0, 3) + " " + new Date().getFullYear();
+const enMtm = await pb.evaluate((mes) => {
+  const abrir = (re) => { const e = Array.from(document.querySelectorAll("div")).filter((x) => re.test((x.innerText || "").trim()) && getComputedStyle(x).cursor === "pointer").sort((a, c) => (a.innerText || "").length - (c.innerText || "").length)[0]; if (e) e.click(); };
+  abrir(/^TOTAL 20\d\d/);
+  return new Promise((r) => setTimeout(() => {
+    abrir(new RegExp("^" + mes)); /* el mes de la venta, no el primero que aparezca */
+    setTimeout(() => {
+      const fila = Array.from(document.querySelectorAll("div")).filter((x) => /ORCL/.test(x.innerText || "") && /\+\$1,128/.test(x.innerText || "") && getComputedStyle(x).cursor === "pointer").sort((a, c) => (a.innerText || "").length - (c.innerText || "").length)[0];
+      if (fila) fila.click();
+      setTimeout(() => r(/Estrategia completa/.test(document.body.innerText)), 700);
+    }, 700);
+  }, 700));
+}, mesHoy);
+ok(enMtm, "y esa nota se lee en MTM al abrir la venta");
 ok(!b.errs.length, "sin errores de JS " + JSON.stringify(b.errs.slice(0, 2)));
 await b.page.screenshot({ path: D + "/asignacion-rolada.png" });
 await b.ctx.close();

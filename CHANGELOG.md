@@ -1,5 +1,48 @@
 # CHANGELOG — Bloques
 
+Bloques v5.29 — El BEP de la estrategia, a la vista junto al fiscal
+
+## El síntoma
+Victor, tras la v5.28: *"quiero tener constancia de cuánto he recobrado en primas. Ese break-even de
+162 sí me interesa, porque si vendo las acciones a 145 va a contar como profit, y realmente no ha
+sido así en toda la evolución de la estrategia"*.
+
+Tiene razón en el fondo: vendiendo a 145, la estrategia entera **pierde**
+(+5.583 primas − 38.000 compra + 29.000 venta = −$3.417). Si la app solo enseña la venta contra el
+coste fiscal (+$1.128), cuenta algo que no pasó.
+
+## La decisión
+No se puede tener el coste a 162 **y** los rolls en sus meses: las pérdidas de los rolls se
+contarían dos veces. Había que elegir dónde viven, y se le preguntó con las dos opciones delante:
+la cadena entera dentro de las acciones (los meses pasados cambian al asignar), o la cuenta de
+Hacienda/IBKR con el 162 a la vista. Eligió **la segunda**.
+
+## El arreglo
+La cuenta de MTM no se toca (coste fiscal $139,36, cada roll en su mes). Se añade la vista de la
+estrategia, que es **información y no suma en ningún total** — sumarla contaría los rolls dos veces:
+
+- En la fila de las acciones, debajo del coste: **"BEP estrategia $162,08 · incluye 7 rolls
+  (−$4.545) ya contados en MTM · estrategia hoy −$6.617"**. Es el precio al que vender deja toda la
+  historia —put, rolls y acciones— en cero, y lo que deja hoy si vendieras.
+- Al vender (entera o por lotes), la venta se apunta en MTM contra el coste fiscal, y su nota dice al
+  lado **"Estrategia completa (put rolada + acciones): −$3.417"**, con la parte de los rolls que toca
+  a lo vendido.
+
+Solo aparece con rolls (sin ellos los dos BEP coinciden), y **no** mientras las acciones guarden el
+coste viejo de la v5.19: ese número ya ERA el de estrategia, y sumarle otra vez los rolls daría uno
+falso. Primero el botón de corregir, después el BEP de estrategia.
+
+## La verificación
+`pruebas/asignacion-rolada.mjs` crece con los números de su cadena de prueba (3 rolls, −$7.094):
+BEP estrategia $174,83 = 139,36 + 7.094/200, estrategia hoy a 129 = −$9.166 (la caja otra vez); y
+vendiendo a 145 desde la app, MTM apunta +$1.128 con la nota **"Estrategia completa: −$5.966"**
+(= +3.034 − 38.000 + 29.000), que se lee al abrir la venta en MTM. Y que con el coste viejo aún
+guardado no se inventa un BEP de estrategia encima.
+
+Quitando la vista de estrategia la prueba tira 5 comprobaciones. `npm run prueba` sigue en 18/18 y
+las otras doce suites en verde.
+
+
 Bloques v5.28 — ORCL asignada a 190 con la acción en 129, y MTM decía beneficio
 
 ## El síntoma
