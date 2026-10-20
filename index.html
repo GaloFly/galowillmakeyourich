@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.27"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.28"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -825,13 +825,59 @@ function mtmBrutoOfPos(p) {
   if (natOf(p) === "ACC" && Array.isArray(p.dividends)) p.dividends.forEach((d, idx) => { if (om("div" + (d.id || idx))) return; s += signoAcc(p) * n(d.amount) - n(d.ret) - n(d.fee); }); /* v3.63: neto de retención */
   return s;
 }
-/* v5.19: lo que traspasa una put asignada al coste de las acciones — todo su realizado */
-const primaAlCoste = (p) => (esPutAsignada(p) ? mtmBrutoOfPos(p) : 0);
-function mtmSumOfPos(p) { return esPutAsignada(p) ? 0 : mtmBrutoOfPos(p); }
+/* ---------- v5.28: SOLO LA PUT ASIGNADA PASA AL COSTE, NO LA CADENA ENTERA ----------
+   Victor, con ORCL asignada a 190 y la acción en 129: *"en MTM me sale como profit, no puede ser"*.
+   Tenía razón. La v5.19 traspasaba al coste de las acciones TODO el realizado de la posición —la
+   cadena de siete rolls, +$5.583 netos— y con eso hacía dos cosas a la vez:
+     · el coste salía $162,06 (190 − 5.583/200), y
+     · el día de la asignación el MTM apuntaba +$10.128 (cierre de la última put) − $5.583
+       (traspaso) = **+$4.545 de "beneficio"** con la acción hundida.
+   Esos +4.545 eran la DESHECHURA de las pérdidas de las recompras de los rolls, que ya se habían
+   apuntado en julio, agosto y septiembre. Un dinero que sí se perdió, en su día, devuelto como
+   ganancia el día de la asignación.
+
+   Lo correcto —y lo que hacen Hacienda e IBKR— es que cada roll es una operación cerrada: recomprar
+   la put la cierra, y su resultado se realiza ESE día. A las acciones solo pasa la prima de la put
+   que de verdad te ejercieron, la última: 190 − 50,64 = $139,36. Los rolls se quedan en sus meses.
+
+   El total de toda la historia sale idéntico por los dos caminos (−4.545 de rolls + la acción desde
+   139,36, frente a 0 + la acción desde 162,06). Lo que cambia es CUÁNDO aparece cada cosa, y que el
+   día de la asignación ya no se inventa un beneficio.
+
+   Sin rolls, la última put es la única, y esto da exactamente lo mismo que la v5.19. */
+function traspasoAsignada(p) {
+  if (!esPutAsignada(p) || omitidoMov(p, "close")) return 0;
+  const chain = p.rollChain || [];
+  const legEntry = chain.length > 0 ? n(chain[chain.length - 1].newCredit) : _oPrimaPS(p);
+  /* el mismo realizado que apunta el cierre de la última pata en `mtmBrutoOfPos` (sin fee de
+     apertura: en una put simple es 0), para que traspaso y cierre se anulen al céntimo */
+  return _dirSign(p) * (n(p.closePrice) - legEntry) * n(p.qty) - n(p.closeComision);
+}
+const primaAlCoste = (p) => traspasoAsignada(p);
+function mtmSumOfPos(p) { return mtmBrutoOfPos(p) - traspasoAsignada(p); }
+/* v5.28: las acciones que se crearon ANTES de este arreglo guardan el coste viejo (el ORCL de
+   Victor: $162,08 en vez de $139,36). Corregirlo a escondidas sería reescribir un dato suyo — y si lo
+   cambió él a mano, pisarle lo que eligió. Así que solo se OFRECE, con un botón, y solo cuando el
+   coste guardado es EXACTAMENTE el que calculó la regla vieja para esa misma put: si no coincide,
+   es que lo tocó alguien, y no se dice nada. Tampoco si ya vendió parte o lleva lotes (el coste
+   ahí sale de otra cuenta), ni sin rolls (las dos reglas dan lo mismo). Devuelve null o
+   { viejo, nuevo } por acción. */
+function costeAsignadaPendiente(st, put) {
+  if (!st || !put || st.closed || natOf(st) !== "ACC" || hasLots(st) || !esPutAsignada(put)) return null;
+  if (!(put.rollChain || []).length) return null;
+  const sh = n(put.qty);
+  if (!(sh > 0) || n(st.qty) !== sh) return null;
+  const viejo = n(put.strike) - mtmBrutoOfPos(put) / sh;
+  const nuevo = n(put.strike) - traspasoAsignada(put) / sh;
+  if (!isFinite(viejo) || !isFinite(nuevo) || Math.abs(nuevo - viejo) < 0.005) return null;
+  if (Math.abs(n(st.bep) - viejo) > 0.005) return null;
+  return { viejo, nuevo };
+}
 const realizedOf = (p) => {
   if (!isOptionNat(p)) return mtmSumOfPos(p);
-  /* v5.19: la asignada va por MTM (cero), no por su prima acumulada: esa prima ya está contada
-     dentro del coste de las acciones que te entregaron. */
+  /* v5.19: la asignada va por MTM, no por su prima acumulada: la prima de la put ejercida ya está
+     contada dentro del coste de las acciones que te entregaron. v5.28: ese MTM ya no es cero si hubo
+     rolls — es lo que realizaron sus recompras, que no están en el coste. */
   const noOpenBooked = isLongCallPos(p) || isCreditSpread(p) || esPutAsignada(p);
   return noOpenBooked ? mtmSumOfPos(p) : primaSumOfPos(p);
 };
@@ -6028,7 +6074,7 @@ function PosSummaryCard({ p, onClose }) {
   );
 }
 
-function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, onEditChain, onEditLots }) {
+function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, costeAsig, onEditChain, onEditLots }) {
   const filaRef = useRef(null); /* v4.35: para desplazar la fila a la vista cuando se llega aquí desde otra pantalla */
   const detail = optionDetail(p);
   /* v4.37: en los spreads, optionDetail EMPIEZA por el mismo texto que la insignia de al lado
@@ -6267,6 +6313,19 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <MicroStat label="Último" value={p.last ? "$" + money2(p.last) : "—"} />
             <MicroStat label="% Bloque" value={pct(pctBloque, 1)} />
             <MicroStat label="Plausible" value={"$" + money(plausible)} />
+          </div>
+        )}
+        {/* v5.28: acciones de una asignación creadas con la regla vieja. Se ofrece, no se impone:
+            el coste es un dato suyo. Ver `costeAsignadaPendiente`. */}
+        {!!costeAsig && !p.closed && (
+          <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, lineHeight: 1.45 }}>
+              El coste de estas acciones (<b>${money2(costeAsig.viejo)}</b>) se calculó metiendo también los rolls anteriores, que ya contaron en su día. Solo debe restar la prima de la put que te ejercieron: <b>${money2(costeAsig.nuevo)}</b> — lo mismo que te pone IBKR.
+            </div>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onChange("bep")(String(costeAsig.nuevo)); onChange("entryNote")("Asignada desde put " + (p.tkr || "") + " · coste base = strike − prima de la put ejercida = $" + money2(costeAsig.nuevo)); }}
+              style={{ marginTop: 8, border: "none", borderRadius: 10, padding: "8px 12px", background: T.gold, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+              Corregir a ${money2(costeAsig.nuevo)}
+            </button>
           </div>
         )}
         {cash && (
@@ -6926,16 +6985,22 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                         hacer (cuántas acciones, a qué coste y por qué ese coste) y se elige el bloque. */}
                     {closeExercised && shortSide && p.right === "P" && !isPMCC(p) && (() => {
                       const accs = n(p.qty);
-                      const traspaso = mtmBrutoOfPos({ ...p, closed: true, closePrice: "0", closeComision: closeComisionV, exercised: true });
+                      const asig = { ...p, closed: true, closePrice: "0", closeComision: closeComisionV, exercised: true };
+                      const traspaso = traspasoAsignada(asig); /* v5.28: solo la put ejercida */
+                      const rollsPrevios = mtmBrutoOfPos(asig) - traspaso;
                       const coste = accs ? n(p.strike) - traspaso / accs : NaN;
                       return (
                         <div style={{ marginTop: 10, background: T.tileGreen, borderRadius: 14, padding: "12px 13px" }}>
                           <div style={{ fontSize: 12.5, fontWeight: 800, color: T.green }}>Te quedas {accs} acciones de {p.tkr || "—"}</div>
                           <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.5 }}>
-                            Coste <b style={{ color: T.ink }}>${isFinite(coste) ? money2(coste) : "—"}</b> por acción, no ${money2(n(p.strike))}: la prima que cobraste ({signMoney(traspaso)}) se resta del precio de compra.
+                            Coste <b style={{ color: T.ink }}>${isFinite(coste) ? money2(coste) : "—"}</b> por acción, no ${money2(n(p.strike))}: la prima de la put que te ejercen ({signMoney(traspaso)}) se resta del precio de compra.
                           </div>
                           <div style={{ fontSize: 10.5, color: T.sub, marginTop: 5, lineHeight: 1.45 }}>
-                            Por eso esta put pasará a contar <b>0</b> en MTM y en el Histórico: su resultado no se pierde, se muda al coste de las acciones y saldrá cuando las vendas. En Primas se sigue viendo el cobro.
+                            Por eso esa prima no contará como resultado en MTM: no se pierde, se muda al coste de las acciones y saldrá cuando las vendas. En Primas se sigue viendo el cobro.
+                            {/* v5.28: con rolls, lo que ya se realizó al recomprar cada put se queda donde estaba */}
+                            {(p.rollChain || []).length > 0 && Math.abs(rollsPrevios) >= 0.5 && (
+                              <> Los {(p.rollChain || []).length} rolls anteriores (<b style={{ color: rollsPrevios >= 0 ? T.green : T.red }}>{signMoney(rollsPrevios)}</b>) no se tocan: cada recompra cerró una put y su resultado ya contó en su mes.</>
+                            )}
                           </div>
                           <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 11, marginBottom: 5 }}>¿A qué bloque van?</div>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -7035,7 +7100,7 @@ function NavIcon({ name }) {
 }
 
 /* ---------- tarjeta de bloque activo ---------- */
-function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, onEditChain, onEditLots }) {
+function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, costeAsigMap, onEditChain, onEditLots }) {
   const [rollingIds, setRollingIds] = useState(new Set()); // filas con el panel de roll abierto → swipe-eliminar desactivado
   const activePositions = positions.filter((p) => !p.closed);
   const capBlock = activePositions.reduce((s, p) => s + capDesplegado(p), 0);
@@ -7096,6 +7161,7 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
               pendingAction={pendingAction} clearPending={clearPending}
               onRollingChange={(v) => setRollingIds((s) => { const x = new Set(s); if (v) x.add(p.id); else x.delete(p.id); return x; })}
               coveredLabel={(coveredMap || {})[p.id]}
+              costeAsig={(costeAsigMap || {})[p.id]}
               onChange={(k) => (v) => setPos(p.id, k, v)} onDelete={() => delPos(p.id)} showPnl={showPnl} brokers={brokers}
               onRoll={(vals) => rollPos(p.id, vals)} onClose={(vals) => closePos(p.id, vals)} onReopen={() => reopenPos(p.id)}
               onLegOp={legOp ? (vals) => legOp(p.id, vals) : null}
@@ -7424,13 +7490,20 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
            mudo no se distingue de un fallo. La fecha es la de la asignación: hasta ese día la put sí
            iba ganando; es ese día cuando su resultado se muda a las acciones. */
         if (esPutAsignada(p)) {
-          const traspaso = mtmBrutoOfPos(p);
+          /* v5.28: solo la prima de la put EJERCIDA (la última), no la cadena entera — ver
+             `traspasoAsignada`. Así este apunte anula exactamente el cierre de justo encima y el día
+             de la asignación suma CERO, en vez de devolver como "beneficio" las recompras de los rolls. */
+          const traspaso = traspasoAsignada(p);
+          const rollsPrevios = mtmBrutoOfPos(p) - traspaso;
           const acc = positions.find((x) => x.assignedFrom === p.id);
           mtmEvents.push({ id: p.id + "-asigcoste", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo,
             kind: "Prima al coste de las acciones", cash: -traspaso, fee: 0, strike: p.strike, right: p.right, qty: qtyLabelOf(p), expiry: p.expiry,
-            note: "Te asignaron: la prima cobrada no cuenta como resultado, pasa a abaratar las " + (acc ? n(acc.qty) : n(p.qty)) + " acciones"
+            note: "Te asignaron: la prima de la put ejercida no cuenta como resultado, pasa a abaratar las " + (acc ? n(acc.qty) : n(p.qty)) + " acciones"
               + (acc ? " (coste $" + money2(n(effBep(acc))) + " en vez de $" + money2(n(p.strike)) + ")" : "")
-              + ". El resultado saldrá cuando las vendas.",
+              + ". El resultado saldrá cuando las vendas."
+              + (chain.length > 0 && Math.abs(rollsPrevios) >= 0.5
+                ? " Los " + chain.length + " rolls anteriores (" + signMoney(rollsPrevios) + ") ya se contaron en su día: recomprar cada put la cerró."
+                : ""),
             legs: [{ side: null, label: "Traspasado al coste de " + (p.tkr || "las acciones"), perShare: qty ? -traspaso / qty : 0, cash: -traspaso }] });
         }
       }
@@ -7772,8 +7845,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const closedResultOf = (p) => {
     if (p._venta) return p._venta.realizado; /* v4.42: venta parcial — su realizado va en el propio objeto */
     if (!isOptionNat(p)) return mtmSumOf(p);
-    /* v5.19: una put asignada va por MTM (cero), no por su prima: esa prima ya está dentro del coste
-       de las acciones. Sumarla aquí la contaría dos veces — ver `esPutAsignada`. */
+    /* v5.19: una put asignada va por MTM, no por su prima: la prima de la put ejercida ya está dentro
+       del coste de las acciones. Sumarla aquí la contaría dos veces — ver `traspasoAsignada` (v5.28:
+       con rolls, ese MTM es lo que realizaron las recompras, no cero). */
     const noOpenBooked = isLongCallPos(p) || isCreditSpread(p) || esPutAsignada(p);
     return noOpenBooked ? mtmSumOf(p) : primaSumOf(p);
   };
@@ -8655,10 +8729,13 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 const last = st ? n(st.last) : NaN;
                 const viva = !!st && !st.closed;
                 const accion = !st ? NaN : st.closed ? mtmSumOf(st) : (isFinite(last) && last > 0 && isFinite(bep) ? (last - bep) * shares : NaN);
-                /* v5.19: el total de la cadena es SOLO el de la acción, no prima + acción. La prima ya
-                   está dentro del coste de esa acción (BEP = strike − prima), así que sumarla otra vez la
-                   contaba dos veces — con el caso de Victor daban +$3.100 donde la caja decía +$800. */
-                return { p, st, linkOk, prima, bep, shares, last, viva, accion, total: isFinite(accion) ? accion : NaN };
+                /* v5.19: la prima de la put ejercida ya está dentro del coste de la acción, así que no
+                   se suma aparte (con el caso de Victor daban +$3.100 donde la caja decía +$800).
+                   v5.28: pero lo que realizaron los rolls ANTERIORES no está dentro del coste — se
+                   realizó al recomprar cada put — así que el total de la cadena es rolls + acción. Sin
+                   rolls, `rolls` es 0 y esto es exactamente la v5.19. */
+                const rolls = mtmSumOf(p);
+                return { p, st, linkOk, prima, bep, shares, last, viva, accion, rolls, total: isFinite(accion) ? accion + rolls : NaN };
               })
               .sort((a, b) => (b.p.closeDate || "").localeCompare(a.p.closeDate || ""));
             if (asigs.length === 0) return null;
@@ -8672,7 +8749,10 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: T.ink }}>{a.p.tkr} <span style={{ fontSize: 10, fontWeight: 700, color: T.sub }}>${money2(n(a.p.strike))} · {a.p.closeDate || "—"}</span></div>
                   <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, marginTop: 2 }}>
-                    Prima {signMoney(a.prima)} → ya dentro del{isFinite(a.bep) ? " BEP $" + money2(a.bep) : " coste"}{a.viva && isFinite(a.last) && a.last > 0 ? " · hoy $" + money2(a.last) : ""}{isFinite(a.shares) ? " · " + a.shares + " acc." : ""}
+                    {Math.abs(a.rolls) >= 0.5
+                      ? <>Rolls {signMoney(a.rolls)} ya realizados · prima ejercida dentro del{isFinite(a.bep) ? " BEP $" + money2(a.bep) : " coste"}</>
+                      : <>Prima {signMoney(a.prima)} → ya dentro del{isFinite(a.bep) ? " BEP $" + money2(a.bep) : " coste"}</>}
+                    {a.viva && isFinite(a.last) && a.last > 0 ? " · hoy $" + money2(a.last) : ""}{isFinite(a.shares) ? " · " + a.shares + " acc." : ""}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -8695,7 +8775,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 </summary>
                 <div style={{ padding: "0 16px 14px" }}>
                   <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginBottom: 9 }}>
-                    La put asignada no acaba en la put: sigue en las acciones. Aquí se ve la cadena entera — el resultado es el de la acción, que ya lleva la prima dentro de su coste. Las vivas son valoración a día de hoy, no resultado, y por eso no entran en ninguna estadística.
+                    La put asignada no acaba en la put: sigue en las acciones. Aquí se ve la cadena entera — el resultado es el de la acción, que ya lleva dentro de su coste la prima de la put ejercida, más lo que realizaron los rolls anteriores al recomprar cada put. Las vivas son valoración a día de hoy, no resultado, y por eso no entran en ninguna estadística.
                   </div>
                   {vivas.length > 0 && (<>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
@@ -16145,7 +16225,8 @@ function App() {
              neta de comisiones), no de `effBep`, que ignora las comisiones. Así el coste de las
              acciones es exactamente lo que la put deja de contar como resultado, y la cadena cuadra
              al céntimo en vez de dejarse las comisiones por el camino. */
-          const traspaso = mtmBrutoOfPos({ ...tgt, closed: true, closePrice: "0", closeComision: comision, exercised: true });
+          /* v5.28: solo la prima de la put ejercida, no la de toda la cadena de rolls */
+          const traspaso = traspasoAsignada({ ...tgt, closed: true, closePrice: "0", closeComision: comision, exercised: true });
           const costBasis = n(tgt.strike) - traspaso / shares;
           const bloque = [0, 1, 2, 3].indexOf(n(asigBloque)) >= 0 ? n(asigBloque) : 1;
           const id2 = newId();
@@ -16418,6 +16499,18 @@ function App() {
   /* mapa id-de-acción → lista de covered call(s) abiertas que la cubren (ordenadas por vencimiento):
      alimenta el banner "COVERED" en la fila de la acción en B1, una línea por call. Usa el enlace
      explícito coveredBy si existe; si no, el heurístico broker+ticker (covered calls antiguas sin enlace). */
+  /* v5.28: acciones de una asignación cuyo coste guardado salió de la regla vieja — ver
+     `costeAsignadaPendiente`. Se calcula aquí porque la put suele vivir en OTRO bloque que la
+     acción, y la tarjeta del bloque solo ve sus propias posiciones. */
+  const costeAsigMap = useMemo(() => {
+    const m = {};
+    positions.forEach((st) => {
+      if (!st.assignedFrom) return;
+      const r = costeAsignadaPendiente(st, positions.find((x) => x.id === st.assignedFrom));
+      if (r) m[st.id] = r;
+    });
+    return m;
+  }, [positions]);
   const coveredMap = useMemo(() => {
     const m = {};
     positions.forEach((cc) => {
@@ -16980,7 +17073,7 @@ function App() {
         ) : isBlockTab ? (
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
             editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={pedirReabrir} legOp={legOp}
-            onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
+            onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} costeAsigMap={costeAsigMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
         ) : activeTab === "aportaciones" ? (
           <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} accounts={accounts} />
         ) : (

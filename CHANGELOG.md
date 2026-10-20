@@ -1,5 +1,71 @@
 # CHANGELOG — Bloques
 
+Bloques v5.28 — ORCL asignada a 190 con la acción en 129, y MTM decía beneficio
+
+## El síntoma
+Victor: *"me han asignado ORCL a 190 y está en 129, y en MTM me sale como profit — no puede ser"*.
+
+En octubre, MTM apuntaba dos líneas de ORCL: **+$10.128** y **−$5.583**. Neto: **+$4.545** el mismo
+día que te entregan 200 acciones 61 dólares por debajo de lo que pagas por ellas.
+
+## La causa
+La put venía de una cadena de **siete rolls**. Cada roll recompra la put vieja (con pérdida, en este
+caso) y vende una nueva. Esas recompras se apuntaron en MTM en su mes —julio, agosto,
+septiembre—, y era correcto: recomprar una put la cierra.
+
+La v5.19 (*"una put asignada no gana su prima"*) traspasaba al coste de las acciones **todo** lo
+realizado por la posición: la cadena entera, +$5.583 netos. Pero el día de la asignación el MTM
+apuntaba solo el cierre de la ÚLTIMA put (+$10.128). Cierre de la última menos traspaso de la cadena
+= **+$4.545**: exactamente las pérdidas de las recompras, devueltas como ganancia. Un dinero que se
+perdió de verdad en su día, contado al revés el día de la asignación.
+
+Con el MRLN de la v5.19 no se vio porque no tenía rolls: la última put era la única, y las dos
+cuentas coinciden.
+
+## El arreglo
+Lo que hacen Hacienda e IBKR: **cada roll es una operación cerrada** y su resultado se queda en su
+mes. A las acciones solo pasa la prima de **la put que te ejercieron**, la última:
+
+> 190 − 50,64 = **$139,36** por acción, no $162,06.
+
+Y el día de la asignación el MTM suma **cero**: el cierre de la última put y su traspaso al coste se
+anulan al céntimo. Cuando hay rolls, el apunte lo dice: *"Los 7 rolls anteriores (−$4.545) ya se
+contaron en su día: recomprar cada put la cerró."*
+
+El **total** de toda la historia sale idéntico por las dos reglas —rolls + acciones desde 139,36,
+frente a cero + acciones desde 162,06—. Lo que cambia es **cuándo** aparece cada cosa, y que el día
+de la asignación ya no se inventa un beneficio. La «BEP actual $162,06» de la tarjeta de la put sigue
+ahí: es el break-even de la cadena entera, una cuenta distinta y también útil.
+
+## Las acciones que ya estaban creadas
+El ORCL de Victor se asignó antes del arreglo, así que sus acciones guardan el coste viejo. Corregirlo
+a escondidas sería reescribir un dato suyo —y si lo hubiera cambiado él a mano, pisarle lo que
+eligió—. Así que **se ofrece, con un botón**, en la propia fila de las acciones: *"Corregir a
+$139,36"*. Y solo cuando el coste guardado es **exactamente** el que calculó la regla vieja para esa
+misma put: si no coincide (lo tocó él), si ya vendió parte, si lleva lotes, o si no hubo rolls, no
+se dice nada.
+
+El resumen **🔗 Asignadas** del Histórico suma ahora rolls + acción (antes solo la acción, que con
+la regla nueva dejaría fuera las recompras).
+
+## La verificación
+`pruebas/asignacion-rolada.mjs`, con una cadena de la forma de la de Victor (2 contratos, strike
+190, la última put vendida a 50,64; tres rolls en vez de siete para que se lea a mano). Asigna desde
+la app y comprueba: coste $139,36, las recompras en sus meses (abril −$2.292…), **el mes de la
+asignación en $0**, el acumulado −$7.094, y el resumen de Asignadas en **−$9.166, que es la caja**
+(+3.034 primas − 38.000 compra + 25.800 que valen hoy). Y el botón de corrección: aparece con el
+coste viejo, corrige, sobrevive a recargar, desaparece después — y **no** aparece si el coste lo
+cambiaste tú ni si no hubo rolls.
+
+Con la regla vieja puesta otra vez la prueba tira **11 comprobaciones**, y reproduce el síntoma tal
+cual: el mes de la asignación sale en +$7.094.
+
+`pruebas/asignacion-put.mjs` (el MRLN sin rolls de la v5.19) sigue en verde con los mismos números;
+solo cambió la frase del aviso que comprobaba (*"no contará como resultado en MTM"* en vez de
+*"contar 0"*, que con rolls ya no es verdad). `npm run prueba` sigue en 18/18 y las otras once
+suites en verde.
+
+
 Bloques v5.27 — El "BEP" de un PMCC no era un precio, y estaba pegado al precio
 
 ## El síntoma
