@@ -191,7 +191,8 @@ const aviso = await page.evaluate(() => {
 console.log("  " + aviso.replace(/\n+/g, " | ").slice(0, 260));
 ok(/Te quedas 1000 acciones de MRLN/.test(aviso), "dice cuántas acciones te quedas");
 ok(aviso.indexOf("$" + COSTE_ACC) >= 0, "y a qué coste: $" + COSTE_ACC + ", no el strike");
-ok(/contar 0 en MTM/.test(aviso), "y avisa de que la put pasará a contar 0, en vez de dejar un cero mudo");
+/* v5.28: la frase cambió ("no contará como resultado en MTM") al dejar de ser cero con rolls */
+ok(/no contará como resultado en MTM/.test(aviso), "y avisa de que su prima no contará como resultado en MTM, en vez de dejar un cero mudo");
 ok(/A QUÉ BLOQUE VAN/i.test(aviso) || /bloque/i.test(aviso), "y deja elegir el bloque");
 
 console.log("\n=== el bloque elegido se respeta (Victor: «o a B1 o a B3 o a B2») ===");
