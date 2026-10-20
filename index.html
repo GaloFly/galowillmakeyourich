@@ -257,7 +257,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.28"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.29"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -862,6 +862,35 @@ function mtmSumOfPos(p) { return mtmBrutoOfPos(p) - traspasoAsignada(p); }
    es que lo tocó alguien, y no se dice nada. Tampoco si ya vendió parte o lleva lotes (el coste
    ahí sale de otra cuenta), ni sin rolls (las dos reglas dan lo mismo). Devuelve null o
    { viejo, nuevo } por acción. */
+/* ---------- v5.29: el BEP de la ESTRATEGIA, a la vista ----------
+   Victor, tras la v5.28: *"quiero tener constancia de cuánto he recobrado en primas; ese break-even
+   de 162 sí me interesa, porque si vendo las acciones a 145 va a contar como profit, y no ha sido así
+   en toda la evolución de la estrategia"*. Eligió quedarse con la cuenta de Hacienda (coste $139,36,
+   cada roll en su mes) Y ver el 162 al lado: son dos preguntas distintas y las dos tienen respuesta.
+     · coste fiscal: lo que resta la put ejercida, y es la base de MTM — no se toca;
+     · BEP de estrategia: ese coste más lo que perdieron (o ganaron) los rolls, repartido por acción.
+       Es el precio al que vender deja TODA la historia en cero.
+   No se suma a ningún total: es información, y sumarlo contaría los rolls dos veces.
+   Solo existe con rolls (sin ellos coincide con el coste), y no se calcula mientras las acciones
+   guarden aún el coste viejo de la v5.19 — ese número ya ERA el de estrategia, y sumarle otra vez
+   los rolls daría uno falso. Devuelve null o { rolls, nRolls, accs, bepEstr }. */
+function estrategiaAsignada(st, put) {
+  if (!st || !put || natOf(st) !== "ACC" || st.assignedFrom !== put.id || !esPutAsignada(put)) return null;
+  const nRolls = (put.rollChain || []).length;
+  const accs = n(put.qty);
+  if (!nRolls || !(accs > 0)) return null;
+  const rolls = mtmSumOfPos(put);
+  if (Math.abs(rolls) < 0.5) return null;
+  const viejo = n(put.strike) - mtmBrutoOfPos(put) / accs;
+  if (Math.abs(n(effBep(st)) - viejo) < 0.005) return null;
+  return { rolls, nRolls, accs, bepEstr: n(effBep(st)) - rolls / accs };
+}
+/* la nota que acompaña a una venta de esas acciones: lo que dice MTM es la venta contra el coste
+   fiscal; esto es lo que deja la estrategia ENTERA, con la parte de los rolls que toca a lo vendido */
+const notaEstrategiaVenta = (estr, realizado, accsVendidas) => (estr
+  ? "Estrategia completa (put rolada + acciones): " + signMoney(realizado + estr.rolls * (n(accsVendidas) / estr.accs))
+    + " · BEP estrategia $" + money2(estr.bepEstr)
+  : "");
 function costeAsignadaPendiente(st, put) {
   if (!st || !put || st.closed || natOf(st) !== "ACC" || hasLots(st) || !esPutAsignada(put)) return null;
   if (!(put.rollChain || []).length) return null;
@@ -6074,7 +6103,7 @@ function PosSummaryCard({ p, onClose }) {
   );
 }
 
-function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, costeAsig, onEditChain, onEditLots }) {
+function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, costeAsig, estrAsig, onEditChain, onEditLots }) {
   const filaRef = useRef(null); /* v4.35: para desplazar la fila a la vista cuando se llega aquí desde otra pantalla */
   const detail = optionDetail(p);
   /* v4.37: en los spreads, optionDetail EMPIEZA por el mismo texto que la insignia de al lado
@@ -6315,6 +6344,17 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <MicroStat label="Plausible" value={"$" + money(plausible)} />
           </div>
         )}
+        {/* v5.29: el BEP de la ESTRATEGIA, debajo del fiscal. El fiscal (arriba) es la base de MTM; éste
+            es el precio al que vender deja toda la historia —put, rolls y acciones— en cero. */}
+        {!!estrAsig && (() => {
+          const hoy = !p.closed && n(p.last) > 0 ? (n(p.last) - estrAsig.bepEstr) * n(p.qty) : NaN;
+          return (
+            <div style={{ marginTop: 9, background: T.tile, borderRadius: 11, padding: "8px 11px", fontSize: 11, fontWeight: 700, color: T.sub, lineHeight: 1.5 }}>
+              BEP estrategia <b style={{ color: T.ink }}>${money2(estrAsig.bepEstr)}</b> · incluye {estrAsig.nRolls} rolls (<span style={{ color: estrAsig.rolls >= 0 ? T.green : T.red }}>{signMoney(estrAsig.rolls)}</span>) ya contados en MTM
+              {isFinite(hoy) && <> · estrategia hoy <b style={{ color: hoy >= 0 ? T.green : T.red }}>{signMoney(hoy)}</b></>}
+            </div>
+          );
+        })()}
         {/* v5.28: acciones de una asignación creadas con la regla vieja. Se ofrece, no se impone:
             el coste es un dato suyo. Ver `costeAsignadaPendiente`. */}
         {!!costeAsig && !p.closed && (
@@ -7100,7 +7140,7 @@ function NavIcon({ name }) {
 }
 
 /* ---------- tarjeta de bloque activo ---------- */
-function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, costeAsigMap, onEditChain, onEditLots }) {
+function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, costeAsigMap, estrAsigMap, onEditChain, onEditLots }) {
   const [rollingIds, setRollingIds] = useState(new Set()); // filas con el panel de roll abierto → swipe-eliminar desactivado
   const activePositions = positions.filter((p) => !p.closed);
   const capBlock = activePositions.reduce((s, p) => s + capDesplegado(p), 0);
@@ -7162,6 +7202,7 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
               onRollingChange={(v) => setRollingIds((s) => { const x = new Set(s); if (v) x.add(p.id); else x.delete(p.id); return x; })}
               coveredLabel={(coveredMap || {})[p.id]}
               costeAsig={(costeAsigMap || {})[p.id]}
+              estrAsig={(estrAsigMap || {})[p.id]}
               onChange={(k) => (v) => setPos(p.id, k, v)} onDelete={() => delPos(p.id)} showPnl={showPnl} brokers={brokers}
               onRoll={(vals) => rollPos(p.id, vals)} onClose={(vals) => closePos(p.id, vals)} onReopen={() => reopenPos(p.id)}
               onLegOp={legOp ? (vals) => legOp(p.id, vals) : null}
@@ -7543,15 +7584,19 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
       const fee = n(p.closeComision), sgA = signoAcc(p);
       const useFifo = natOf(p) === "ACC" && hasLots(p);
       const net = useFifo ? fifoRealized(p.lots, p.closePrice, 0) * sgA - fee : (n(p.closePrice) - n(effBep(p))) * qty * sgA - fee;
-      mtmEvents.push({ id: p.id + "-closemtm", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: useFifo ? "Cierre FIFO" : "Cierre", cash: net, fee, strike: "", right: "", qty: qtyLabelOf(p), bep: n(effBep(p)), note: p.closeNote || "" });
+      /* v5.29: si vienen de una put rolada y asignada, se dice al lado lo que deja la estrategia entera */
+      const estrC = p.assignedFrom ? estrategiaAsignada(p, positions.find((x) => x.id === p.assignedFrom)) : null;
+      const notaC = notaEstrategiaVenta(estrC, net, qty);
+      mtmEvents.push({ id: p.id + "-closemtm", mov: "close", posId: p.id, date: p.closeDate, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: useFifo ? "Cierre FIFO" : "Cierre", cash: net, fee, strike: "", right: "", qty: qtyLabelOf(p), bep: n(effBep(p)), note: [p.closeNote || "", notaC].filter(Boolean).join(" · ") });
     }
     /* ventas por lote (v5.24): cada venta parcial/total de acciones registra su P&L realizado en MTM,
        independientemente de que la posición siga abierta. Realizado = (precio − coste del lote) × qty − fee. */
     if (natOf(p) === "ACC" && Array.isArray(p.soldLots)) {
+      const estrL = p.assignedFrom ? estrategiaAsignada(p, positions.find((x) => x.id === p.assignedFrom)) : null; /* v5.29 */
       p.soldLots.forEach((s, idx) => {
         const sfee = n(s.fee);
         const realized = (n(s.price) - n(s.cost)) * n(s.qty) * signoAcc(p) - sfee;
-        mtmEvents.push({ id: p.id + "-sold" + (s.id || idx), mov: "sold" + (s.id || idx), posId: p.id, date: s.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta lote", cash: realized, fee: sfee, strike: "", right: "", qty: n(s.qty) + " acc", bep: n(s.cost), note: "Venta " + n(s.qty) + " @ $" + money2(n(s.price)) + " (coste $" + money2(n(s.cost)) + ")" });
+        mtmEvents.push({ id: p.id + "-sold" + (s.id || idx), mov: "sold" + (s.id || idx), posId: p.id, date: s.date, tkr: p.tkr, block: p.block, tipo: p.tipo, kind: "Venta lote", cash: realized, fee: sfee, strike: "", right: "", qty: n(s.qty) + " acc", bep: n(s.cost), note: ["Venta " + n(s.qty) + " @ $" + money2(n(s.price)) + " (coste $" + money2(n(s.cost)) + ")", notaEstrategiaVenta(estrL, realized, s.qty)].filter(Boolean).join(" · ") });
       });
     }
     /* dividendos (v5.28): ingreso de acciones/ETF. Va tanto a Primas (cobro) como a MTM (cash realizado).
@@ -16511,6 +16556,16 @@ function App() {
     });
     return m;
   }, [positions]);
+  /* v5.29: y el BEP de la estrategia de esas mismas acciones — ver `estrategiaAsignada` */
+  const estrAsigMap = useMemo(() => {
+    const m = {};
+    positions.forEach((st) => {
+      if (!st.assignedFrom) return;
+      const r = estrategiaAsignada(st, positions.find((x) => x.id === st.assignedFrom));
+      if (r) m[st.id] = r;
+    });
+    return m;
+  }, [positions]);
   const coveredMap = useMemo(() => {
     const m = {};
     positions.forEach((cc) => {
@@ -17073,7 +17128,7 @@ function App() {
         ) : isBlockTab ? (
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
             editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={pedirReabrir} legOp={legOp}
-            onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} costeAsigMap={costeAsigMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
+            onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} costeAsigMap={costeAsigMap} estrAsigMap={estrAsigMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
         ) : activeTab === "aportaciones" ? (
           <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} accounts={accounts} />
         ) : (
