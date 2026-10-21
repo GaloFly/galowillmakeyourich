@@ -1,5 +1,56 @@
 # CHANGELOG — Bloques
 
+Bloques v5.30 — Posiciones en euros (TEP): referencias en €, cuenta en $
+
+## El síntoma
+Victor, con Teleperformance (cotiza en París): *"tengo un BEP de 89,73 € y el precio actual es de
+75,98 € … debería de salir las referencias en euros y ver la conversión de la posición y las primas
+cobradas en dólares, ¿no?"*.
+
+## La causa
+La app no sabía que existían otras monedas: todo número era un dólar. Un BEP de 89,73 se leía como
+$89,73, el valor de 50 acciones a 75,98 entraba en la cuenta como $3.799 (cuando son ~$4.103), y las
+primas de TEP se sumaban a las de NVDA como si fueran la misma moneda. Además el 🔄 Precios le
+preguntaba a Finnhub por "TEP", que en EEUU es OTRA empresa, y podía pisar el precio bueno con el suyo.
+
+## La decisión
+Se le preguntó con qué cambio contar lo cobrado y eligió **al cambio de cada día**, que es lo que
+hace IBKR y lo que pide Hacienda:
+- Lo que la posición **vale** (valor de mercado, P&L abierto): al cambio de **hoy**.
+- Lo **cobrado o pagado** (primas, rolls, cierres): al cambio **del día en que pasó**, y no se
+  mueve después. Una prima de 297 € cobrada el 1-oct a 1,05 son $312 para siempre, aunque hoy el
+  euro valga 1,08 ($321).
+
+## El arreglo
+- Cada posición tiene un campo nuevo, **Moneda** (USD $ / EUR €), en Editar. Es opcional: si no se
+  toca, la posición sigue en dólares exactamente como antes.
+- En la fila de una posición en euros: **BEP, último, prima, débito… en €**, y el P&L grande en
+  dólares (que es lo que suma en la cuenta) con una línea debajo: **"P&L en euros −688 € · 1 € =
+  $1,0800 (BCE, 20 oct)"**.
+- En la cabecera, una línea dice qué posiciones están en euros y a qué cambio se cuentan.
+- En Movimientos, cada prima o cierre en euros sale en € dentro del detalle, con su conversión:
+  **"En euros +297 € · al cambio de ese día, 1 € = $1,0500 → +$312"**. Los totales, en dólares.
+- El tipo de cambio es el oficial del **BCE** (Frankfurter, gratis y sin clave), con la serie
+  diaria desde la primera fecha en euros. Los días sin cotización (fines de semana, festivos) usan
+  el último día hábil anterior. Solo se pide si hay alguna posición en euros.
+- Si el tipo de cambio no llega, **se dice en ámbar** en la cabecera ("se cuentan 1 € = $1 hasta que
+  llegue") en vez de callarlo.
+- **A Finnhub no se le pregunta por nada en euros**: el precio de TEP se pone a mano en Editar,
+  como siempre. Tampoco se piden marcas de opciones al servidor para ellas (OpenD es de EEUU).
+
+Para los usuarios sin posiciones en euros no cambia nada: el factor de conversión de una posición en
+dólares es exactamente 1, y la red de seguridad (`npm run prueba`) sale con las 18 cifras idénticas.
+
+## La verificación
+`pruebas/posicion-euros.mjs` (nueva): NVDA en dólares + TEP 50 acc (BEP 89,73 €, último 75,98 €) +
+una put de TEP en euros, con una serie de cambio inventada (1-oct 1,05 · 20-oct 1,08). Comprueba:
+MKT VL $16.941 (13.000 + 4.102,92 − 162), la fila con €89,73 / €75,98 y P&L −$743 / −688 €, la
+prima de la put en +$312 (al cambio de su día, no los $321 de hoy) con su detalle, que a Finnhub
+solo se le pregunta por NVDA, el aviso cuando no hay tipo de cambio, y que una cartera sin euros
+no ve ni una línea nueva ni pide el cambio. Puesto el fallo a propósito tres veces —prima al cambio
+de hoy, Finnhub pisando TEP, valor sin convertir— la prueba se pone en rojo las tres.
+Las otras 18 pruebas, en verde.
+
 Bloques v5.29 — El BEP de la estrategia, a la vista junto al fiscal
 
 ## El síntoma
