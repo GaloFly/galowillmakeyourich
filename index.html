@@ -258,7 +258,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.30"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.31"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -1354,6 +1354,21 @@ const effPnlNat = (p) => {
 const MONEDAS = { USD: "$", EUR: "€" };
 const monedaDe = (p) => (p && p.moneda === "EUR" ? "EUR" : "USD");
 const simbDe = (p) => MONEDAS[monedaDe(p)];
+/* v5.31: sufijo de bolsa de la zona euro (la convención de Yahoo/Finnhub: TEP.PA, ASML.AS, SAP.DE…).
+   Un ticker así cotiza en euros sin duda; uno sin sufijo puede ser de cualquier sitio. */
+const SUFIJO_EURO = /\.(PA|AS|DE|F|MC|MI|BR|LS|HE|IR|VI)$/i;
+const tkrNorm = (t) => String(t || "").trim().toUpperCase();
+/* v5.31: lo que el cambio de moneda NO convierte — los números se quedan y pasan a leerse en la otra.
+   Se enumeran los que tiene esta ficha para que se vea cuáles hay que reescribir. */
+function camposEnMoneda(p) {
+  const S = simbDe(p), out = [];
+  const add = (nombre, v) => { if (String(v == null ? "" : v).trim() !== "" && isFinite(n(v)) && n(v) !== 0) out.push(nombre + " " + S + money2(n(v))); };
+  add("BEP", p.bep); add("último", p.last); add("strike", p.strike); add("prima", p.prima);
+  add("comisión", p.comision); add("valor escrito", p.mktValue); add("cierre", p.closePrice);
+  if ((p.lots || []).length) out.push((p.lots || []).length + " compras en lotes");
+  if ((p.rollChain || []).length) out.push((p.rollChain || []).length + " rolls");
+  return out;
+}
 /* EUR→USD: `hoy` y la serie `hist` { "AAAA-MM-DD": tipo }. Se asigna en el cuerpo de App (como
    HAY_PUENTE), antes de pintar ningún hijo. `fechas` va ordenada para buscar el día hábil anterior. */
 let FX_EURUSD = { hoy: NaN, hist: {}, fechas: [], fuente: "", fecha: "" };
@@ -6169,7 +6184,7 @@ function PosSummaryCard({ p, onClose }) {
   );
 }
 
-function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, costeAsig, estrAsig, onEditChain, onEditLots }) {
+function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll, onClose, onReopen, onLegOp, pctBloque, pctCartera, showPnl, brokers, hideBroker, pendingAction, clearPending, onRollingChange, coveredLabel, costeAsig, estrAsig, monedaSug, onEditChain, onEditLots }) {
   const filaRef = useRef(null); /* v4.35: para desplazar la fila a la vista cuando se llega aquí desde otra pantalla */
   const detail = optionDetail(p);
   /* v4.37: en los spreads, optionDetail EMPIEZA por el mismo texto que la insignia de al lado
@@ -6201,6 +6216,11 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
   const pnlBasisNat = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegadoNat(p);
   const pnlPct = pnlBasisNat ? effPnlNat(p) / pnlBasisNat : NaN;
   const S = simbDe(p), enEuros = monedaDe(p) !== "USD"; /* v5.30 */
+  /* v5.31: al cambiar la moneda los números NO se convierten: se quedan y pasan a leerse en la otra.
+     Se avisa en el momento, con la lista de los que tiene esta ficha, y el aviso queda hasta que se
+     pulsa "Entendido" — un BEP de 102 que eran dólares pasaría a ser 102 € sin que nada lo dijera. */
+  const [monedaAviso, setMonedaAviso] = useState(null);
+  const cambiarMoneda = (m) => { if (m === monedaDe(p)) return; onChange("moneda")(m); setMonedaAviso({ de: monedaDe(p), a: m }); };
   const rollChain = p.rollChain || [];
   /* v5.24: escribir UN campo de la pata larga del PMCC. Va por el mismo `onChange` que todo lo demás
      —se guarda al instante— y reemplaza el objeto entero conservando el resto de sus campos, que es
@@ -6439,14 +6459,52 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         {!!costeAsig && !p.closed && (
           <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, lineHeight: 1.45 }}>
-              El coste de estas acciones (<b>{S}{money2(costeAsig.viejo)}</b>) se calculó metiendo también los rolls anteriores, que ya contaron en su día. Solo debe restar la prima de la put que te ejercieron: <b>${money2(costeAsig.nuevo)}</b> — lo mismo que te pone IBKR.
+              El coste de estas acciones (<b>{S}{money2(costeAsig.viejo)}</b>) se calculó metiendo también los rolls anteriores, que ya contaron en su día. Solo debe restar la prima de la put que te ejercieron: <b>{S}{money2(costeAsig.nuevo)}</b> — lo mismo que te pone IBKR.
             </div>
-            <button type="button" onClick={(e) => { e.stopPropagation(); onChange("bep")(String(costeAsig.nuevo)); onChange("entryNote")("Asignada desde put " + (p.tkr || "") + " · coste base = strike − prima de la put ejercida = $" + money2(costeAsig.nuevo)); }}
+            <button type="button" onClick={(e) => { e.stopPropagation(); onChange("bep")(String(costeAsig.nuevo)); onChange("entryNote")("Asignada desde put " + (p.tkr || "") + " · coste base = strike − prima de la put ejercida = " + S + money2(costeAsig.nuevo)); }}
               style={{ marginTop: 8, border: "none", borderRadius: 10, padding: "8px 12px", background: T.gold, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
               Corregir a {S}{money2(costeAsig.nuevo)}
             </button>
           </div>
         )}
+        {/* v5.31: el mismo ticker en euros en otra posición (o con sufijo de bolsa europea) y esta sin
+            moneda elegida. Se ofrece, no se impone: "dejar en dólares" la marca como decidida. */}
+        {!!monedaSug && !p.closed && !monedaAviso && (
+          <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, lineHeight: 1.45 }}>
+              {monedaSug.motivo === "sufijo"
+                ? <>{p.tkr} cotiza en una bolsa europea, en <b>euros</b>, y esta ficha está en dólares.</>
+                : <>Tienes {p.tkr} en <b>euros</b> en otra posición ({monedaSug.tipos.join(", ")}) y esta está en dólares. Si es la misma empresa, tiene que ir en la misma moneda.</>}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={(e) => { e.stopPropagation(); cambiarMoneda("EUR"); }}
+                style={{ border: "none", borderRadius: 10, padding: "8px 12px", background: T.gold, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                Pasar a euros
+              </button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); onChange("moneda")("USD"); }}
+                style={{ border: "none", borderRadius: 10, padding: "8px 12px", background: T.tile, color: T.sub, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                Es otra, dejar en $
+              </button>
+            </div>
+          </div>
+        )}
+        {!!monedaAviso && (() => {
+          const campos = camposEnMoneda(p);
+          const nombre = monedaAviso.a === "EUR" ? "euros" : "dólares", antes = monedaAviso.de === "EUR" ? "euros" : "dólares";
+          return (
+            <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, lineHeight: 1.45 }}>
+                Ahora esta ficha va en <b>{nombre}</b>. Ojo: los números <b>no se han convertido</b>, solo cambia cómo se leen.
+                {campos.length > 0 && <> Ahora pone: <b>{campos.join(" · ")}</b>.</>}
+                {" "}Si los tenías apuntados en {antes}, reescríbelos en {nombre} — los que te da IBKR para este valor.
+              </div>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setMonedaAviso(null); }}
+                style={{ marginTop: 8, border: "none", borderRadius: 10, padding: "8px 12px", background: T.gold, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                Entendido
+              </button>
+            </div>
+          );
+        })()}
         {cash && (
           <div style={{ display: "flex", gap: 8, marginTop: 7, flexWrap: "wrap" }}>
             <MicroStat label="% Bloque" value={pct(pctBloque, 1)} />
@@ -6475,7 +6533,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               como siempre. */}
           <label style={{ gridColumn: "span 2" }}>
             <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Moneda</span>
-            <Pill options={["USD $", "EUR €"]} value={monedaDe(p) === "EUR" ? "EUR €" : "USD $"} onChange={(v) => onChange("moneda")(v === "EUR €" ? "EUR" : "USD")} size="sm" />
+            <Pill options={["USD $", "EUR €"]} value={monedaDe(p) === "EUR" ? "EUR €" : "USD $"} onChange={(v) => cambiarMoneda(v === "EUR €" ? "EUR" : "USD")} size="sm" />
             {enEuros && <span style={{ display: "block", fontSize: 10.5, color: T.sub, fontWeight: 600, marginTop: 4, lineHeight: 1.4 }}>Precios, BEP y primas de esta ficha en euros. En los totales de la cuenta se pasa a dólares: lo que vale al cambio de hoy, lo cobrado al del día en que pasó. Sin precio automático: el último se escribe a mano.</span>}
           </label>
           {/* v3.47: mover la posición de bloque (p.ej. de B2 a B1). Solo se ofrecen los bloques cuya lista
@@ -7227,7 +7285,7 @@ function NavIcon({ name }) {
 }
 
 /* ---------- tarjeta de bloque activo ---------- */
-function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, costeAsigMap, estrAsigMap, onEditChain, onEditLots }) {
+function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPos, addPos, delPos, rollPos, closePos, reopenPos, legOp, showPnl, togglePnl, brokers, onOpenSheet, pendingAction, clearPending, coveredMap, costeAsigMap, estrAsigMap, monedaSugMap, onEditChain, onEditLots }) {
   const [rollingIds, setRollingIds] = useState(new Set()); // filas con el panel de roll abierto → swipe-eliminar desactivado
   const activePositions = positions.filter((p) => !p.closed);
   const capBlock = activePositions.reduce((s, p) => s + capDesplegado(p), 0);
@@ -7290,6 +7348,7 @@ function BlockCard({ blk, positions, nlv, editSet, toggleEdit, closeEdits, setPo
               coveredLabel={(coveredMap || {})[p.id]}
               costeAsig={(costeAsigMap || {})[p.id]}
               estrAsig={(estrAsigMap || {})[p.id]}
+              monedaSug={(monedaSugMap || {})[p.id]}
               onChange={(k) => (v) => setPos(p.id, k, v)} onDelete={() => delPos(p.id)} showPnl={showPnl} brokers={brokers}
               onRoll={(vals) => rollPos(p.id, vals)} onClose={(vals) => closePos(p.id, vals)} onReopen={() => reopenPos(p.id)}
               onLegOp={legOp ? (vals) => legOp(p.id, vals) : null}
@@ -16469,7 +16528,8 @@ function App() {
             margenPct: "100", margenModo: "PCT", mktModo: "AUTO", pnlModo: "AUTO", pnl: "",
             entryDate: closeDate, rollChain: [], closed: false, closeDate: "", closePrice: "",
             closeComision: "", closeNote: "", assignedFrom: id,
-            entryNote: "Asignada desde put " + (tgt.tkr || "") + " · coste base = BEP $" + money2(costBasis),
+            ...(tgt.moneda ? { moneda: tgt.moneda } : {}), /* v5.31: la acción, en la moneda de su put */
+            entryNote: "Asignada desde put " + (tgt.tkr || "") + " · coste base = BEP " + simbDe(tgt) + money2(costBasis),
           }];
         }
       }
@@ -16750,6 +16810,21 @@ function App() {
       if (!st.assignedFrom) return;
       const r = estrategiaAsignada(st, positions.find((x) => x.id === st.assignedFrom));
       if (r) m[st.id] = r;
+    });
+    return m;
+  }, [positions]);
+  /* v5.31: posiciones sin moneda elegida cuyo ticker está en euros en OTRA posición (abierta o
+     cerrada: una put de TEP ya cerrada sigue diciendo que TEP es en euros), o lleva sufijo de bolsa
+     europea. Así da igual por dónde entre la posición nueva —asistente, capturas, a mano—: se avisa
+     en su fila. Una moneda ya elegida (también "USD" a propósito) no se discute. */
+  const monedaSugMap = useMemo(() => {
+    const m = {}, euros = {};
+    positions.forEach((x) => { const t = tkrNorm(x.tkr); if (t && monedaDe(x) === "EUR") (euros[t] = euros[t] || []).push(x.tipo || "posición"); });
+    positions.forEach((p) => {
+      const t = tkrNorm(p.tkr);
+      if (p.closed || p.moneda || !t) return;
+      if (euros[t]) m[p.id] = { motivo: "hermano", tipos: [...new Set(euros[t])] };
+      else if (SUFIJO_EURO.test(t)) m[p.id] = { motivo: "sufijo" };
     });
     return m;
   }, [positions]);
@@ -17315,7 +17390,7 @@ function App() {
         ) : isBlockTab ? (
           <BlockCard blk={blk} positions={blockPositions} nlv={nlv} showPnl={showPnl} togglePnl={togglePnl} brokers={brokers}
             editSet={editSet} toggleEdit={toggleEdit} closeEdits={() => setEditSet(new Set())} setPos={setPos} addPos={addPos} delPos={delPos} rollPos={rollPos} closePos={closePos} reopenPos={pedirReabrir} legOp={legOp}
-            onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} costeAsigMap={costeAsigMap} estrAsigMap={estrAsigMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
+            onOpenSheet={openSheet} pendingAction={pendingAction} clearPending={() => setPendingAction(null)} coveredMap={coveredMap} costeAsigMap={costeAsigMap} estrAsigMap={estrAsigMap} monedaSugMap={monedaSugMap} onEditChain={setEditChainId} onEditLots={setEditLotsId} />
         ) : activeTab === "aportaciones" ? (
           <AportacionesCard flows={flows} setFlows={setFlows} brokers={brokers} accounts={accounts} />
         ) : (

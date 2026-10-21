@@ -375,6 +375,21 @@ Las tres reglas que esto protege, y que van con el formato de datos:
    "falta un dato → sale mal".
 3. **O están todas las marcas de una posición, o no se usa ninguna.**
 
+## Posiciones en euros (v5.30–v5.31)
+
+Campo opcional `moneda` ("EUR"; sin él, dólares). Dentro de la ficha todo va en la moneda de la
+posición (`…Nat`); los nombres clásicos (`effMkt`, `effPnl`…) devuelven dólares al cambio de HOY, y
+Movimientos pasa cada prima/cierre al cambio DE SU DÍA (elección de Victor, como IBKR/Hacienda).
+Tipo de cambio: BCE vía Frankfurter. Para una posición en dólares el factor es exactamente 1.
+
+- **Cambiar la moneda NO convierte los números**: se reinterpretan. Por eso el aviso de la v5.31
+  enumera los que tiene la ficha. Nunca convertir solos: no se sabe en qué moneda los escribió.
+- **Precio de europeas: a mano.** Finnhub gratis solo da EEUU (y "TEP" allí es OTRA empresa: le
+  metía $64,47 a Teleperformance). OpenD/moomoo tampoco cubre Euronext (HK, EEUU, China, SG, JP).
+  Alpha Vantage quizá (`GLOBAL_QUOTE`), sin comprobar: desde el contenedor de Claude está bloqueado.
+- La app sugiere euros si el mismo ticker está en euros en otra posición o lleva sufijo de bolsa
+  europea (`.PA`, `.AS`, `.DE`…); "Es otra, dejar en $" guarda `moneda: "USD"` y ya no insiste.
+
 ## Sistema de diseño (v4.11–v4.29)
 
 Regla base: **lo interactivo se ELEVA, lo estático se HUNDE.**
