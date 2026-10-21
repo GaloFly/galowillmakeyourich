@@ -195,6 +195,7 @@ const SEED_ACC = { IBKR: { cash: "0", margin: "0" } };
 const KEY_ACC = "bloques_acc_v5", KEY_POS = "bloques_pos_v5";
 const KEY_ACC_OLD = "bloques_acc_v4", KEY_POS_OLD = "bloques_pos_v4";
 const KEY_FINNHUB = "bloques_finnhub_key";
+const KEY_FX_EURUSD = "bloques_fx_eurusd_v1"; /* v5.30: tipo EUR→USD del BCE, cacheado un día */
 const KEY_MDATA = "bloques_marketdata_key"; // v1.92: key de marketdata.app para la liquidez de opciones
 const KEY_AVANTAGE = "bloques_alphavantage_key"; // v2.08: key de Alpha Vantage para las FECHAS de earnings pasados (Finnhub gratis solo da futuros)
 const KEY_GEMINI = "bloques_gemini_key";
@@ -257,7 +258,7 @@ const KEY_TR_OLD = "tradecomp_tr_blank_v4"; // migración del Comparador standal
    cambios de datos/esquema, también UI, cálculos, renombrados, etc. Así "buscar actualización" SIEMPRE
    deja copia de seguridad automática antes de aplicar lo nuevo, sin tener que juzgar caso a caso si el
    cambio "tocaba datos". Formato de dos decimales, sumamos 0.01 por entrega: 4.03, 4.04, 4.05… */
-const APP_VERSION = "5.29"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
+const APP_VERSION = "5.30"; /* Historial completo de versiones: ver CHANGELOG.md en el repo */
 window.APP_VERSION = APP_VERSION;
 const KEY_APPVER = "bloques_app_version";
 const KEY_AUTOBK = "bloques_autobackups_v1"; // últimas 3 copias automáticas (raw localStorage)
@@ -688,7 +689,7 @@ const DCDD_EVENTS = ["NFP", "CPI", "FOMC", "Earnings", "OPEX", "Otro"];
 const WEEKDAYS_ES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const weekdayOf = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d.getTime()) ? "" : WEEKDAYS_ES[d.getDay()]; };
 /* capital desplegado — numerador del barbell (/ NLV → 80/15/5) */
-const capDesplegado = (p) => {
+const capDesplegadoNat = (p) => {
   const nat = natOf(p);
   if (nat === "CASH") return Math.abs(n(p.mktValue));
   if (nat === "ACC") return Math.abs(n(p.last) * n(p.qty));
@@ -699,7 +700,7 @@ const capDesplegado = (p) => {
   return n(p.riesgo) || Math.abs(effBep(p) * n(p.qty)); // DEF
 };
 /* riesgo total / techo — para acción y crédito coincide con capital desplegado */
-const riesgoTotalOf = (p) => {
+const riesgoTotalOfNat = (p) => {
   const nat = natOf(p);
   if (isPMCC(p)) return pmccRisk(p); // PMCC: débito neto × qty (mín 0)
   if (isLongCallPos(p)) return longCallCost(p) || n(p.riesgo); // Long Call: prima pagada
@@ -707,15 +708,15 @@ const riesgoTotalOf = (p) => {
   /* v4.91: una acción CON STOP ya no arriesga todo el capital, sino la distancia hasta el stop. Sin
      stop, `riesgoStop` es NaN y esto cae al comportamiento de siempre. */
   if (nat === "ACC") { const rs = riesgoStop(p); if (isFinite(rs)) return rs; }
-  return capDesplegado(p);
+  return capDesplegadoNat(p);
 };
 /* riesgo plausible — numerador de sizing (/ NLV) */
-const plausibleOf = (p) => {
+const plausibleOfNat = (p) => {
   const nat = natOf(p);
   if (nat === "CASH") return 0;
   if (isPMCC(p)) return pmccRisk(p); // PMCC: plausible = riesgo (débito neto), sin factor
   if (nat === "COLLAR") return p.coveredBy ? 0 : n(p.riesgo); /* collar vinculado: su riesgo se expresa en el plausible de la acción */
-  if (nat === "DEF") return riesgoTotalOf(p);
+  if (nat === "DEF") return riesgoTotalOfNat(p);
   /* acciones: el plausible se ancla al capital comprometido en la entrada (BEP × qty), no al valor de
      mercado — así no es procíclico (no sube porque suba la acción) y cada prima de covered call cobrada,
      al rebajar el BEP vía el ajuste wheel, reduce mecánicamente el riesgo plausible. Si no hay BEP
@@ -730,10 +731,10 @@ const plausibleOf = (p) => {
        plausible 0 (sigue contando en tamaño/sizing vía capDesplegado). Un valor > 0 sustituye al BEP
        como base del plausible. Vacío = sin collar, comportamiento normal. */
     if (p.plausBep !== "" && p.plausBep != null) return Math.abs(n(p.plausBep) * n(p.qty)) * factorOf(p);
-    const base = n(effBep(p)) ? Math.abs(effBep(p) * n(p.qty)) : capDesplegado(p);
+    const base = n(effBep(p)) ? Math.abs(effBep(p) * n(p.qty)) : capDesplegadoNat(p);
     return base * factorOf(p);
   }
-  return capDesplegado(p) * factorOf(p);
+  return capDesplegadoNat(p) * factorOf(p);
 };
 /* ---------- v2.14: resultado REALIZADO de una posición por sí sola (sin el ledger global) ----------
    Réplica byte a byte de las fórmulas de primaEvents/mtmEvents de MovimientosView, pero para UNA posición,
@@ -912,7 +913,7 @@ const realizedOf = (p) => {
 };
 /* valor de mercado — para acciones (ACC) se recalcula solo: Último × Cantidad. Manual para opciones o si se fuerza. */
 const isAutoMkt = (p) => natOf(p) === "ACC" && p.mktModo !== "MANUAL" && p.last !== "" && p.last != null;
-const effMkt = (p) => {
+const effMktNat = (p) => {
   if (isAutoMkt(p)) return n(p.last) * n(p.qty);
   /* v5.20: las opciones valen lo que dice el servidor, no lo que se escribió un día a mano. El campo
      manual sigue mandando si se ha forzado (mktModo MANUAL) y es el respaldo cuando no hay precio. */
@@ -933,6 +934,7 @@ const motivoSinPrecio = (p) => {
   /* una posición CERRADA no tiene patas vivas por definición: ahí no falta nada que arreglar, y
      decirle "complétala" sería mandarla a tocar una operación que ya terminó. */
   if (!p || p.closed || !isOptionNat(p) || p.mktModo === "MANUAL" || mktEsReal(p)) return null;
+  if (monedaDe(p) !== "USD") return "Posición en euros: no hay precio automático de esa bolsa, así que su valor es el que escribas (en euros). En los totales se pasa a dólares al cambio de hoy.";
   if (!HAY_PUENTE) return "En Auto este valor lo manda tu servidor propio, y no hay ninguno configurado (Ajustes → Avanzado). Ponlo en Manual y escríbelo tú.";
   const patas = patasDePosicion(p);
   if (!patas.length) {
@@ -952,7 +954,7 @@ const motivoSinPrecio = (p) => {
   return null;
 };
 const isPctMargin = (p) => p.margenModo !== "VALOR";
-const effMargen = (p) => (natOf(p) === "CASH" ? 0 : (isPctMargin(p) ? Math.abs(effMkt(p)) * (p.margenPct === "" || p.margenPct == null ? 0 : n(p.margenPct)) / 100 : n(p.margen)));
+const effMargenNat = (p) => (natOf(p) === "CASH" ? 0 : (isPctMargin(p) ? Math.abs(effMktNat(p)) * (p.margenPct === "" || p.margenPct == null ? 0 : n(p.margenPct)) / 100 : n(p.margen)));
 /* P&L auto: (Último − BEP) × Cantidad para acciones, o simulación a vencimiento para opciones cortas.
    Las estrategias de riesgo definido (DEF · B3: DC/DD, credit spreads, débito genérico, Long Call) NUNCA
    son auto: el BEP no es una referencia de precio válida para ellas, así que su P&L es manual (o 0). */
@@ -1041,6 +1043,9 @@ const leeContrato = (cod) => {
    ya `signo`. */
 const patasDePosicion = (p) => {
   if (!p || p.closed) return [];
+  /* v5.30: OpenD (vía el puente) cotiza opciones americanas, con códigos "US.…". Una posición en
+     euros no tiene contrato que pedirle: sin patas, su valor sigue siendo el que se escribe. */
+  if (monedaDe(p) !== "USD") return [];
   const una = codigoOpcion(p);
   if (una) return [{ cod: una, entrada: Math.abs(n(p.prima)), signo: natOf(p) === "CRED" ? 1 : -1 }];
 
@@ -1296,7 +1301,7 @@ const griegasDeCartera = (posiciones) => {
            viejasN, tsViejo, tsNuevo, muestras, detalle, congeladas, diasViejo };
 };
 const isAutoPnl = (p) => p.pnlModo !== "MANUAL" && natOf(p) !== "DEF";
-const effPnl = (p) => {
+const effPnlNat = (p) => {
   /* v4.52/v4.53: con TODAS las marcas de sus patas, la posición deja de ser manual. Va ANTES del
      corte de isAutoPnl porque verticales y DC/DD son nat=DEF y ese corte los mandaría a p.pnl sin
      mirar siquiera. */
@@ -1322,6 +1327,57 @@ const effPnl = (p) => {
      todo lo demás vale 1 y esta línea es la de siempre. */
   return (n(p.last) - effBep(p)) * n(p.qty) * signoAcc(p);
 };
+/* ---------- v5.30: POSICIONES EN EUROS ----------
+   Victor, con Teleperformance (TEP, en euros): *"tengo un BEP de 89,73 € y el precio actual es de
+   75,98 €, y mira lo que sale. Deberían salir las referencias en euros, y ver la conversión de la
+   posición y las primas cobradas en dólares"*.
+
+   Hasta aquí la app no sabía que existen otras monedas: 89,73 € entraba como $89,73, y el valor, el
+   P&L y las primas de TEP se sumaban a los totales como si fueran dólares — con el euro por encima
+   del dólar, cada euro de TEP contaba de menos.
+
+   El diseño, en dos mitades que no se mezclan nunca:
+     · DENTRO de la posición, todo en SU moneda: BEP, último, strike, primas por acción, y todas las
+       cuentas por posición (las funciones `…Nat`). Así la posición es coherente consigo misma —
+       comparar un strike en euros con un precio en euros— y se ve como en el bróker.
+     · HACIA FUERA, en dólares, que es la moneda de la cuenta y de todos los totales:
+         - lo que VALE (valor de mercado, P&L abierto, riesgo, plausible, margen), al cambio de HOY;
+         - lo que se COBRÓ o realizó (primas, rolls, cierres, en Movimientos), al cambio DEL DÍA en que
+           pasó — como IBKR con el realizado: un mes cobrado no cambia luego porque se mueva el euro.
+       Lo eligió Victor entre las dos opciones.
+   Las funciones con el nombre de siempre (`effMkt`, `effPnl`, `capDesplegado`…) devuelven DÓLARES, así
+   que cada total de la app que las suma queda bien sin tocarlo. Para una posición en dólares el
+   factor es exactamente 1: nada de lo que había cambia (y `npm run prueba` lo vigila).
+
+   El tipo es el de referencia del BCE (Frankfurter, sin key): la serie entera de una vez, cacheada un
+   día. Si no hay ninguno, se cuenta 1 € = $1 y SE DICE en pantalla — nunca en silencio. */
+const MONEDAS = { USD: "$", EUR: "€" };
+const monedaDe = (p) => (p && p.moneda === "EUR" ? "EUR" : "USD");
+const simbDe = (p) => MONEDAS[monedaDe(p)];
+/* EUR→USD: `hoy` y la serie `hist` { "AAAA-MM-DD": tipo }. Se asigna en el cuerpo de App (como
+   HAY_PUENTE), antes de pintar ningún hijo. `fechas` va ordenada para buscar el día hábil anterior. */
+let FX_EURUSD = { hoy: NaN, hist: {}, fechas: [], fuente: "", fecha: "" };
+const fxHayTipo = () => isFinite(FX_EURUSD.hoy) && FX_EURUSD.hoy > 0;
+const fxHoyPos = (p) => (monedaDe(p) === "USD" ? 1 : (fxHayTipo() ? FX_EURUSD.hoy : 1));
+const fxDiaPos = (p, fecha) => {
+  if (monedaDe(p) === "USD") return 1;
+  const f = String(fecha || "").slice(0, 10), h = FX_EURUSD.hist || {};
+  if (h[f] > 0) return h[f];
+  /* fin de semana o festivo: el último día hábil anterior que haya en la serie */
+  const fs = FX_EURUSD.fechas || [];
+  let lo = 0, hi = fs.length - 1, mejor = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (fs[m] <= f) { mejor = m; lo = m + 1; } else hi = m - 1; }
+  return mejor >= 0 ? h[fs[mejor]] : fxHoyPos(p);
+};
+/* las cuentas de dinero de siempre, en DÓLARES — ver arriba */
+const effMkt = (p) => effMktNat(p) * fxHoyPos(p);
+const effPnl = (p) => effPnlNat(p) * fxHoyPos(p);
+const effMargen = (p) => effMargenNat(p) * fxHoyPos(p);
+const capDesplegado = (p) => capDesplegadoNat(p) * fxHoyPos(p);
+const riesgoTotalOf = (p) => riesgoTotalOfNat(p) * fxHoyPos(p);
+const plausibleOf = (p) => plausibleOfNat(p) * fxHoyPos(p);
+/* "−2.055 €" para enseñar la cifra en su moneda al lado de la de dólares */
+const dineroEn = (p, v) => (monedaDe(p) === "USD" ? signMoney(v) : signMoney(v).replace("$", "") + " " + simbDe(p));
 /* v4.57: "14 ago, 21:58" — para decir de cuándo es un dato sin soltar una fecha ISO en la cara */
 const fechaCorta = (ms) => {
   try {
@@ -3589,7 +3645,7 @@ function useCountUp(value) {
    expandible con el estado de cuenta completo (cash negativo, margen, EL y barras de zona).
    v4.11 (rediseño A): valor a 33px con contador, cambio del día en chip, línea de 30 días desde los
    snapshots, distribución por bloques compacta y métricas en rejilla 2×2. ---------- */
-function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manualCash, totalPnl, totalRiesgo, nPos,
+function AccountHero({ nlv, mktvl, mktCobertura, eurosInfo, cash, margin, el, posCash, manualCash, totalPnl, totalRiesgo, nPos,
   elNlv, elMrgn, leverage, dayChg, broker, brokers, accounts, setAccField, accOpen, setAccOpen, onOpenInfo, snapshots, blockDist,
   privado, togglePrivado }) {
   const chgCol = !dayChg ? T.sub : dayChg.abs >= 0 ? T.green : T.red;
@@ -3775,6 +3831,16 @@ function AccountHero({ nlv, mktvl, mktCobertura, cash, margin, el, posCash, manu
             </div>
           );
         })()}
+        {/* v5.30: posiciones en euros — se dice cuáles y a qué cambio cuentan en estos totales.
+            Sin tipo de cambio, en ámbar: contar 1 € = $1 a escondidas sería un número con pinta de dato. */}
+        {!!eurosInfo && eurosInfo.tkrs.length > 0 && (
+          <div style={{ fontSize: 10, fontWeight: 600, marginTop: 6, lineHeight: 1.45, color: eurosInfo.ok ? T.sub : T.gold }}>
+            En euros: <b style={{ color: T.ink }}>{eurosInfo.tkrs.join(", ")}</b> ·{" "}
+            {eurosInfo.ok
+              ? <>1 € = ${n(eurosInfo.hoy).toFixed(4)} ({eurosInfo.fuente || "BCE"}{eurosInfo.fecha ? ", " + eurosInfo.fecha : ""}). Lo que valen, al cambio de hoy; lo cobrado, al de su día.</>
+              : <>sin tipo de cambio todavía: se cuentan 1 € = $1 hasta que llegue.</>}
+          </div>
+        )}
         {/* v1.44: ratios en el formato compacto del estado de cuenta anterior (apilados con filete),
             en la misma fila que el ▼ que despliega el detalle. Tocar un ratio abre su ficha; tocar
             el resto de la fila, despliega. */}
@@ -4415,7 +4481,7 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
                   <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                     <span title={"% NLV " + pct(row.pctNlv, 1)} style={{ width: 8, height: 8, borderRadius: 4, background: HEX[concTone(row.pctNlv)], flexShrink: 0, display: "inline-block", alignSelf: "center" }} />
                     <span style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>{row.tkr}</span>
-                    {row.last > 0 && <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>${money2(row.last)}</span>}
+                    {row.last > 0 && <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub }}>{row.simb || "$"}{money2(row.last)}</span>}
                   </span>
                   <span style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>${money(row.riesgo)} riesgo total</span>
                 </div>
@@ -4448,7 +4514,7 @@ function ExposureCard({ rows, onOpen, showPnl, togglePnl }) {
                         <span style={{ fontSize: 12, color: T.ink, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           <span style={{ color: b ? b.color : T.sub, fontWeight: 800 }}>{b ? b.name.replace("Bloque ", "B") : ""}</span>
                           {" · x " + d.qtyNum}{d.desc ? " " + d.desc : ""}
-                          {" · BEP $" + money2(d.bep)}
+                          {" · BEP " + (row.simb || "$") + money2(d.bep)}
                         </span>
                         <span style={{ fontSize: 12, color: T.sub, fontWeight: 800, flexShrink: 0 }}>${money(d.riesgo)}</span>
                       </div>
@@ -4709,10 +4775,10 @@ function VencimientosCard({ rows, onOpen, onPos }) {
                           </div>
                           {(hasLast || (isFinite(d.bep) && n(d.bep) !== 0)) && (
                             <div style={{ fontSize: 11, color: T.sub, fontWeight: 700, lineHeight: 1.35, marginTop: 1, display: "flex", flexWrap: "wrap", gap: "0 6px" }}>
-                              {hasLast && <span style={{ whiteSpace: "nowrap" }}>{"Últ $" + money2(lastN)}</span>}
+                              {hasLast && <span style={{ whiteSpace: "nowrap" }}>{"Últ " + (d.simb || "$") + money2(lastN)}</span>}
                               {/* v5.27: un BEP es un precio del subyacente y por eso va junto al "Últ".
                                   El débito neto de un PMCC no lo es: mismo número, nombre correcto. */}
-                              {isFinite(d.bep) && n(d.bep) !== 0 ? <span style={{ whiteSpace: "nowrap" }}>{(d.bepEsPrecio === false ? "Débito $" : "BEP $") + money2(d.bep)}</span> : null}
+                              {isFinite(d.bep) && n(d.bep) !== 0 ? <span style={{ whiteSpace: "nowrap" }}>{(d.bepEsPrecio === false ? "Débito " : "BEP ") + (d.simb || "$") + money2(d.bep)}</span> : null}
                             </div>
                           )}
                           {/* varias posiciones fundidas en esta fila: se eligen una a una en vez de abrir
@@ -6130,8 +6196,11 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
      Positivo = hay que pagar para salir (lo normal en un credit spread); negativo = te pagan a ti. */
   const cierre = cierrePosicion(p);
   const conMarca = isFinite(marca) || isFinite(cierre);
-  const pnlBasis = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || cap;
-  const pnlPct = pnlBasis ? pnlVal / pnlBasis : NaN;
+  /* v5.30: el % se calcula en la moneda de la posición (P&L y base en la misma): un cociente no
+     tiene moneda, y mezclar dólares arriba con euros abajo lo torcía. En dólares es lo de siempre. */
+  const pnlBasisNat = Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegadoNat(p);
+  const pnlPct = pnlBasisNat ? effPnlNat(p) / pnlBasisNat : NaN;
+  const S = simbDe(p), enEuros = monedaDe(p) !== "USD"; /* v5.30 */
   const rollChain = p.rollChain || [];
   /* v5.24: escribir UN campo de la pata larga del PMCC. Va por el mismo `onChange` que todo lo demás
      —se guarda al instante— y reemplaza el objeto entero conservando el resto de sus campos, que es
@@ -6323,23 +6392,33 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
             <span style={{ fontSize: 15, fontWeight: 800, color: pnlVal > 0 ? T.green : pnlVal < 0 ? T.red : T.sub }}>{signMoney(pnlVal)}{isFinite(pnlPct) ? <span style={{ fontSize: 12, fontWeight: 700, marginLeft: 6 }}>{(pnlPct >= 0 ? "+" : "") + (pnlPct * 100).toFixed(1) + "%"}</span> : null}</span>
           </div>
         )}
+        {/* v5.30: en euros, la misma cifra en su moneda y el cambio usado — el P&L de arriba ya está en
+            dólares, que es lo que suma en la cuenta. Sin tipo de cambio se dice, no se calla. */}
+        {enEuros && !cash && (
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: fxHayTipo() ? T.sub : T.gold, marginTop: 5, lineHeight: 1.45 }}>
+            {showPnl ? <>P&L en euros <b style={{ color: T.ink }}>{dineroEn(p, effPnlNat(p))}</b> · </> : null}
+            {fxHayTipo()
+              ? <>1 € = ${FX_EURUSD.hoy.toFixed(4)} (BCE{FX_EURUSD.fecha ? ", " + FX_EURUSD.fecha : ""})</>
+              : <>Sin tipo de cambio todavía: se cuenta 1 € = $1 hasta que llegue.</>}
+          </div>
+        )}
         {!cash && (
           <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.line}`, flexWrap: "wrap" }}>
             {showsUnitPremium(p) ? (() => {
               const up = n(p.prima);
-              const upStr = (up < 0 ? "−$" : "$") + money2(Math.abs(up));
+              const upStr = (up < 0 ? "−" + S : S) + money2(Math.abs(up));
               return <MicroStat label="Prima/u" value={upStr} />;
             })() : isPMCC(p) ? (
               /* v5.27: el "BEP" del PMCC es su DÉBITO NETO, y aquí va justo al lado de "Último" —
                  puestos en fila invitan a compararlos, y no son la misma magnitud. Mismo número,
                  nombre correcto. Cuando solo queda la larga sí hay break-even: strike + débito. */
               soloPataLarga(p)
-                ? <MicroStat label="BEP" value={"$" + money2(bepPmccSolo(p))} />
-                : <MicroStat label="Débito" value={"$" + money2(effBep(p))} />
+                ? <MicroStat label="BEP" value={S + money2(bepPmccSolo(p))} />
+                : <MicroStat label="Débito" value={S + money2(effBep(p))} />
             ) : (
-              <MicroStat label="BEP" value={"$" + money2(effBep(p))} />
+              <MicroStat label="BEP" value={S + money2(effBep(p))} />
             )}
-            <MicroStat label="Último" value={p.last ? "$" + money2(p.last) : "—"} />
+            <MicroStat label="Último" value={p.last ? S + money2(p.last) : "—"} />
             <MicroStat label="% Bloque" value={pct(pctBloque, 1)} />
             <MicroStat label="Plausible" value={"$" + money(plausible)} />
           </div>
@@ -6350,7 +6429,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           const hoy = !p.closed && n(p.last) > 0 ? (n(p.last) - estrAsig.bepEstr) * n(p.qty) : NaN;
           return (
             <div style={{ marginTop: 9, background: T.tile, borderRadius: 11, padding: "8px 11px", fontSize: 11, fontWeight: 700, color: T.sub, lineHeight: 1.5 }}>
-              BEP estrategia <b style={{ color: T.ink }}>${money2(estrAsig.bepEstr)}</b> · incluye {estrAsig.nRolls} rolls (<span style={{ color: estrAsig.rolls >= 0 ? T.green : T.red }}>{signMoney(estrAsig.rolls)}</span>) ya contados en MTM
+              BEP estrategia <b style={{ color: T.ink }}>{S}{money2(estrAsig.bepEstr)}</b> · incluye {estrAsig.nRolls} rolls (<span style={{ color: estrAsig.rolls >= 0 ? T.green : T.red }}>{dineroEn(p, estrAsig.rolls)}</span>) ya contados en MTM
               {isFinite(hoy) && <> · estrategia hoy <b style={{ color: hoy >= 0 ? T.green : T.red }}>{signMoney(hoy)}</b></>}
             </div>
           );
@@ -6360,11 +6439,11 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
         {!!costeAsig && !p.closed && (
           <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, background: T.tileAmber, borderRadius: 12, padding: "10px 12px" }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, lineHeight: 1.45 }}>
-              El coste de estas acciones (<b>${money2(costeAsig.viejo)}</b>) se calculó metiendo también los rolls anteriores, que ya contaron en su día. Solo debe restar la prima de la put que te ejercieron: <b>${money2(costeAsig.nuevo)}</b> — lo mismo que te pone IBKR.
+              El coste de estas acciones (<b>{S}{money2(costeAsig.viejo)}</b>) se calculó metiendo también los rolls anteriores, que ya contaron en su día. Solo debe restar la prima de la put que te ejercieron: <b>${money2(costeAsig.nuevo)}</b> — lo mismo que te pone IBKR.
             </div>
             <button type="button" onClick={(e) => { e.stopPropagation(); onChange("bep")(String(costeAsig.nuevo)); onChange("entryNote")("Asignada desde put " + (p.tkr || "") + " · coste base = strike − prima de la put ejercida = $" + money2(costeAsig.nuevo)); }}
               style={{ marginTop: 8, border: "none", borderRadius: 10, padding: "8px 12px", background: T.gold, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-              Corregir a ${money2(costeAsig.nuevo)}
+              Corregir a {S}{money2(costeAsig.nuevo)}
             </button>
           </div>
         )}
@@ -6391,6 +6470,14 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           </label>
           )}
           <EditField label="Ticker" value={p.tkr} onChange={onChange("tkr")} text />
+          {/* v5.30: la moneda en la que cotiza. Todo lo de esta ficha va en ella (BEP, precios, primas);
+              hacia los totales de la cuenta se pasa a dólares. Campo nuevo y opcional: sin él, dólares,
+              como siempre. */}
+          <label style={{ gridColumn: "span 2" }}>
+            <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Moneda</span>
+            <Pill options={["USD $", "EUR €"]} value={monedaDe(p) === "EUR" ? "EUR €" : "USD $"} onChange={(v) => onChange("moneda")(v === "EUR €" ? "EUR" : "USD")} size="sm" />
+            {enEuros && <span style={{ display: "block", fontSize: 10.5, color: T.sub, fontWeight: 600, marginTop: 4, lineHeight: 1.4 }}>Precios, BEP y primas de esta ficha en euros. En los totales de la cuenta se pasa a dólares: lo que vale al cambio de hoy, lo cobrado al del día en que pasó. Sin precio automático: el último se escribe a mano.</span>}
+          </label>
           {/* v3.47: mover la posición de bloque (p.ej. de B2 a B1). Solo se ofrecen los bloques cuya lista
               de estrategias incluye el tipo de esta posición; si el tipo no casa con ninguno (o falta),
               se ofrecen B1-B3. El cambio recoloca la posición en Portfolio y re-atribuye sus eventos de
@@ -6464,30 +6551,30 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           )}
           {!cash && <EditSection icon="price" title="Precios y entrada" />}
           {!cash && (bepAutoStrat(p) || isCreditSpread(p) ? (
-            <EditField label={isPMCC(p) ? "Prima short cobrada $/acc" : isCreditSpread(p) ? "Open price $/acc" : "Prima por acción"} prefix="$" value={p.prima} onChange={onChange("prima")} />
+            <EditField label={isPMCC(p) ? "Prima short cobrada $/acc" : isCreditSpread(p) ? "Open price $/acc" : "Prima por acción"} prefix={S} value={p.prima} onChange={onChange("prima")} />
           ) : hasLots(p) ? (
             <div style={{ background: T.tile, borderRadius: 12, padding: "9px 11px" }}>
               <div style={{ fontSize: 10, color: T.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>BEP · media de lotes</div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>${money2(effBep(p))}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>{S}{money2(effBep(p))}</div>
             </div>
           ) : (
-            <EditField label="BEP" prefix="$" value={p.bep} onChange={onChange("bep")} />
+            <EditField label="BEP" prefix={S} value={p.bep} onChange={onChange("bep")} />
           ))}
           {!cash && hasLots(p) && <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.sub, fontWeight: 600, lineHeight: 1.4, marginTop: -4 }}>Cantidad y BEP se calculan desde los lotes. Edítalos en Lotes, más abajo.</div>}
           {/* v4.91: STOP de una acción. Es lo que la convierte en riesgo definido y lo que permite que
               viva en B3. Va justo debajo del BEP porque el riesgo sale de la distancia entre los dos. */}
           {!cash && natOf(p) === "ACC" && (<>
-            <EditField label={esAccCorta(p) ? "Stop loss (por encima)" : "Stop loss (por debajo)"} prefix="$" value={p.stop} onChange={onChange("stop")} />
+            <EditField label={esAccCorta(p) ? "Stop loss (por encima)" : "Stop loss (por debajo)"} prefix={S} value={p.stop} onChange={onChange("stop")} />
             <div style={{ background: stopAlReves(p) ? T.tileAmber : T.tile, borderRadius: 12, padding: "9px 11px" }}>
               <div style={{ fontSize: 10, color: stopAlReves(p) ? T.gold : T.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>Riesgo si salta</div>
               <div style={{ fontSize: 14, fontWeight: 800, color: stopAlReves(p) ? T.gold : T.ink, fontVariantNumeric: "tabular-nums" }}>
-                {isFinite(riesgoStop(p)) ? "$" + money(riesgoStop(p)) : "—"}
+                {isFinite(riesgoStop(p)) ? S + money(riesgoStop(p)) : "—"}
               </div>
             </div>
             {/* que no se quede callado ninguno de los dos casos que importan */}
             {stopAlReves(p) ? (
               <div style={{ gridColumn: "span 2", fontSize: 10.5, color: T.gold, fontWeight: 700, lineHeight: 1.45, marginTop: -4 }}>
-                Ese stop está del lado equivocado: en una {esAccCorta(p) ? "corta va POR ENCIMA" : "larga va POR DEBAJO"} del BEP (${money2(effBep(p))}).
+                Ese stop está del lado equivocado: en una {esAccCorta(p) ? "corta va POR ENCIMA" : "larga va POR DEBAJO"} del BEP ({S}{money2(effBep(p))}).
                 Tal y como está, no te protege de nada.
               </div>
             ) : !isFinite(riesgoStop(p)) ? (
@@ -6523,8 +6610,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                     {/* campos por pata del vertical; crédito o débito se calcula solo a partir de sP/lP */}
                     <EditField label="Strike corta" value={p.sK} onChange={onChange("sK")} />
                     <EditField label="Strike larga" value={p.lK} onChange={onChange("lK")} />
-                    <EditField label="Prima corta $/acc" prefix="$" value={p.sP} onChange={onChange("sP")} />
-                    <EditField label="Prima larga $/acc" prefix="$" value={p.lP} onChange={onChange("lP")} />
+                    <EditField label="Prima corta $/acc" prefix={S} value={p.sP} onChange={onChange("sP")} />
+                    <EditField label="Prima larga $/acc" prefix={S} value={p.lP} onChange={onChange("lP")} />
                     {/* v3.56: quitadas las notas editables de corta/larga aquí — la nota solo tiene sentido
                         ligada a un momento concreto: la de apertura (wizard, p.sNote/p.lNote) o la de cada
                         cierre/roll de pata (campo Nota de la hoja de pata, guardada en legOps) */}
@@ -6535,14 +6622,14 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </>
             )
           )}
-          {!cash && <EditField label="Comisión (entrada)" prefix="$" value={p.comision} onChange={onChange("comision")} />}
+          {!cash && <EditField label="Comisión (entrada)" prefix={S} value={p.comision} onChange={onChange("comision")} />}
           {!cash && <EditField label="Nota de entrada" value={p.entryNote} onChange={onChange("entryNote")} />}
           {isOptionNat(p) && <EditField label="IVR al abrir" value={p.ivr} onChange={onChange("ivr")} />}
-          {!cash && <EditField label="Último (precio actual)" prefix="$" value={p.last} onChange={onChange("last")} />}
+          {!cash && <EditField label="Último (precio actual)" prefix={S} value={p.last} onChange={onChange("last")} />}
           {!cash && bepAutoStrat(p) && !isPMCC(p) && (
             <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>BEP (auto) = Strike {bepAutoStrat(p) === "CREDIT" ? "−" : "+"} Prima</span>
-              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(effBep(p))}</span>
+              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>{S}{money2(effBep(p))}</span>
             </div>
           )}
           {/* ---------- v5.24: la pata larga del PMCC se puede EDITAR ----------
@@ -6556,8 +6643,8 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           {!cash && isPMCC(p) && (
             <>
               <div style={{ gridColumn: "span 2", fontSize: 10, color: T.green, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 2 }}>Pata long · call comprada</div>
-              <EditField label="Strike long" prefix="$" value={(p.long || {}).strike} onChange={setLong("strike")} />
-              <EditField label="Prima pagada $/acc" prefix="$" value={(p.long || {}).prima} onChange={setLong("prima")} />
+              <EditField label="Strike long" prefix={S} value={(p.long || {}).strike} onChange={setLong("strike")} />
+              <EditField label="Prima pagada $/acc" prefix={S} value={(p.long || {}).prima} onChange={setLong("prima")} />
               <div style={{ gridColumn: "span 2" }}>
                 <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Vencimiento long</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -6567,10 +6654,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 </div>
                 {(() => { const a = avisoVencimiento((p.long || {}).expiry); return a ? <div style={{ fontSize: 10.5, fontWeight: 700, color: a.raro ? T.gold : T.sub, marginTop: 4, lineHeight: 1.4 }}>{a.texto}</div> : null; })()}
               </div>
-              <EditField label="Comisión long" prefix="$" value={(p.long || {}).comision} onChange={setLong("comision")} />
+              <EditField label="Comisión long" prefix={S} value={(p.long || {}).comision} onChange={setLong("comision")} />
               <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>Débito neto = prima long − short</span>
-                <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(effBep(p))}</span>
+                <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>{S}{money2(effBep(p))}</span>
               </div>
               {/* v5.27: y el break-even de verdad, cuando existe. Con la corta viva no hay uno simple
                   —depende del valor temporal que le quede a la larga el día que venza la corta— y no
@@ -6578,7 +6665,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               {soloPataLarga(p) && (
                 <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>BEP = strike long + débito neto</span>
-                  <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(bepPmccSolo(p))}</span>
+                  <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>{S}{money2(bepPmccSolo(p))}</span>
                 </div>
               )}
             </>
@@ -6586,7 +6673,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           {!cash && natOf(p) === "CRED" && (
             <div style={{ gridColumn: "span 2", background: T.tileGreen, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.green, fontWeight: 700 }}>Crédito recibido = Prima × Cantidad</span>
-              <span style={{ fontSize: 14.5, color: T.green, fontWeight: 800 }}>${money2(n(p.prima) * n(p.qty))}</span>
+              <span style={{ fontSize: 14.5, color: T.green, fontWeight: 800 }}>{S}{money2(n(p.prima) * n(p.qty))}</span>
             </div>
           )}
           {!cash && isDCDD(p) && (() => {
@@ -6653,7 +6740,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 {isFinite(net) && (
                   <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 11, color: net < 0 ? T.green : T.sub, fontWeight: 700 }}>{net < 0 ? "Crédito neto (cortas − largas)" : "Débito neto (largas − cortas)"}{d.riskManual === "SI" ? "" : (net < 0 ? "" : " · riesgo")}</span>
-                    <span style={{ fontSize: 13.5, color: net < 0 ? T.green : T.ink, fontWeight: 800 }}>{(net < 0 ? "−$" : "$") + money2(Math.abs(net))}/acc · ${money2(Math.max(0, net) * n(p.qty))}</span>
+                    <span style={{ fontSize: 13.5, color: net < 0 ? T.green : T.ink, fontWeight: 800 }}>{(net < 0 ? "−" + S : S) + money2(Math.abs(net))}/acc · {S}{money2(Math.max(0, net) * n(p.qty))}</span>
                   </div>
                 )}
                 {/* riesgo AUTO/MANUAL (v5.10): en un DC/DD el riesgo real puede superar el débito pagado.
@@ -6667,10 +6754,10 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                   }} size="sm" />
                 </label>
                 {d.riskManual === "SI" && (
-                  <EditField label="Riesgo máx manual" prefix="$" value={p.riesgo} onChange={(v) => { onChange("riesgo")(v); onChange("margen")(v); }} span={2} />
+                  <EditField label="Riesgo máx manual" prefix={S} value={p.riesgo} onChange={(v) => { onChange("riesgo")(v); onChange("margen")(v); }} span={2} />
                 )}
-                <EditField label="Subyacente al abrir" prefix="$" value={d.undOpen} onChange={setMeta("undOpen")} smallLabel />
-                <EditField label="Subyacente al cerrar" prefix="$" value={d.undClose} onChange={setMeta("undClose")} smallLabel />
+                <EditField label="Subyacente al abrir" prefix={S} value={d.undOpen} onChange={setMeta("undOpen")} smallLabel />
+                <EditField label="Subyacente al cerrar" prefix={S} value={d.undClose} onChange={setMeta("undClose")} smallLabel />
                 <EditSection icon="vol" title="Volatilidad y catalizadores" />
                 <EditField label="VIX" value={d.vix} onChange={setMeta("vix")} smallLabel />
                 <EditField label="IVR" value={p.ivr} onChange={onChange("ivr")} smallLabel />
@@ -6701,43 +6788,43 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
           {cash ? (
             <div style={{ gridColumn: "span 2" }}>
               <span style={{ display: "block", fontSize: 10, color: T.sub, fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>Importe (USD)</span>
-              <EditField label="" prefix="$" value={p.mktValue} onChange={onChange("mktValue")} signed />
+              <EditField label="" prefix={S} value={p.mktValue} onChange={onChange("mktValue")} signed />
             </div>
           ) : null}
           {cash && (
             <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>Cuenta como (auto)</span>
-              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(capDesplegado(p))}</span>
+              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>{S}{money2(capDesplegadoNat(p))}</span>
             </div>
           )}
           {!cash && (natOf(p) === "COLLAR" || (natOf(p) === "DEF" && !isLongCallPos(p))) && (
-            <EditField label={natOf(p) === "COLLAR" ? "Riesgo fijo del collar" : "Riesgo máx / total (def. BEP×qty)"} prefix="$" value={p.riesgo} onChange={onChange("riesgo")} span={2} />
+            <EditField label={natOf(p) === "COLLAR" ? "Riesgo fijo del collar" : "Riesgo máx / total (def. BEP×qty)"} prefix={S} value={p.riesgo} onChange={onChange("riesgo")} span={2} />
           )}
           {!cash && isLongCallPos(p) && (
             <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.sub, fontWeight: 700 }}>Riesgo = prima pagada (auto)</span>
-              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>${money2(longCallCost(p))}</span>
+              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800 }}>{S}{money2(longCallCost(p))}</span>
             </div>
           )}
           {/* riesgo total y plausible, cada uno en su propia línea a ancho completo para que se lea con claridad */}
           {!cash && p.block !== 0 && (
             <div style={{ gridColumn: "span 2", background: T.tile, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>Riesgo total (auto)</span>
-              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800, whiteSpace: "nowrap" }}>${money2(capDesplegado(p))}</span>
+              <span style={{ fontSize: 14.5, color: T.ink, fontWeight: 800, whiteSpace: "nowrap" }}>{S}{money2(capDesplegadoNat(p))}</span>
             </div>
           )}
           {/* en B0 (liquidez/colchón) el riesgo plausible no aplica: ni tile ni factor */}
           {!cash && p.block !== 0 && (
             <div style={{ gridColumn: "span 2", background: T.tileGreen, borderRadius: 12, padding: "9px 11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.green, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>Riesgo plausible</span>
-              <span style={{ fontSize: 14.5, color: T.green, fontWeight: 800, whiteSpace: "nowrap" }}>${money2(plausibleOf(p))}</span>
+              <span style={{ fontSize: 14.5, color: T.green, fontWeight: 800, whiteSpace: "nowrap" }}>{S}{money2(plausibleOfNat(p))}</span>
             </div>
           )}
           {!cash && p.block !== 0 && (natOf(p) === "ACC" || natOf(p) === "CRED") && (
             <EditField label="Factor riesgo plausible" value={p.factor} onChange={onChange("factor")} span={2} smallLabel />
           )}
           {!cash && natOf(p) === "ACC" && p.plausBep !== "" && p.plausBep != null && (
-            <EditField label="BEP plausible (fijado por collar · vacío = normal)" prefix="$" value={p.plausBep} onChange={onChange("plausBep")} span={2} smallLabel />
+            <EditField label="BEP plausible (fijado por collar · vacío = normal)" prefix={S} value={p.plausBep} onChange={onChange("plausBep")} span={2} smallLabel />
           )}
           {/* Valor mercado, Margen y P&L viven plegados tras "Avanzado": se tocan poco tras crear la posición.
              Se abre solo automáticamente si el P&L está en Manual (posiciones sin precio autodescargable). */}
@@ -6771,7 +6858,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 </div>
               ) : (
                 <>
-                  <EditField label="" prefix="$" value={p.mktValue} onChange={onChange("mktValue")} signed />
+                  <EditField label="" prefix={S} value={p.mktValue} onChange={onChange("mktValue")} signed />
                   {/* v5.25: y si está en Auto y sale vacío, POR QUÉ. Una caja en blanco no se
                       distingue de una avería, y cada motivo se arregla de una forma distinta. */}
                   {(() => { const m = motivoSinPrecio(p); return m ? <div style={{ fontSize: 10.5, color: T.gold, fontWeight: 700, marginTop: 5, lineHeight: 1.45 }}>{m}</div> : null; })()}
@@ -6792,7 +6879,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                     style={{ width: "100%", boxSizing: "border-box", background: T.tile, border: `1.5px solid ${T.line}`, borderRadius: 11, color: T.ink, fontSize: 14.5, fontWeight: 700, padding: "9px 20px 9px 10px", outline: "none" }} />
                   <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: T.sub, fontSize: 12 }}>%</span>
                 </div>
-                <span style={{ fontSize: 11.5, color: T.sub, fontWeight: 600 }}>= ${money(effMargen(p))}</span>
+                <span style={{ fontSize: 11.5, color: T.sub, fontWeight: 600 }}>= {S}{money(effMargenNat(p))}</span>
               </div>
             ) : (
               <div style={{ position: "relative" }}>
@@ -6891,7 +6978,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
               </div>
               <div style={{ background: T.tile, borderRadius: 12, padding: "8px 12px", marginTop: 10, fontSize: 11.5, fontWeight: 700, color: T.sub, lineHeight: 1.5 }}>
                 {realized !== null ? (
-                  <>Se reserva ahora en Primas y MTM ({legDate || "fecha pendiente"}): <span style={{ color: realized >= 0 ? T.green : T.red, fontWeight: 800 }}>{(realized >= 0 ? "+" : "−") + "$" + Math.abs(realized).toFixed(2)}</span>.{legMode === "roll" ? " El nuevo crédito de la pata que reabre queda pendiente hasta que ella misma se cierre." : ""}{willClose ? " Era la última pata viva: la posición se cierra." : ""}</>
+                  <>Se reserva ahora en Primas y MTM ({legDate || "fecha pendiente"}): <span style={{ color: realized >= 0 ? T.green : T.red, fontWeight: 800 }}>{(realized >= 0 ? "+" : "−") + S + Math.abs(realized).toFixed(2)}</span>.{legMode === "roll" ? " El nuevo crédito de la pata que reabre queda pendiente hasta que ella misma se cierre." : ""}{willClose ? " Era la última pata viva: la posición se cierra." : ""}</>
                 ) : (
                   <>Venta/compra a crédito — no se apunta en Movimientos todavía; se reservará cuando esta pata se cierre a su vez.</>
                 )}
@@ -6947,7 +7034,7 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                 <div style={{ background: hasNums ? (rollNet >= 0 ? T.tileGreen : T.tileRed) : T.tile, borderRadius: 12, padding: "8px 12px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
                   <span style={{ fontSize: 10.5, color: T.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Neto del roll</span>
                   <span style={{ fontSize: 15, fontWeight: 800, color: hasNums ? (rollNet >= 0 ? T.green : T.red) : T.sub, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                    {hasNums ? (rollNet >= 0 ? "+$" : "-$") + money2(Math.abs(rollNet)) + " · " + signMoney(rollNetTotal) : "—"}
+                    {hasNums ? (rollNet >= 0 ? "+" + S : "-" + S) + money2(Math.abs(rollNet)) + " · " + dineroEn(p, rollNetTotal) : "—"}
                   </span>
                 </div>
                 <div style={{ gridColumn: "span 2" }}>
@@ -7033,13 +7120,13 @@ function PositionRow({ p, editing, onToggle, onDone, onChange, onDelete, onRoll,
                         <div style={{ marginTop: 10, background: T.tileGreen, borderRadius: 14, padding: "12px 13px" }}>
                           <div style={{ fontSize: 12.5, fontWeight: 800, color: T.green }}>Te quedas {accs} acciones de {p.tkr || "—"}</div>
                           <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 4, lineHeight: 1.5 }}>
-                            Coste <b style={{ color: T.ink }}>${isFinite(coste) ? money2(coste) : "—"}</b> por acción, no ${money2(n(p.strike))}: la prima de la put que te ejercen ({signMoney(traspaso)}) se resta del precio de compra.
+                            Coste <b style={{ color: T.ink }}>{S}{isFinite(coste) ? money2(coste) : "—"}</b> por acción, no {S}{money2(n(p.strike))}: la prima de la put que te ejercen ({dineroEn(p, traspaso)}) se resta del precio de compra.
                           </div>
                           <div style={{ fontSize: 10.5, color: T.sub, marginTop: 5, lineHeight: 1.45 }}>
                             Por eso esa prima no contará como resultado en MTM: no se pierde, se muda al coste de las acciones y saldrá cuando las vendas. En Primas se sigue viendo el cobro.
                             {/* v5.28: con rolls, lo que ya se realizó al recomprar cada put se queda donde estaba */}
                             {(p.rollChain || []).length > 0 && Math.abs(rollsPrevios) >= 0.5 && (
-                              <> Los {(p.rollChain || []).length} rolls anteriores (<b style={{ color: rollsPrevios >= 0 ? T.green : T.red }}>{signMoney(rollsPrevios)}</b>) no se tocan: cada recompra cerró una put y su resultado ya contó en su mes.</>
+                              <> Los {(p.rollChain || []).length} rolls anteriores (<b style={{ color: rollsPrevios >= 0 ? T.green : T.red }}>{dineroEn(p, rollsPrevios)}</b>) no se tocan: cada recompra cerró una put y su resultado ya contó en su mes.</>
                             )}
                           </div>
                           <div style={{ fontSize: 10, fontWeight: 800, color: T.sub, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 11, marginBottom: 5 }}>¿A qué bloque van?</div>
@@ -7620,6 +7707,21 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
   const porPos = {};
   positions.forEach((p) => { porPos[p.id] = p; });
   [primaEvents, mtmEvents].forEach((arr) => arr.forEach((e) => { e.omit = !!(e.mov && porPos[e.posId] && omitidoMov(porPos[e.posId], e.mov)); }));
+  /* v5.30: los movimientos de una posición en EUROS se pasan a dólares AL CAMBIO DE SU DÍA (lo eligió
+     Victor, y es lo que hace IBKR con el realizado): una prima cobrada en septiembre vale lo que valía
+     en septiembre, y no se mueve porque el euro se mueva después. Se hace aquí, en un único paso antes
+     de cualquier suma, por el mismo motivo que la exclusión de arriba: mes, año, acumulado, bloques y
+     totales por posición salen bien solos, sin una lista de sitios que tocar. El desglose por patas se
+     queda en euros (es lo que dice el bróker) y la cifra original se guarda en `nativo` para enseñarla
+     al lado. En una posición en dólares no se toca nada. */
+  [primaEvents, mtmEvents].forEach((arr) => arr.forEach((e) => {
+    const pos = porPos[e.posId];
+    if (!pos || monedaDe(pos) === "USD" || e.nativo) return;
+    const fx = fxDiaPos(pos, e.date);
+    e.nativo = { simb: simbDe(pos), cash: n(e.cash), fee: n(e.fee), fx, pos };
+    e.cash = n(e.cash) * fx;
+    e.fee = n(e.fee) * fx;
+  }));
   const todos = sub === "primas" ? primaEvents : mtmEvents;
   const omitidos = todos.filter((e) => e.omit && (blockFilter === "all" || e.block === blockFilter)).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const allEvents = todos.filter((e) => !e.omit);
@@ -7808,19 +7910,25 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                         <span style={{ flexShrink: 0, width: 56, textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: "#fff", background: l.side === "V" ? T.green : T.red, borderRadius: 6, padding: "2px 0" }}>{l.side === "V" ? "VENTA" : "COMPRA"}</span>
                       )}
                       <span style={{ fontSize: 11.5, fontWeight: 700, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
-                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: l.perShare >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{(l.perShare >= 0 ? "+" : "-") + "$" + money2(Math.abs(l.perShare))}</span>
+                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: l.perShare >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{(l.perShare >= 0 ? "+" : "-") + (e.nativo ? e.nativo.simb : "$") + money2(Math.abs(l.perShare))}</span>
                     </span>
-                    <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, color: l.cash >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{signMoney(l.cash)}</span>
+                    <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, color: l.cash >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{e.nativo ? dineroEn(e.nativo.pos, l.cash) : signMoney(l.cash)}</span>
                   </div>
                 ))}
                 {n(e.fee) > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
                     <span style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>Comisión</span>
-                    <span style={{ fontSize: 12, fontWeight: 800, color: T.red, whiteSpace: "nowrap" }}>-${money2(e.fee)}</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: T.red, whiteSpace: "nowrap" }}>{e.nativo ? "-" + money2(e.nativo.fee) + " " + e.nativo.simb : "-$" + money2(e.fee)}</span>
                   </div>
                 )}
               </div>
             )}
+            {/* v5.30: en euros, la cifra original y el cambio con el que se pasó a dólares */}
+            {e.nativo ? (
+              <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600, marginTop: 6, lineHeight: 1.45 }}>
+                En euros <b style={{ color: T.ink }}>{dineroEn(e.nativo.pos, e.nativo.cash)}</b> · al cambio de ese día, 1 € = ${n(e.nativo.fx).toFixed(4)} → <b style={{ color: T.ink }}>{signMoney(e.cash)}</b>
+              </div>
+            ) : null}
             {e.note ? <div style={{ fontSize: 11.5, color: T.sub, fontStyle: "italic", marginTop: 5, lineHeight: 1.4 }}>💬 {e.note}</div> : null}
             {gris && (
               <div style={{ fontSize: 11.5, color: T.sub, marginTop: 7, lineHeight: 1.45 }}>
@@ -7924,7 +8032,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
        crédito pendiente (prima × qty − comisión) y su ROI potencial sobre el riesgo introducido.
        Al cerrar, pasa a medirse el realizado: P&L (neto prima − recompra) / riesgo. */
     const csPending = isCreditSpread(p) && !p.closed;
-    const csCredit = isCreditSpread(p) ? vDisplayPrima(p) * n(p.qty) - n(p.comision) : NaN;
+    const csCredit = isCreditSpread(p) ? (vDisplayPrima(p) * n(p.qty) - n(p.comision)) * fxHoyPos(p) : NaN; /* v5.30: en dólares */
     const romNumer = csPending ? csCredit : primaBasis;
     /* v4.42: una venta parcial no tiene eventos MTM propios (no es una posición guardada);
        su realizado viaja en el propio objeto derivado. */
@@ -7935,7 +8043,9 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
        vigente tras los rolls. Así la rentabilidad de un put rolado se mide contra el capital que
        comprometiste al abrir, no contra el strike al que lo hayas movido. */
     const origBep = n(openingStrike(p)) - n(openingPrimaPerShare(p));
-    const riesgo = isOpt && natOf(p) === "CRED" ? (isPMCC(p) ? riesgoTotalOf(p) : Math.abs(origBep * n(p.qty))) : capDesplegado(p);
+    /* v5.30: en euros, el capital de apertura se pasa a dólares AL CAMBIO DE ESE DÍA, igual que las primas
+       de arriba se pasaron al de su día: así el ROI es el de un inversor en dólares, como lo mide IBKR. */
+    const riesgo = isOpt && natOf(p) === "CRED" ? (isPMCC(p) ? riesgoTotalOf(p) : Math.abs(origBep * n(p.qty)) * fxDiaPos(p, p.entryDate)) : capDesplegado(p);
     const rom = isOpt && riesgo ? romNumer / riesgo : NaN;
     const dte = isOpt ? daysBetween(p.entryDate, p.expiry) : NaN;
     const dit = daysBetween(p.entryDate, p.closed ? p.closeDate : todayIso);
@@ -7951,7 +8061,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
     /* ROI de acciones: P&L / capital invertido (BEP × qty). Cerradas usan el P&L realizado; abiertas,
        el unrealised. Anualizado con el DIT real (rentabilidad × 365/DIT), mismo criterio en ambos casos.
        En abiertas el DIT es apertura→hoy, así que el anualizado extrapola el periodo mantenido hasta ahora. */
-    const stockBasis = Math.abs(n(effBep(p)) * n(p.qty));
+    const stockBasis = Math.abs(n(effBep(p)) * n(p.qty)) * fxDiaPos(p, p.entryDate); /* v5.30: lo invertido, en dólares del día de compra */
     const stockPnl = !isOpt ? (p.closed ? result : effPnl(p)) : NaN;
     const stockRoi = !isOpt && stockBasis ? stockPnl / stockBasis : NaN;
     const stockAnnRoi = isFinite(stockRoi) && isFinite(dit) && dit > 0 ? stockRoi * (365 / dit) : NaN;
@@ -8773,7 +8883,8 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                 const shares = st ? n(st.qty) : NaN;
                 const last = st ? n(st.last) : NaN;
                 const viva = !!st && !st.closed;
-                const accion = !st ? NaN : st.closed ? mtmSumOf(st) : (isFinite(last) && last > 0 && isFinite(bep) ? (last - bep) * shares : NaN);
+                /* v5.30: la valoración de unas acciones vivas, en dólares como todo lo demás de esta suma */
+                const accion = !st ? NaN : st.closed ? mtmSumOf(st) : (isFinite(last) && last > 0 && isFinite(bep) ? (last - bep) * shares * fxHoyPos(st) : NaN);
                 /* v5.19: la prima de la put ejercida ya está dentro del coste de la acción, así que no
                    se suma aparte (con el caso de Victor daban +$3.100 donde la caja decía +$800).
                    v5.28: pero lo que realizaron los rolls ANTERIORES no está dentro del coste — se
@@ -8949,7 +9060,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                             {!isCreditSpread(p) && (
                             <div style={{ textAlign: "center" }}>
                               <div style={{ fontSize: 10, color: T.sub, fontWeight: 500 }}>{chain.length > 0 ? "BEP actual" : "BEP"}</div>
-                              <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>${money2(effBep(p))}</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{simbDe(p)}{money2(effBep(p))}</div>
                             </div>
                             )}
                           </div>
@@ -8958,7 +9069,7 @@ function MovimientosView({ positions, nlv, reopenPos, onEditChain, onEditLots, o
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: (natOf(p) === "CRED" || chain.length > 0 || p.closed) ? 10 : 0 }}>
                           {/* Strikes de credit spreads (v5.00): las dos alas apiladas (put arriba, call debajo) en vez
                              de una línea truncada con "…" — así ambos spreads se leen completos dentro del tile. */}
-                          {[["IVR", p.ivr || "—"], [isSimpleCredit(p) ? "VIX" : (isCreditSpread(p) || (isDCDD(p) && (dcStrikePut(dcddOf(p)) || dcStrikeCall(dcddOf(p)))) ? "Strikes" : "Strike"), isSimpleCredit(p) ? (p.vix || "—") : isCreditSpread(p) ? ([p.putSpread, p.callSpread].filter(Boolean)) : (isDCDD(p) && (dcStrikePut(dcddOf(p)) || dcStrikeCall(dcddOf(p)))) ? ([dcStrikePut(dcddOf(p)) ? "P " + dcStrikePut(dcddOf(p)) : "", dcStrikeCall(dcddOf(p)) ? "C " + dcStrikeCall(dcddOf(p)) : ""].filter(Boolean)) : (n(p.strike) ? "$" + strikeStr(p.strike) : "—")], [isDCDD(p) && dcddOf(p).expiryLong ? "DTE S/L" : "DTE", isDCDD(p) && dcddOf(p).expiryLong ? (isFinite(dte) ? dte : "—") + "/" + (isFinite(daysBetween(p.entryDate, dcddOf(p).expiryLong)) ? daysBetween(p.entryDate, dcddOf(p).expiryLong) : "—") + "d" : (isFinite(dte) ? dte + "d" : "—")], ["DIT", isFinite(dit) ? dit + "d" : "—"]].map(([lbl, val]) => (
+                          {[["IVR", p.ivr || "—"], [isSimpleCredit(p) ? "VIX" : (isCreditSpread(p) || (isDCDD(p) && (dcStrikePut(dcddOf(p)) || dcStrikeCall(dcddOf(p)))) ? "Strikes" : "Strike"), isSimpleCredit(p) ? (p.vix || "—") : isCreditSpread(p) ? ([p.putSpread, p.callSpread].filter(Boolean)) : (isDCDD(p) && (dcStrikePut(dcddOf(p)) || dcStrikeCall(dcddOf(p)))) ? ([dcStrikePut(dcddOf(p)) ? "P " + dcStrikePut(dcddOf(p)) : "", dcStrikeCall(dcddOf(p)) ? "C " + dcStrikeCall(dcddOf(p)) : ""].filter(Boolean)) : (n(p.strike) ? simbDe(p) + strikeStr(p.strike) : "—")], [isDCDD(p) && dcddOf(p).expiryLong ? "DTE S/L" : "DTE", isDCDD(p) && dcddOf(p).expiryLong ? (isFinite(dte) ? dte : "—") + "/" + (isFinite(daysBetween(p.entryDate, dcddOf(p).expiryLong)) ? daysBetween(p.entryDate, dcddOf(p).expiryLong) : "—") + "d" : (isFinite(dte) ? dte + "d" : "—")], ["DIT", isFinite(dit) ? dit + "d" : "—"]].map(([lbl, val]) => (
                             <div key={lbl} style={{ background: T.card, borderRadius: 14, padding: "10px 4px", textAlign: "center", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
                               {Array.isArray(val) ? (
                                 <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.3 }}>
@@ -14973,6 +15084,77 @@ function App() {
   const [puente, setPuente] = useState({ url: "", token: "" });
   puenteRef.current = puente;
   HAY_PUENTE = puenteConfigurado(puente); /* v4.56: el candado de arriba, al día en cada render */
+  /* ---------- v5.30: el tipo EUR→USD, para las posiciones en euros ----------
+     Solo se pide si hay alguna posición en euros. La serie del BCE (Frankfurter, sin key) se pide en
+     tramos de 90 días —en tramos más largos el servicio puede devolver un dato por semana, y aquí hace
+     falta el del día— desde la primera fecha de cualquier posición en euros. Una vez al día, y
+     cacheada: el pasado no cambia. Se asigna a `FX_EURUSD` en cada render, como HAY_PUENTE, para que
+     las cuentas de todas las pantallas lean el mismo tipo. */
+  const [fxEurUsd, setFxEurUsd] = useState(() => { try { const c = JSON.parse(localStorage.getItem(KEY_FX_EURUSD) || "null"); return c && c.hist ? c : null; } catch (e) { return null; } });
+  if (fxEurUsd && fxEurUsd.hist) {
+    FX_EURUSD = { hoy: n(fxEurUsd.hoy), hist: fxEurUsd.hist, fechas: Object.keys(fxEurUsd.hist).sort(), fuente: fxEurUsd.fuente || "", fecha: fxEurUsd.fecha || "" };
+  }
+  const fechasEuros = useMemo(() => {
+    const fs = [];
+    positions.forEach((p) => {
+      if (monedaDe(p) !== "EUR") return;
+      [p.entryDate, p.closeDate, ...(p.rollChain || []).map((r) => r.date), ...(p.soldLots || []).map((x) => x.date),
+        ...(p.dividends || []).map((x) => x.date), ...(p.legOps || []).map((x) => x.date), ...(p.lots || []).map((x) => x.date)]
+        .forEach((d) => { if (/^\d{4}-\d{2}-\d{2}$/.test(String(d || ""))) fs.push(d); });
+    });
+    return fs.sort();
+  }, [positions]);
+  const hayEuros = positions.some((p) => monedaDe(p) === "EUR");
+  /* v5.30: para decirlo en la cabecera: qué posiciones están en euros y a qué cambio se están contando */
+  const eurosInfo = hayEuros ? {
+    tkrs: [...new Set(positions.filter((p) => !p.closed && monedaDe(p) === "EUR").map((p) => p.tkr || "?"))],
+    ok: fxHayTipo(), hoy: FX_EURUSD.hoy, fecha: FX_EURUSD.fecha, fuente: FX_EURUSD.fuente,
+  } : null;
+  useEffect(() => {
+    if (!hayEuros) return;
+    const hoyIso = new Date().toISOString().slice(0, 10);
+    const primera = fechasEuros[0] || hoyIso;
+    /* ya pedido hoy y cubriendo desde la primera fecha: nada que hacer */
+    if (fxEurUsd && fxEurUsd.dia === hoyIso && fxEurUsd.desde && fxEurUsd.desde <= primera && isFinite(n(fxEurUsd.hoy))) return;
+    let vivo = true;
+    (async () => {
+      const menos = (iso, dias) => new Date(new Date(iso + "T12:00:00").getTime() - dias * 864e5).toISOString().slice(0, 10);
+      const mas = (iso, dias) => new Date(new Date(iso + "T12:00:00").getTime() + dias * 864e5).toISOString().slice(0, 10);
+      const desde = menos(primera, 10); /* margen para encontrar el día hábil anterior */
+      const hist = {}; let fuente = "";
+      const tramo = async (a, b) => {
+        const urls = [["https://api.frankfurter.dev/v1/" + a + ".." + b + "?base=EUR&symbols=USD", "BCE"],
+          ["https://api.frankfurter.app/" + a + ".." + b + "?from=EUR&to=USD", "BCE"]];
+        for (const [u, src] of urls) {
+          try {
+            const r = await fetch(u); if (!r.ok) continue;
+            const j = await r.json(); const rates = j && j.rates;
+            if (!rates || typeof rates !== "object") continue;
+            let algo = false;
+            Object.keys(rates).forEach((d) => { const v = Number(rates[d] && rates[d].USD); if (v > 0) { hist[d] = v; algo = true; } });
+            if (algo) { fuente = src; return true; }
+          } catch (e) {}
+        }
+        return false;
+      };
+      for (let a = desde; a <= hoyIso; a = mas(a, 90)) {
+        const b = mas(a, 89) < hoyIso ? mas(a, 89) : hoyIso;
+        await tramo(a, b);
+      }
+      const fechas = Object.keys(hist).sort();
+      let hoy = fechas.length ? hist[fechas[fechas.length - 1]] : NaN;
+      /* sin serie: al menos el de hoy, de otra fuente */
+      if (!isFinite(hoy)) {
+        try { const r = await fetch("https://open.er-api.com/v6/latest/EUR"); const j = r.ok ? await r.json() : null; const v = j && j.rates && Number(j.rates.USD); if (v > 0) { hoy = v; fuente = "ER-API"; } } catch (e) {}
+      }
+      if (!vivo || !isFinite(hoy)) return;
+      const ult = fechas.length ? fechas[fechas.length - 1] : hoyIso;
+      const rec = { dia: hoyIso, desde, hoy, hist, fuente, fecha: diaMesCorto(ult) };
+      setFxEurUsd(rec);
+      try { localStorage.setItem(KEY_FX_EURUSD, JSON.stringify(rec)); } catch (e) {}
+    })();
+    return () => { vivo = false; };
+  }, [hayEuros, fechasEuros[0]]);
   const [puenteModalOpen, setPuenteModalOpen] = useState(false);
   const [puenteUrlIn, setPuenteUrlIn] = useState("");
   const [puenteTokenIn, setPuenteTokenIn] = useState("");
@@ -15409,7 +15591,10 @@ function App() {
 
   const runRefresh = async (key) => {
     setRefreshing(true); setRefreshMsg("");
-    const tickers = [...new Set(positionsRef.current.map((p) => p.tkr).filter(Boolean))];
+    /* v5.30: solo las posiciones en dólares. Finnhub (gratis) cotiza bolsa americana: preguntarle por
+       "TEP" pensando en Teleperformance podría devolver el precio de OTRA empresa con ese ticker en EE.
+       UU. y escribirlo encima del último bueno. Las de euros guardan el que escribe Victor. */
+    const tickers = [...new Set(positionsRef.current.filter((p) => monedaDe(p) === "USD").map((p) => p.tkr).filter(Boolean))];
     const results = {};
     const errors = {};
     const chg = {};
@@ -15458,7 +15643,7 @@ function App() {
        posición rolada descarte sola la marca del contrato viejo (ver marcaOpcion) */
     const aplica = (p) => {
       let q = p;
-      if (results[p.tkr] != null) q = { ...q, last: String(results[p.tkr]) };
+      if (results[p.tkr] != null && monedaDe(p) === "USD") q = { ...q, last: String(results[p.tkr]) };
       /* v4.52: la tabla por código sirve igual para una pata que para las dos de un vertical. Se
          REEMPLAZA entera en cada refresco (no se fusiona con la anterior): así los códigos de un
          contrato ya rolado desaparecen solos en vez de quedarse ahí engordando el backup. */
@@ -15702,7 +15887,9 @@ function App() {
      no solo cuando falta alguna: un MKT VL que cubre 6 de 11 opciones y no lo avisa es peor que uno
      que no lo cubre, porque parece completo. Misma regla que la tarjeta de griegas (v4.54). */
   const mktCobertura = useMemo(() => {
-    const opts = active.filter((p) => isOptionNat(p));
+    /* v5.30: las opciones en euros no entran en esta cuenta — no hay de dónde sacarles precio, su valor
+       es manual por diseño, y contarlas como "sin precio" mandaría a buscar un arreglo que no existe */
+    const opts = active.filter((p) => isOptionNat(p) && monedaDe(p) === "USD");
     const pend = opts.filter((p) => !mktEsReal(p) && p.mktModo !== "MANUAL");
     /* v5.21 — decir CUÁLES faltan, no solo cuántas.
        Victor, tras la v5.20: *"sigue igual"*. Y no: el MKT VL había subido 2.218 y el aviso ya decía
@@ -16492,12 +16679,12 @@ function App() {
     const map = {};
     active.forEach((p) => {
       if (!p.tkr) return;
-      if (!map[p.tkr]) map[p.tkr] = { tkr: p.tkr, riesgo: 0, plausible: 0, margen: 0, pnl: 0, pnlBasis: 0, last: 0, byBlock: {}, items: [] };
+      if (!map[p.tkr]) map[p.tkr] = { tkr: p.tkr, simb: simbDe(p), riesgo: 0, plausible: 0, margen: 0, pnl: 0, pnlBasis: 0, last: 0, byBlock: {}, items: [] };
       map[p.tkr].riesgo += capDesplegado(p);
       map[p.tkr].plausible += plausibleOf(p);
       map[p.tkr].margen += effMargen(p);
       map[p.tkr].pnl += effPnl(p);
-      map[p.tkr].pnlBasis += Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue)) || capDesplegado(p);
+      map[p.tkr].pnlBasis += ((Math.abs(effBep(p) * n(p.qty)) || Math.abs(n(p.mktValue))) * fxHoyPos(p)) || capDesplegado(p); /* v5.30: la base, en dólares como el P&L */
       if (n(p.last) > 0 && (natOf(p) === "ACC" || !map[p.tkr].last)) map[p.tkr].last = n(p.last);
       map[p.tkr].byBlock[p.block] = (map[p.tkr].byBlock[p.block] || 0) + capDesplegado(p);
       if (natOf(p) !== "CASH") map[p.tkr].items.push(p);
@@ -16616,7 +16803,7 @@ function App() {
         const sola = soloPataLarga(p);
         const strikeFila = sola ? ((p.long || {}).strike || "") : (p.strike || "");
         const key = p.tkr + "|" + p.block + "|" + (p.right || "") + "|" + strikeFila + "|" + (p.tipo || "") + "|" + spreads + "|" + dcStk;
-        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: strikeFila, tipo: p.tipo, spreads, dcStk, solaLarga: sola, bepEsPrecio: sola || !isPMCC(p), qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
+        if (!groups[key]) groups[key] = { tkr: p.tkr, block: p.block, right: p.right, strike: strikeFila, tipo: p.tipo, spreads, dcStk, solaLarga: sola, bepEsPrecio: sola || !isPMCC(p), simb: simbDe(p), qty: 0, bepW: 0, riesgo: 0, last: "", covered: false, ids: [] };
         /* v4.91 (Victor: "en vencimientos, pulsando la posición que se pueda editar, cerrar o rolar").
            La fila puede fundir varias posiciones idénticas (mismo ticker, bloque, strike y tipo), así que
            se llevan TODAS. Si es una, se abre directa; si son varias, se elige — abrir la primera "porque
@@ -16638,7 +16825,7 @@ function App() {
           tipo: g.tipo, spreads: g.spreads, dcStk: g.dcStk, solaLarga: g.solaLarga, bepEsPrecio: g.bepEsPrecio,
           qtyNum: Number.isInteger(contratos) ? contratos : g.qty,
           bep: g.qty ? g.bepW / g.qty : NaN,
-          riesgo: g.riesgo, last: g.last, covered: g.covered, ids: g.ids,
+          riesgo: g.riesgo, last: g.last, covered: g.covered, ids: g.ids, simb: g.simb,
         };
       }).sort((a, b) => b.riesgo - a.riesgo);
       const dte = Math.round((new Date(r.expiry + "T00:00:00") - today) / 86400000);
@@ -17073,7 +17260,7 @@ function App() {
 
         {view === "bloques" && (<>
         {/* v1.43: VALOR DE LA CUENTA — fijo arriba, fuera de las pestañas: se sigue viendo al deslizar por los bloques */}
-        <AccountHero nlv={nlv} mktvl={mktvl} mktCobertura={mktCobertura} cash={cash} margin={margin} el={el} posCash={posCash} manualCash={manualCash}
+        <AccountHero nlv={nlv} mktvl={mktvl} mktCobertura={mktCobertura} eurosInfo={eurosInfo} cash={cash} margin={margin} el={el} posCash={posCash} manualCash={manualCash}
           totalPnl={totalPnl} totalRiesgo={totalRiesgo} nPos={active.length}
           elNlv={elNlv} elMrgn={elMrgn} leverage={leverage} dayChg={dayChg}
           broker={broker} brokers={brokers} accounts={accounts} setAccField={setAccField}
