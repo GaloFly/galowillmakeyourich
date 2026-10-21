@@ -1,5 +1,39 @@
 # CHANGELOG — Bloques
 
+Bloques v5.31 — Cambiar de moneda sin trampa, y la app reconoce TEP en euros
+
+## El síntoma
+La captura de su TEP real, aún en dólares: 222 acciones, **BEP $102** y **último $64,47** →
+P&L −$8.332 (−36,8 %). El 102 son sus 89,73 € pasados a dólares el día de la compra; el 64,47 era
+el precio de OTRA empresa americana que Finnhub llama "TEP". Al explicarle cómo pasarla a euros salió
+la trampa: **al cambiar la moneda los números no se convierten, se leen en la otra**. Dejando el 102
+quedaría un BEP de 102 € sin que nada lo dijera. Pidió el aviso, y que la app detecte sola que un
+ticker es en euros.
+
+## El arreglo
+- **Al cambiar la moneda** (en Editar o desde el aviso nuevo), recuadro ámbar: *"Ahora esta ficha va
+  en euros. Ojo: los números no se han convertido. Ahora pone: BEP €102 · último €64.47. Si los
+  tenías en dólares, reescríbelos en euros"*. Se queda hasta pulsar **Entendido**. No convierte nada
+  por su cuenta: la app no sabe en qué moneda los escribiste, tú sí.
+- **Detección**: si el mismo ticker ya está en euros en otra posición (abierta o cerrada) y esta no
+  tiene moneda elegida, su fila lo dice — *"Tienes TEP en euros en otra posición (Covered Call) y esta
+  está en dólares"* — con **Pasar a euros** o **Es otra, dejar en $** (que lo deja decidido y no
+  vuelve a salir). Da igual por dónde entrara la posición: asistente, capturas, a mano. Lo mismo con
+  un ticker con sufijo de bolsa europea (TEP.PA, ASML.AS, SAP.DE…).
+- **Fallo de la v5.30**: una put en euros que te asignaban creaba las acciones **en dólares**. Ahora
+  heredan la moneda de la put, y la nota del coste lleva su símbolo.
+
+Precio de las europeas: sigue siendo a mano. Finnhub gratis solo da bolsa americana, y OpenD (moomoo)
+no cubre Euronext.
+
+## La verificación
+`pruebas/moneda-aviso.mjs` (nueva), con su TEP: 222 acc a $102/$64,47 sin moneda y su covered call
+82C en euros. El aviso sale en las acciones y no en NVDA; "Pasar a euros" guarda EUR **sin tocar el
+BEP** y enseña "BEP €102 · último €64.47"; ASML.AS se reconoce por el sufijo y "dejar en $" sobrevive a
+recargar; el editor da el mismo aviso; y una put SAN en euros asignada crea acciones en euros con
+"BEP €67". Quitando cada pieza a propósito (aviso, detección, herencia) la prueba se pone en rojo.
+Las otras 19 pruebas, en verde; `npm run prueba` 18/18.
+
 Bloques v5.30 — Posiciones en euros (TEP): referencias en €, cuenta en $
 
 ## El síntoma
